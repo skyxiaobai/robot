@@ -1,0 +1,23 @@
+# 第三方源码仓库（独立 clone，各有自己的 git 历史）
+/lerobot/
+/mimicgen/
+/robomimic/
+/robosuite/
+
+# 数据集与模型缓存
+/data/
+/hf_cache/
+
+# 训练大产物：checkpoints / 训练中间状态 / rollout 视频
+/outputs/checkpoints/
+/outputs/train/
+/outputs/eval/
+/outputs/demo/
+
+# opencode 内部状态
+/.sisyphus/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
