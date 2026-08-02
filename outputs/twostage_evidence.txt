@@ -1,0 +1,61 @@
+=== 1. headcam_data_spec.md 章节结构 ===
+lines: 348
+  1: # 头戴式数据采集设备规格推导文档
+  9: ## 0. 结论速览（TL;DR）
+  21: ## 1. 第一步：当前模型管线盘点（依据：工程内真实配置）
+  124: ## 2. 第二步：模型管线 → 必须的数据类型
+  172: ## 3. 第三步：数据类型 → 采集硬件规格
+  280: ## 4. 采集软件必须满足的格式契约（落盘要求）
+  307: ## 5. 验证清单（组装后如何确认硬件达标）
+  321: ## 6. 已知约束与风险
+  333: ## 7. 常见疑问：头戴设备包含手部动作采集后，`state` / `action` 怎么算？
+
+=== 2. 训练/评估/生成脚本 ===
+scripts/: ['__pycache__', 'analyze_training.py', 'collect_datasize_evidence.py', 'collect_twostage_evidence.py', 'launch_simulator.py', 'launch_simulator_act.py']
+
+=== 3. outputs/checkpoints 训练配置 ===
+train_config count: 38
+last cfg keys: ['batch_size', 'checkpoint_path', 'cudnn_deterministic', 'dataloader_multiprocessing_context', 'dataset', 'env', 'env_eval_freq', 'eval', 'eval_steps', 'job', 'job_name', 'log_freq', 'max_eval_samples', 'num_workers', 'optimizer', 'output_dir', 'peft', 'persistent_workers', 'policy', 'prefetch_factor', 'rename_map', 'resume', 'reward_model', 'sample_weighting', 'save_checkpoint', 'save_checkpoint_to_hub', 'save_freq', 'scheduler', 'seed', 'steps', 'tolerance_s', 'use_policy_training_preset', 'wandb']
+  steps: 100000 | batch_size: 16 | lr: None
+  dataset: {"repo_id": "lerobot/pusht", "root": "/mnt/sda/app/robot/data/pusht", "episodes": null, "image_transforms": {"enable": false, "max_num_transforms": 3, "random_order": false, "tfs": {"brightness": {"weight": 1.0, "type": "ColorJitter", "kwargs": {"brightness": [0.8, 1.2]}}, "contrast": {"weight": 1.0
+  policy: {"type": "act", "n_obs_steps": 1, "input_features": {"observation.image": {"type": "VISUAL", "shape": [3, 96, 96]}, "observation.state": {"type": "STATE", "shape": [2]}}, "output_features": {"action": {"type": "ACTION", "shape": [2]}}, "device": "cuda", "use_amp": false, "use_peft": false, "push_to_hub": false, "repo_id": null, "private": null, "tags": null, "license": null, "pretrained_path": "/m
+
+=== 4. data/pusht meta ===
+  repo_id: None | total_episodes: 206
+  fps: None
+  features: ['action', 'episode_index', 'frame_index', 'index', 'next.done', 'next.reward', 'next.success', 'observation.image', 'observation.state', 'task_index', 'timestamp']
+    observation.image [96, 96, 3]
+    observation.state [2]
+    action [2]
+    episode_index [1]
+    frame_index [1]
+    timestamp [1]
+
+=== 5. Square 数据集（找 demo.hdf5） ===
+  demo.hdf5 not at expected path; searching shallow...
+
+=== 6. MimicGen 生成日志 ===
+outputs/mimicgen_gen.log len: 459693
+  final stats: {
+    "generation_path": "/tmp/core_datasets/square/demo_src_square_task_D1",
+    "success_rate": 47.82400765184122,
+    "failure_rate": 52.17599234815878,
+    "num_success": 1000,
+    "num_failures": 1091,
+    "num_attempts": 2091,
+    "num_problematic": 0,
+    "ep_length_mean": 151.014,
+    "ep_length_std": 12.174719873574093,
+    "ep_length_max": 171,
+    "ep_length_3std": 188,
+    "time spent (hrs)": "1.24"
+}
+
+=== 7. LeRobot ACT 相关脚本/环境 ===
+  lerobot: lerobot/examples/tutorial/act
+  lerobot: lerobot/examples/tutorial/act/act_using_example.py
+  lerobot: lerobot/examples/tutorial/act/act_training_example.py
+
+=== 8. 官方复现相关 /tmp 日志（重启后可能被清） ===
+   /tmp/train_official.log False
+   /tmp/train_official_200k.log False
