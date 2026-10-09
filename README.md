@@ -41,7 +41,19 @@ python scripts/egodata_coverage.py --episodes outputs/egodex_unified \
 python scripts/validate_hierarchy.py examples/hierarchy_annotation.json --strict
 ```
 
-Colab 上同一条链路：[`notebooks/open_dataset_pipeline_colab.ipynb`](notebooks/open_dataset_pipeline_colab.ipynb)。笔记本默认跑合成样本；要换真实抽样时，把解压后的 `test/` 路径传给演示脚本的 `--input`。
+Colab 上同一条链路：[`notebooks/open_dataset_pipeline_colab.ipynb`](notebooks/open_dataset_pipeline_colab.ipynb)。笔记本默认跑合成样本；要换真实抽样时，把解压后的 `test/` 路径传给演示脚本的 `--input`。同一本笔记本里可以看骨架叠加、质检对照和世界系轨迹。
+
+```bash
+python scripts/ego_visualize.py overlay \
+    --episode outputs/open_data_demo/unified/basic_pick_place/0.json \
+    --out outputs/open_data_demo/viz/overlay.png --width 640
+python scripts/ego_visualize.py qc_compare \
+    --episodes outputs/open_data_demo/unified \
+    --out outputs/open_data_demo/viz/qc_compare.png
+python scripts/ego_visualize.py traj3d \
+    --episode outputs/open_data_demo/unified/basic_pick_place/0.json \
+    --out outputs/open_data_demo/viz/traj3d.png
+```
 
 EgoDex 转换只会填 ENVIRONMENT 和 TASK。时间分段 SUBTASK 和分手 INSTRUCTION 在源数据里没有，校验不加 `--strict` 时只报告缺级。
 
@@ -74,6 +86,7 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | `scripts/egodata_coverage.py` | 按环境、物体、任务、动作类型统计覆盖并标出空档。逐条累加，不把全部 JSON 放进内存 |
 | `scripts/validate_hierarchy.py` | 校验四级标注。样例 `examples/hierarchy_annotation.json` |
 | `scripts/demo_open_dataset_pipeline.py` | 用合成 EgoDex 式样本把上面几步串起来 |
+| `scripts/ego_visualize.py` | 手骨架叠加、质检对照、世界系轨迹。投影与 QC 相同。不把画面提交进仓库 |
 | `scripts/ego_to_lerobot.py` | QC 通过的统一 episode → LeRobot v3.0。动作是手腕增量，mp4 可缩放到 224 |
 | `scripts/ego_pretrain_bc.py` | 岭回归线性 BC。特征和动作都用全训练池统计量，可扫描 l2，多种子写均值和标准差 |
 | `examples/ego_pretrain_bc.yaml` | 线性 BC 配方：增量动作、horizon、不同数据量 |

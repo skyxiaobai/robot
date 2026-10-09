@@ -17,15 +17,26 @@
 
 第四次全量重跑里，测量已经稳定：基线固定在 1.088572，损失随数据量下降，但对数直线从大约 6.4 万个样本起就不再下降（全量只比保持不动好约 6%）。仓库外的 MLP 也在 25.6 万之后停住。瓶颈是输入只有手部状态。缩放报告现在同时给饱和幂律 `L = L∞ + A·N^(-α)`。特征和动作都用全训练池的统计量，岭回归系数在训练内部划分上选择。多种子会写成均值和标准差。ACT 的图像缩放在 `notebooks/egodex_act_scaling_colab.ipynb`，lerobot 0.6.1 的 ACT 仍不吃语言。
 
-还没接上的是：在这 3,243 条上真正把 ACT 训完，以及给 EgoDex 补上按时间切开的子任务和分手指令。像素模糊、HOT3D、自有设备 SLAM 仍不在这条链路上。笼统动词 `use` 仍然落在 other。
+还没接上的是：在这 3,243 条上真正把 ACT 训完，以及给 EgoDex 补上按时间切开的子任务和分手指令。像素模糊、HOT3D 仍不在这条链路上。笼统动词 `use` 仍然落在 other。
+
+`scripts/ego_visualize.py` 可以把统一 episode 画出来：手骨架叠加、通过/拒绝对照、头和手腕的世界系轨迹。投影和 QC 相同。Colab 合成样本单元会写 PNG 和短 MP4。转换现在会进入符号链接的任务目录；以前 `Path.rglob` 会把这些目录整段跳过。
+
+自有头戴设备还缺这些，仓库里都还没有实现：
+
+- 手部姿态估计（HaMeR / WiLoR）：从第一视角图像得到 21 个关节
+- 双目三角化：用左右目把关节收到公制深度
+- SLAM：双目加 IMU 得到每帧头部在世界系的位姿
+- 标定：相机内参、相机之间的外参、IMU 到相机的外参
+- 自动语言标注：按时间切开的子任务和分手指令
 
 ## 1. 逐段对照
 
 | 阶段 | 现在有什么 | 还缺什么 | 优先级 |
 |---|---|---|---|
 | 下载开放数据 | 已核对 EgoDex `test.zip`（见 §2）。没有下载脚本，避免把 16GB 拉进 CI | 需要时用 README 里的 `curl`。HOT3D clips、`lerobot/umi_cup_in_the_wild` 没有适配器 | P2：再加一个数据集 |
-| 转成统一格式 | `scripts/egodata/schema.py` + `egodex.py`，`scripts/convert_egodex.py`。关节矩阵整段读取，`--workers` 可多进程。没有 confidences 时置信度为未知。四元数在片段内连续。`ego_to_lerobot.py` 写成 LeRobot v3.0，真实 mp4 可缩放到 224 | 只接了 EgoDex。没有源 mp4 时视频仍是 16×16 占位 | P2：再加一个数据集 |
-| QC / 产出率 | `scripts/egodata/qc.py`，`scripts/egodata_qc.py`。手出画、视线飘移、相机角速度（模糊代理）、长时间静止。产出率 = 通过片段的帧数 / 原始帧数 | 模糊还没看像素（拉普拉斯）。坏段只能整段丢掉，不能把好的子段切出来留用 | P1：有 mp4 时加像素模糊；子段裁剪 |
+| 转成统一格式 | `scripts/egodata/schema.py` + `egodex.py`，`scripts/convert_egodex.py`。关节矩阵整段读取，`--workers` 可多进程。没有 confidences 时置信度为未知。四元数在片段内连续。任务目录是符号链接时也会进入。`ego_to_lerobot.py` 写成 LeRobot v3.0，真实 mp4 可缩放到 224 | 只接了 EgoDex。没有源 mp4 时视频仍是 16×16 占位 | P2：再加一个数据集 |
+| QC / 产出率 | `scripts/egodata/qc.py`，`scripts/egodata_qc.py`。手出画、视线飘移、相机角速度（模糊代理）、长时间静止。产出率 = 通过片段的帧数 / 原始帧数。`ego_visualize.py qc_compare` 用同一套逐帧标记画对照 | 模糊还没看像素（拉普拉斯）。坏段只能整段丢掉，不能把好的子段切出来留用 | P1：有 mp4 时加像素模糊；子段裁剪 |
+| 可视化 | `scripts/ego_visualize.py`：`overlay`（21 点骨架、手腕轨迹、任务文字，PNG/MP4）、`qc_compare`、`traj3d`。投影与 QC 相同。开放数据笔记本里有合成样本单元 | 不读像素，也不做手部估计。生成的图不入库 | P2：抽样时看几条真实 mp4 |
 | 覆盖统计 | `scripts/egodata/coverage.py`。桌布 `tablecloth:`、坐姿和背景都留在环境名里，`lavendar` 收成 `lavender`。物体类别在出报告时按当前词表重算，脚本逐条累加、不把全部 JSON 留在内存里。动作词表含组装、滚动、推动、涂色等，take/gather、stock/add 收到已有类别 | 词表仍是手写的，笼统的 `use` 仍算 other。没有「该采多少才算补上」的数量目标 | P2：按目标小时数做配额 |
 | 四级标注 | 规格 §8.1，样例 `examples/hierarchy_annotation.json`，校验 `scripts/validate_hierarchy.py`。EgoDex 转换只填 ENVIRONMENT 和 TASK | EgoDex 没有时间分段 SUBTASK，也没有分手 INSTRUCTION。不能把整段描述切成假时间段 | **P1：标注**（人工或模型），不要在转换器里编造 |
 | LeRobot 训练 | pusht ACT 笔记本仍在（image+state[2] → action[2]）。手部线性 BC 用全训练池标准化，并可扫描岭回归系数、多种子。ACT 配方在 `examples/ego_act_train.yaml` 和 `notebooks/egodex_act_scaling_colab.ipynb`：224 图像、16 步增量、固定验证 episode、三到四档 | 还没有在完整测试集上把这几档 ACT 训完。lerobot 0.6.1 的 ACT 没有语言编码器。pusht 的 action[2] 没有改 | **P1：在 Colab GPU 上跑完 ACT 四档** |
@@ -70,7 +81,7 @@
 
 - 454 条 HDF5 没有 `confidences` 组。以前记成 0，QC 把它们全部当成手出画，导出时关节也被置 0。现在记为未知（JSON `null`）：关节齐全就算这只手可用，出画只看投影。读到了低于 0.5 的数字仍然算低置信。
 - 四元数不再每帧强制 `w >= 0`。`q` 和 `-q` 是同一个旋转，强制符号会在半球边界上让相邻帧翻转。现在在一条片段内部让后一帧与前一帧点积不小于 0。
-- HDF5 的 N×4×4 按关节一次读出。`convert_egodex.py --workers N` 按文件多进程，id 和输出路径与单进程相同。
+- HDF5 的 N×4×4 按关节一次读出。`convert_egodex.py --workers N` 按文件多进程，id 和输出路径与单进程相同。任务文件夹若是符号链接，转换仍会走进去；`Path.rglob` 不跟随目录链接，以前会把整个任务丢掉。
 
 向量（世界系）：
 
@@ -94,7 +105,7 @@ ACT 训练入口是 `scripts/ego_act_scaling.py` 和 `notebooks/egodex_act_scali
 
 ## 5. 仍然不做的事
 
-- 不下载、不提交 test.zip 或任何 HDF5/MP4/导出数据集。测试用临时合成文件，形状和属性按上面那条真实文件来。
+- 不下载、不提交 test.zip 或任何 HDF5/MP4/导出数据集，也不提交 EgoDex 画面。可视化测试用临时生成的小视频。真实数据上的 PNG/MP4 只留在本机或 Colab。
 - 不在转换器里伪造时间分段语言。SUBTASK 为空时整段用 TASK.instruction。
 - 不跑 SLAM。EgoDex 的世界系是设备上算好的；自有头戴还没有相机，规格 §7.2 的双目/SLAM 仍然是硬件到位以后的事。
 - 不把 pusht ACT 改成吃手部关节。手部预训练用单独的配方，动作是手腕增量。
@@ -106,4 +117,5 @@ ACT 训练入口是 `scripts/ego_act_scaling.py` 和 `notebooks/egodex_act_scali
 1. 用修好的转换器重跑 EgoDex test（`--workers` 大于 1），再看产出率。没有 confidences 的 12 个任务不应再整任务被拒。
 2. 导出时加上 `--video-size 224`，在 GPU 上按 `examples/ego_act_train.yaml` 训 ACT。不同小时数的 `val_loss` 交给 `scripts/scaling_law.py`。线性 BC 只作基线，并和 `copy_current_wrist` 比。
 3. 时间分段和分手指令单独做标注，过 `validate_hierarchy.py --strict` 再进训练。导出已经会读 SUBTASK。
-4. 像素模糊、HOT3D、自有设备 SLAM 仍排在这条链路之后。
+4. 像素模糊和 HOT3D 仍排在这条链路之后。
+5. 自有头戴设备还缺：手部姿态估计（HaMeR / WiLoR）、双目三角化、SLAM、标定、自动语言标注。

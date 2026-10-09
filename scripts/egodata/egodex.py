@@ -250,14 +250,44 @@ def _convert_one(job):
     return destination
 
 
+def _iter_hdf5(root):
+    """列出 hdf5，并进入符号链接的任务目录。
+
+    ``Path.rglob`` 不跟随目录符号链接。解压或挂载时任务文件夹常常是链接，
+    那些片段会被整目录跳过。已经走过的真实目录不再进入，避免链接成环。
+    """
+    root = Path(root)
+    found = []
+    seen = set()
+
+    def walk(directory):
+        try:
+            key = str(directory.resolve())
+        except OSError:
+            return
+        if key in seen:
+            return
+        seen.add(key)
+        children = sorted(directory.iterdir(), key=lambda item: item.name)
+        for child in children:
+            if child.is_dir():
+                walk(child)
+            elif child.is_file() and child.suffix.lower() == ".hdf5":
+                found.append(child)
+
+    walk(root)
+    return found
+
+
 def convert_tree(root, out_dir, limit=None, workers=1):
     """把目录下的 ``*.hdf5`` 写成统一 JSON。``limit`` 只转换前若干条。
 
     ``workers > 1`` 时按文件多进程转换。输出路径和 episode_id 与单进程相同。
+    任务目录是符号链接时仍会进入。
     """
     root = Path(root)
     out_dir = Path(out_dir)
-    files = sorted(root.rglob("*.hdf5"))
+    files = _iter_hdf5(root)
     if limit is not None:
         files = files[: int(limit)]
     jobs = []

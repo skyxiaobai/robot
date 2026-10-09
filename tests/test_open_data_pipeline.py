@@ -234,6 +234,26 @@ class EgoDexAdapterTest(unittest.TestCase):
             self.assertEqual(loaded["source"], "egodex")
             self.assertTrue(loaded["episode_id"].endswith("pour/0"))
 
+    def test_convert_tree_follows_symlinked_task_folders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real = root / "store" / "pour"
+            _write_egodex_hdf5(
+                real / "0.hdf5",
+                2,
+                [(0, 0, 1), (0.01, 0, 1)],
+                [_se3((0, 0, 0)), _se3((0, 0, 0))],
+            )
+            src = root / "input"
+            src.mkdir()
+            (src / "linked_pour").symlink_to(real, target_is_directory=True)
+            (src / "self").symlink_to(src)
+            written = convert_tree(src, root / "unified")
+            self.assertEqual(len(written), 1)
+            loaded = load_episode(written[0])
+            self.assertIn("linked_pour/0", loaded["episode_id"])
+            self.assertTrue(list(src.rglob("*.hdf5")) == [])
+
     def test_missing_confidence_is_unknown_not_zero(self):
         n = 8
         wrists = [(0.002 * i, 0.0, 1.0) for i in range(n)]
