@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Collect local evidence for the two-stage (synthetic pretrain -> real finetune) evaluation."""
-import json, glob, os, sys
+import json, glob, os
 
-ROOT = "/mnt/sda/app/robot"
+from repo_root import dataset_fps, resolve_root
+
+ROOT = resolve_root()
 OUT = []
 def p(*msg):
     line = " ".join(str(m) for m in msg)
@@ -44,9 +46,10 @@ p()
 p("=== 4. data/pusht meta ===")
 pi = os.path.join(ROOT, "data/pusht/meta/info.json")
 if os.path.exists(pi):
-    info = json.load(open(pi))
+    with open(pi, encoding="utf-8") as f:
+        info = json.load(f)
     p("  repo_id:", info.get("repo_id"), "| total_episodes:", info.get("total_episodes"))
-    p("  fps:", info.get("video_info", {}).get("video.fps"))
+    p("  fps:", dataset_fps(info))
     p("  features:", sorted(info.get("features", {}).keys()))
     for k, v in list(info.get("features", {}).items())[:6]:
         p("   ", k, v.get("shape"))
