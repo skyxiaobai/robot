@@ -20,7 +20,7 @@
 
 规格 v10（`docs/headcam_data_spec.md` §8）定义了四级标注、产出率和覆盖词表。差距分析在 `docs/gap_analysis.md`。当前能跑通的是 EgoDex 测试集（带 ARKit 世界系手部位姿）的抽样，不是 pusht。
 
-依赖：`pip install numpy h5py`。
+依赖：`pip install numpy h5py pyarrow pandas`。导出和线性 BC 还要本机有 `ffmpeg`。
 
 合成样本（不下载数据）：
 
@@ -45,6 +45,17 @@ Colab 上同一条链路：[`notebooks/open_dataset_pipeline_colab.ipynb`](noteb
 
 EgoDex 转换只会填 ENVIRONMENT 和 TASK。时间分段 SUBTASK 和分手 INSTRUCTION 在源数据里没有，校验不加 `--strict` 时只报告缺级。
 
+QC 通过的片段可以导出成 **LeRobot v3.0**（与本仓库的 lerobot 0.6.1 一致），再用线性 BC 做几步预训练。`observation.state` 是双手关节加当前手腕，`action` 是下一帧双手手腕，语言优先用该帧的 SUBTASK。配方在 `examples/ego_pretrain_bc.yaml`。
+
+```bash
+python scripts/ego_to_lerobot.py \
+    --episodes outputs/egodex_unified \
+    --yield-csv outputs/yield_episodes.csv \
+    --out outputs/egodex_lerobot
+python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot --steps 20 \
+    --log outputs/ego_pretrain.log
+```
+
 ## 分析文档导航
 
 | 文档 | 内容 |
@@ -61,6 +72,9 @@ EgoDex 转换只会填 ENVIRONMENT 和 TASK。时间分段 SUBTASK 和分手 INS
 | `scripts/egodata_coverage.py` | 按环境、物体、任务、动作类型统计覆盖并标出空档 |
 | `scripts/validate_hierarchy.py` | 校验四级标注。样例 `examples/hierarchy_annotation.json` |
 | `scripts/demo_open_dataset_pipeline.py` | 用合成 EgoDex 式样本把上面几步串起来 |
+| `scripts/ego_to_lerobot.py` | QC 通过的统一 episode → LeRobot v3.0（lerobot 0.6.1） |
+| `scripts/ego_pretrain_bc.py` | 线性 BC，日志里有 `val_loss`，可供 `scaling_law.py` 读取 |
+| `examples/ego_pretrain_bc.yaml` | 上面两步的配方：状态/动作约定、CPU 步数、不同数据量 |
 | `scripts/collect_datasize_evidence.py` 等 | 分析取证脚本 |
 | `outputs/mimicgen_*.log` | 训练/生成日志（已提交部分） |
 

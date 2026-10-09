@@ -14,6 +14,9 @@
 /outputs/yield_episodes.csv
 /outputs/coverage_report.html
 /outputs/coverage_counts.csv
+/outputs/egodex_lerobot/
+/outputs/ego_pretrain.log
+/outputs/ego_pretrain_*.log
 
 # 训练大产物：checkpoints / 训练中间状态 / rollout 视频
 /outputs/checkpoints/
