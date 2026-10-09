@@ -12,7 +12,7 @@
 
 ## 在 Colab 上复现 ACT · pusht
 
-[`notebooks/act_pusht_colab.ipynb`](notebooks/act_pusht_colab.ipynb) 在 Colab GPU 上按 `train.log` 的超参训练并评估 LeRobot v0.6.1 ACT（pusht，共 100K 步）：检查 GPU、可选挂载 Google Drive、安装 `lerobot[pusht,training]==0.6.1` 与 `gym-pusht`、克隆本仓库、支持从 `checkpoints/last` 断点续训、无头评估并把 rollout 存成 mp4、再用 `scripts/analyze_training.py --root` 生成报告。
+[`notebooks/act_pusht_colab.ipynb`](notebooks/act_pusht_colab.ipynb) 在 Colab GPU 上按 `train.log` 的超参训练并评估 LeRobot v0.6.1 ACT（pusht，共 100K 步）：检查 GPU、可选挂载 Google Drive、安装 `lerobot[pusht,training]==0.6.1` 与 `gym-pusht`（并固定 `pymunk<7`）、预检 `gym.make("gym_pusht/PushT-v0")`、克隆本仓库、支持从 `checkpoints/last` 断点续训。无头评估默认 `batch_size=10`；异步 worker 报 `Namespace gym_pusht not found` 时改用 `--eval.use_async_envs=false`，断线后可以直接评估已保存的 checkpoint，并把 rollout 存成 mp4。再用 `scripts/analyze_training.py --root` 生成报告。
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/skyxiaobai/robot/blob/main/notebooks/act_pusht_colab.ipynb)
 
