@@ -2,6 +2,7 @@
 """按环境、物体、任务、动作类型统计覆盖，并标出封闭词表里的空档。"""
 import csv
 import html
+import re
 from pathlib import Path
 
 # 封闭词表。任务名和原始物体名是开放词表，只统计出现过的值，不制造空档。
@@ -36,6 +37,14 @@ TAXONOMY = {
         "screw",
         "throw",
         "type",
+        "assemble",
+        "charge",
+        "zip",
+        "scoop",
+        "play",
+        "thread",
+        "dry",
+        "wrap",
         "other",
         "unknown",
     ),
@@ -78,6 +87,14 @@ _LABELS = {
     "screw": "拧转",
     "throw": "抛接",
     "type": "按键",
+    "assemble": "组装",
+    "charge": "充电",
+    "zip": "拉链",
+    "scoop": "舀取",
+    "play": "摆弄",
+    "thread": "穿线",
+    "dry": "擦干",
+    "wrap": "包裹",
 }
 
 _OBJECT_KEYWORDS = (
@@ -108,15 +125,36 @@ _ACTION_KEYWORDS = (
     ("screw", ("screw", "unscrew")),
     ("throw", ("throw", "catch", "toss")),
     ("type", ("type", "click", "press")),
+    ("assemble", ("disassemble", "assemble")),
+    ("charge", ("uncharge", "charge", "discharge")),
+    ("zip", ("unzip", "zip")),
+    ("scoop", ("scoop", "ladle")),
+    ("play", ("play",)),
+    ("thread", ("thread", "unthread")),
+    ("dry", ("dry",)),
+    ("wrap", ("unwrap", "wrap")),
 )
+
+# 复数和常见别名。先去掉空格再查，使 "square table" 与 "squaretable" 相同。
+_OBJECT_ALIASES = {
+    "plates": "plate",
+    "cups": "cup",
+    "glasses": "glass",
+    "boxes": "box",
+    "cases": "case",
+    "plushie": "plush",
+    "plushies": "plush",
+    "plushy": "plush",
+}
+
+_ENV_FIELD = re.compile(r"(table|position|background)\s*:\s*([^,;]+)")
 
 
 def _label(value):
     return _LABELS.get(value, value)
 
 
-def normalize_environment(text):
-    raw = (text or "").lower()
+def _room_keyword(raw):
     if any(token in raw for token in ("kitchen", "fridge", "sink", "stove")):
         return "kitchen"
     if any(token in raw for token in ("workshop", "garage")):
@@ -125,11 +163,49 @@ def normalize_environment(text):
         return "outdoor"
     if any(token in raw for token in ("sofa", "couch", "living")):
         return "living_room"
-    if any(token in raw for token in ("table", "desk", "sitting", "tabletop")):
-        return "tabletop"
-    if not raw.strip():
+    return None
+
+
+def normalize_environment(text):
+    """房间词表优先。EgoDex 的 ``table:`` / ``position:`` / ``background:`` 保留下来。
+
+    这些字段记的是桌布、坐姿或站姿、背景颜色，不是另一个房间。
+    只看到 ``table`` 或 ``sitting`` 时不再抹成单独的 ``tabletop``。
+    """
+    raw = (text or "").strip().lower()
+    if not raw:
         return "unknown"
+    fields = {}
+    for match in _ENV_FIELD.finditer(raw):
+        fields[match.group(1)] = re.sub(r"\s+", "", match.group(2).strip())
+    if fields:
+        room = _room_keyword(raw)
+        if room:
+            return room
+        parts = ["tabletop"]
+        for key in ("table", "position", "background"):
+            if fields.get(key):
+                parts.append("%s=%s" % (key, fields[key]))
+        return "|".join(parts)
+    room = _room_keyword(raw)
+    if room:
+        return room
+    if any(token in raw for token in ("tabletop", "desk", "table")):
+        return "tabletop"
     return "unknown"
+
+
+def normalize_object_name(name):
+    """去掉空格，并把常见复数、别名收成同一个物体名。"""
+    raw = re.sub(r"[\s_\-]+", "", (name or "").strip().lower())
+    if not raw:
+        return "unknown"
+    if raw in _OBJECT_ALIASES:
+        return _OBJECT_ALIASES[raw]
+    if len(raw) > 4 and raw.endswith("s") and not raw.endswith("ss"):
+        stem = raw[:-1]
+        return _OBJECT_ALIASES.get(stem, stem)
+    return raw
 
 
 def coarse_object_class(name):
@@ -143,19 +219,38 @@ def coarse_object_class(name):
 
 
 def normalize_action(verb):
-    raw = (verb or "").lower().strip()
-    for label, words in _ACTION_KEYWORDS:
-        if any(word in raw for word in words):
-            return label
+    """最长关键词优先，避免 unplug 被 plug、disassemble 被更短的词抢走。"""
+    raw = (verb or "").lower().strip().replace("_", " ").replace("-", " ")
     if not raw:
         return "unknown"
+    tokens = raw.split()
+    compact = "".join(tokens)
+    best_length = -1
+    best_label = None
+    for label, words in _ACTION_KEYWORDS:
+        for word in words:
+            word_compact = word.replace(" ", "")
+            matched = word in tokens or word_compact == compact
+            if not matched and len(word_compact) >= 5 and word_compact in compact:
+                matched = True
+            if matched and len(word_compact) > best_length:
+                best_length = len(word_compact)
+                best_label = label
+    if best_label:
+        return best_label
     return "other"
 
 
 def _episode_axes(episode):
     coverage = episode.get("coverage") or {}
     environment = coverage.get("environment") or "unknown"
-    objects = list(coverage.get("objects") or [])
+    objects = []
+    seen_objects = set()
+    for name in coverage.get("objects") or []:
+        normalized = normalize_object_name(name)
+        if normalized not in seen_objects:
+            seen_objects.add(normalized)
+            objects.append(normalized)
     classes = list(coverage.get("object_classes") or [])
     if not classes:
         classes = [coarse_object_class(name) for name in objects] or ["unknown"]
@@ -198,7 +293,10 @@ def coverage_report(episodes):
     for axis, values in TAXONOMY.items():
         present = {row["value"] for row in counts if row["axis"] == axis and row["episodes"] > 0}
         for value in values:
-            if value not in present:
+            filled = value in present or any(
+                item == value or item.startswith(value + "|") for item in present
+            )
+            if not filled:
                 gaps.append({"axis": axis, "value": value})
                 counts.append({
                     "axis": axis,

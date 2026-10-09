@@ -14,7 +14,13 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import h5py  # noqa: E402
 
-from egodata.coverage import coverage_report, write_coverage_reports  # noqa: E402
+from egodata.coverage import (  # noqa: E402
+    coverage_report,
+    normalize_action,
+    normalize_environment,
+    normalize_object_name,
+    write_coverage_reports,
+)
 from egodata.egodex import (  # noqa: E402
     active_language,
     convert_tree,
@@ -25,6 +31,7 @@ from egodata.qc import qc_episode, write_yield_reports, yield_report  # noqa: E4
 from egodata.schema import (  # noqa: E402
     MEDIAPIPE_21,
     load_episode,
+    make_quaternions_continuous,
     rotmat_to_quat_xyzw,
     save_episode,
     validate_episode,
@@ -40,7 +47,8 @@ def _se3(translation, rotation=None):
 
 
 def _write_egodex_hdf5(path, n, wrist_world, camera_poses, confidence=0.99,
-                       which="1", extra_joints=True):
+                       which="1", extra_joints=True, with_confidence=True,
+                       wrist_rotations=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     intrinsic = np.array(
         [[736.6339, 0, 960], [0, 736.6339, 540], [0, 0, 1]], dtype=np.float32
@@ -78,13 +86,14 @@ def _write_egodex_hdf5(path, n, wrist_world, camera_poses, confidence=0.99,
             for index, name in enumerate(names):
                 # 只沿 z 错开，食指尖与手腕共享 xy，便于核对 MediaPipe 序号。
                 offset = np.array([0.0, 0.0, 0.02 * index], dtype=np.float32)
-                series = np.stack([
-                    _se3(np.asarray(wrist_world[i], dtype=np.float32) + offset)
-                    for i in range(n)
-                ])
-                handle.create_dataset(f"transforms/{name}", data=series)
-                conf = np.full((n,), confidence, dtype=np.float32)
-                handle.create_dataset(f"confidences/{name}", data=conf)
+                series = []
+                for frame_index in range(n):
+                    rotation = None if wrist_rotations is None else wrist_rotations[frame_index]
+                    series.append(_se3(np.asarray(wrist_world[frame_index], dtype=np.float32) + offset, rotation))
+                handle.create_dataset(f"transforms/{name}", data=np.stack(series).astype(np.float32))
+                if with_confidence:
+                    conf = np.full((n,), confidence, dtype=np.float32)
+                    handle.create_dataset(f"confidences/{name}", data=conf)
         handle.attrs["llm_type"] = "reversible"
         handle.attrs["which_llm_description"] = which
         handle.attrs["llm_description"] = "Open the case, insert the pad."
@@ -125,6 +134,18 @@ class SchemaTest(unittest.TestCase):
         quarter = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]], dtype=float)
         quat = rotmat_to_quat_xyzw(quarter)
         self.assertTrue(np.allclose(quat, [0, 0, math.sqrt(0.5), math.sqrt(0.5)], atol=1e-6))
+
+    def test_quaternion_sequence_stays_in_one_hemisphere(self):
+        quats = []
+        for deg in (20, 40):
+            angle = math.radians(deg)
+            cosine, sine = math.cos(angle), math.sin(angle)
+            rotation = np.array([[cosine, -sine, 0], [sine, cosine, 0], [0, 0, 1]], dtype=float)
+            quats.append(rotmat_to_quat_xyzw(rotation))
+        flipped = np.stack([quats[0], -np.asarray(quats[1])])
+        self.assertLess(float(np.dot(flipped[0], flipped[1])), 0.0)
+        aligned = make_quaternions_continuous(flipped)
+        self.assertGreater(float(np.dot(aligned[0], aligned[1])), 0.0)
 
     def test_mediapipe_order_has_wrist_then_index_tip(self):
         self.assertEqual(len(MEDIAPIPE_21), 21)
@@ -169,7 +190,10 @@ class EgoDexAdapterTest(unittest.TestCase):
         self.assertTrue(np.allclose(pose[:3], [0, 0, 1], atol=1e-5))
         self.assertIn("remove the pad", episode["annotation"]["task"]["instruction"])
         self.assertEqual(episode["annotation"]["task"]["name"], "open_close_insert_remove_case")
-        self.assertEqual(episode["coverage"]["environment"], "tabletop")
+        self.assertEqual(
+            episode["coverage"]["environment"],
+            "tabletop|table=wood|position=sitting|background=brown",
+        )
         self.assertIn("case", episode["coverage"]["objects"])
         self.assertIn("open", episode["coverage"]["action_types"])
         self.assertEqual(episode["annotation"]["subtasks"], [])
@@ -206,6 +230,60 @@ class EgoDexAdapterTest(unittest.TestCase):
             loaded = load_episode(written[0])
             self.assertEqual(loaded["source"], "egodex")
             self.assertTrue(loaded["episode_id"].endswith("pour/0"))
+
+    def test_missing_confidence_is_unknown_not_zero(self):
+        n = 8
+        wrists = [(0.002 * i, 0.0, 1.0) for i in range(n)]
+        poses = [_se3((0, 0, 0)) for _ in range(n)]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pour" / "0.hdf5"
+            _write_egodex_hdf5(path, n, wrists, poses, with_confidence=False)
+            episode = load_episode_hdf5(path)
+        self.assertIsNone(episode["hands"]["left"]["confidence"][0])
+        self.assertTrue(episode["hands"]["left"]["valid"][0])
+        result = qc_episode(episode)
+        self.assertEqual(result["flags"]["hands_out_of_frame"], 0)
+        self.assertNotIn("hands_out_of_frame", result["reasons"])
+
+    def test_loaded_wrist_quaternions_are_continuous(self):
+        n = 4
+        rotations = []
+        for deg in (150, 170, 190, 210):
+            angle = math.radians(deg)
+            cosine, sine = math.cos(angle), math.sin(angle)
+            rotations.append(np.array(
+                [[cosine, -sine, 0], [sine, cosine, 0], [0, 0, 1]], dtype=float,
+            ))
+        wrists = [(0.0, 0.0, 1.0) for _ in range(n)]
+        poses = [_se3((0, 0, 0)) for _ in range(n)]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pour" / "0.hdf5"
+            _write_egodex_hdf5(path, n, wrists, poses, wrist_rotations=rotations)
+            episode = load_episode_hdf5(path)
+        quats = np.asarray([pose[3:] for pose in episode["hands"]["left"]["wrist_pose"]], dtype=float)
+        dots = [float(np.dot(quats[index], quats[index + 1])) for index in range(n - 1)]
+        self.assertTrue(all(dot > 0.0 for dot in dots), dots)
+
+    def test_parallel_convert_matches_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "test"
+            for name, task in (("pour", "pour"), ("stack", "stack")):
+                _write_egodex_hdf5(
+                    src / task / "0.hdf5",
+                    2,
+                    [(0, 0, 1), (0.01, 0, 1)],
+                    [_se3((0, 0, 0)), _se3((0, 0, 0))],
+                )
+            single = convert_tree(src, root / "one", workers=1)
+            multi = convert_tree(src, root / "many", workers=2)
+            self.assertEqual(
+                sorted(path.relative_to(root / "one").as_posix() for path in single),
+                sorted(path.relative_to(root / "many").as_posix() for path in multi),
+            )
+            self.assertEqual(load_episode(single[0])["episode_id"], load_episode(
+                root / "many" / single[0].relative_to(root / "one")
+            )["episode_id"])
 
 
 class QcYieldTest(unittest.TestCase):
@@ -322,11 +400,26 @@ class CoverageTest(unittest.TestCase):
         second["annotation"]["task"]["name"] = "pour_water"
         report = coverage_report([first, second])
         env = {row["value"]: row["episodes"] for row in report["counts"] if row["axis"] == "environment"}
-        self.assertEqual(env["tabletop"], 1)
+        detail = first["coverage"]["environment"]
+        self.assertTrue(detail.startswith("tabletop|"))
+        self.assertEqual(env[detail], 1)
         self.assertEqual(env["kitchen"], 1)
         gaps = {(row["axis"], row["value"]) for row in report["gaps"]}
         self.assertIn(("environment", "outdoor"), gaps)
         self.assertNotIn(("environment", "kitchen"), gaps)
+        self.assertNotIn(("environment", "tabletop"), gaps)
+        self.assertEqual(normalize_object_name("plates"), "plate")
+        self.assertEqual(normalize_object_name("plushie"), "plush")
+        self.assertEqual(normalize_object_name("square table"), normalize_object_name("squaretable"))
+        self.assertEqual(normalize_action("disassemble"), "assemble")
+        self.assertEqual(normalize_action("uncharge"), "charge")
+        self.assertEqual(normalize_action("unzip"), "zip")
+        self.assertEqual(normalize_action("scoop"), "scoop")
+        self.assertEqual(
+            normalize_environment("table:wood, position:sitting, background:brown"),
+            "tabletop|table=wood|position=sitting|background=brown",
+        )
+        self.assertEqual(normalize_environment("kitchen"), "kitchen")
         with tempfile.TemporaryDirectory() as tmp:
             html_path = Path(tmp) / "coverage.html"
             csv_path = Path(tmp) / "coverage.csv"

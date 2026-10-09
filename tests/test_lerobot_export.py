@@ -2,6 +2,7 @@
 """统一 episode → LeRobot v3.0，以及只吃 QC 通过片段的线性 BC。"""
 import csv
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -105,9 +106,19 @@ class PackAndLanguageTest(unittest.TestCase):
         left_wrist = state[126:133]
         self.assertTrue(np.allclose(left_wrist, _wrist(1, "left")))
         action = pack_action(episode, 1)
-        self.assertTrue(np.allclose(action[:7], _wrist(2, "left")))
-        self.assertTrue(np.allclose(action[7:], _wrist(2, "right")))
+        self.assertEqual(action.shape, (ACTION_DIM,))
+        # 帧 1 → 帧 2：左手 x 增加 0.01，旋转不变，所以相对四元数是单位四元数。
+        self.assertTrue(np.allclose(action[:3], [0.01, 0.0, 0.0], atol=1e-6))
+        self.assertTrue(np.allclose(action[3:7], [0.0, 0.0, 0.0, 1.0], atol=1e-6))
+        self.assertTrue(np.allclose(action[7:10], [0.01, 0.0, 0.0], atol=1e-6))
         self.assertIsNone(pack_action(episode, 3))
+
+    def test_unknown_confidence_does_not_zero_joints(self):
+        episode = _episode("unknown", n=2)
+        episode["hands"]["left"]["confidence"][0] = None
+        valid = hand_valid_flags(episode, 0)
+        self.assertEqual(valid.tolist(), [1.0, 1.0])
+        self.assertFalse(np.allclose(pack_state(episode, 0)[:63], 0.0))
 
     def test_missing_joint_zeros_that_hand(self):
         episode = _episode("gap", n=2, blank=8)
@@ -177,7 +188,11 @@ class ExportTest(unittest.TestCase):
             self.assertEqual(len(data["action"]), 5)
             self.assertNotIn("bad", json.dumps(data["task_index"]))
             action0 = np.asarray(data["action"][0], dtype=float)
-            self.assertTrue(np.allclose(action0[:7], _wrist(1, "left")))
+            self.assertTrue(np.allclose(action0[:3], [0.01, 0.0, 0.0], atol=1e-5))
+            self.assertTrue(np.allclose(action0[3:7], [0, 0, 0, 1], atol=1e-5))
+            note = json.loads((out / "meta" / "egodata_export.json").read_text(encoding="utf-8"))
+            self.assertEqual(note["action"], "wrist_pose_delta")
+            self.assertEqual(note["horizon"], 16)
             tasks = pd.read_parquet(out / "meta" / "tasks.parquet")
             # 与 lerobot 0.6.1 load_tasks 一样：行号即 task_index，索引名是句子。
             texts = [tasks.iloc[int(task_index)].name for task_index in data["task_index"]]
@@ -201,27 +216,93 @@ class TrainSmokeTest(unittest.TestCase):
                 {"episode_id": "drop", "num_frames": 8, "accepted": "no", "reasons": "staged_static"},
             ])
             dataset = root / "lerobot"
-            export_lerobot(episodes, csv_path, dataset)
+            export_lerobot(episodes, csv_path, dataset, horizon=2)
             long_log = root / "long.log"
             short_log = root / "short.log"
-            long_result = train_bc(dataset, steps=4, log_path=long_log, seed=0)
-            short_result = train_bc(dataset, steps=4, log_path=short_log, max_frames=4, seed=0)
+            long_result = train_bc(dataset, log_path=long_log, seed=0)
+            short_result = train_bc(dataset, log_path=short_log, max_frames=2, seed=0)
             self.assertGreater(long_result["frames"], short_result["frames"])
+            self.assertEqual(long_result["val_episode_ids"], short_result["val_episode_ids"])
+            self.assertIn("copy_current_wrist:", long_result["log"])
+            self.assertGreater(long_result["copy_current_wrist"], 0.0)
             long_loss = scaling_law.extract_best_val_loss(str(long_log))
             short_loss = scaling_law.extract_best_val_loss(str(short_log))
             self.assertIsNotNone(long_loss)
             self.assertIsNotNone(short_loss)
+            # 基线行不能被当成又一次 val_loss。
+            self.assertNotIn("copy_current_wrist", str(long_loss))
             runs = root / "runs.yaml"
             runs.write_text(
                 "runs:\n"
-                "  - name: ego_short\n    episodes: 4\n    log: short.log\n"
-                "  - name: ego_long\n    episodes: %d\n    log: long.log\n" % long_result["frames"],
+                "  - name: ego_short\n    size: %d\n    log: short.log\n"
+                "  - name: ego_long\n    size: %d\n    log: long.log\n"
+                % (short_result["frames"], long_result["frames"]),
                 encoding="utf-8",
             )
             report = root / "scaling.html"
             code = scaling_law.main(["--runs", str(runs), "--out", str(report)])
             self.assertEqual(code, 0)
             self.assertIn("ego_long", report.read_text(encoding="utf-8"))
+            self.assertNotIn("数据量 / 数据量", scaling_law.size_axis_label("数据量"))
+
+    def test_train_sizes_share_held_out_episodes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            episodes = root / "episodes"
+            episodes.mkdir()
+            rows = []
+            for index, name in enumerate(("alpha", "beta", "gamma", "delta")):
+                episode = _episode(name, n=12, instruction="任务-%s" % name)
+                # 让每条的位移不同，避免四条完全一样。
+                for frame in range(12):
+                    episode["hands"]["left"]["wrist_pose"][frame][0] += 0.05 * index
+                _write_episode(episodes, episode)
+                rows.append({"episode_id": name, "num_frames": 12, "accepted": "yes", "reasons": ""})
+            csv_path = root / "yield.csv"
+            _yield_csv(csv_path, rows)
+            dataset = root / "lerobot"
+            export_lerobot(episodes, csv_path, dataset, horizon=2)
+            small = train_bc(dataset, max_frames=4, seed=0, log_path=root / "small.log")
+            large = train_bc(dataset, max_frames=40, seed=0, log_path=root / "large.log")
+            self.assertEqual(small["val_episode_ids"], large["val_episode_ids"])
+            self.assertTrue(set(small["train_episode_ids"]).issubset(set(large["train_episode_ids"])))
+            self.assertGreater(large["frames"], small["frames"])
+            self.assertTrue(set(small["train_episode_ids"]).isdisjoint(small["val_episode_ids"]))
+
+    def test_source_video_is_downscaled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "clip.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "32x24", "-r", "10",
+                    "-i", "pipe:0", "-frames:v", "6",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(source),
+                ],
+                input=bytes((40, 80, 120)) * (32 * 24 * 6),
+                check=True,
+            )
+            episodes = root / "episodes"
+            episodes.mkdir()
+            episode = _episode("clip", n=6, instruction="看视频")
+            episode["video_path"] = str(source)
+            _write_episode(episodes, episode)
+            csv_path = root / "yield.csv"
+            _yield_csv(csv_path, [
+                {"episode_id": "clip", "num_frames": 6, "accepted": "yes", "reasons": ""},
+            ])
+            out = root / "lerobot"
+            export_lerobot(episodes, csv_path, out, video_size=16, horizon=1)
+            probe = subprocess.run(
+                [
+                    "ffprobe", "-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                    str(out / "videos" / "observation.image" / "chunk-000" / "file-000.mp4"),
+                ],
+                check=True, capture_output=True, text=True,
+            )
+            self.assertEqual(probe.stdout.strip(), "16,16")
 
 
 if __name__ == "__main__":

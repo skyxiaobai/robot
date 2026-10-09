@@ -4,6 +4,7 @@
 产出率 = 通过片段级 QC 的帧数 / 原始帧数。
 一条片段被拒绝的条件：坏帧比例超过 ``max_bad_fraction``。
 坏帧来自四类信号（手出画、视线飘走、运动模糊、摆拍/静止）。
+手腕置信度缺失（``None``）表示源数据没有该通道，不当成 0，也不因此判出画。
 """
 import csv
 import html
@@ -108,7 +109,12 @@ def qc_episode(episode, **overrides):
         for side in ("left", "right"):
             point = positions[side][index]
             confidence = confidences[side][index]
-            tracked = point is not None and confidence is not None and confidence >= options["confidence_min"]
+            # 置信度缺失（源 HDF5 没有 confidences）表示未知，不当成 0。
+            # 未知时只靠投影判断出画；只有读到了低于阈值的数才算跟踪失败。
+            if confidence is None:
+                tracked = point is not None
+            else:
+                tracked = point is not None and float(confidence) >= options["confidence_min"]
             if not tracked:
                 outside.append(side)
                 continue

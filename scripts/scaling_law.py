@@ -46,6 +46,11 @@ _SIZE_KINDS = ("hours", "episodes", "size")
 _KIND_LABEL = {"hours": "小时", "episodes": "条", "size": "数据量"}
 
 
+def size_axis_label(kind):
+    """横轴文字。单位本身已经是「数据量」时不再写成「数据量 / 数据量」。"""
+    return "ln(N)（%s）" % kind
+
+
 def extract_best_val_loss(text):
     """返回日志中的最小验证损失；没有验证损失时返回 None。
 
@@ -230,7 +235,7 @@ def plot_b64(result):
     line_y = [fit["intercept"] + fit["slope"] * x for x in line_x]
     ax.plot(line_x, line_y, color="#f59e0b", lw=1.8,
             label="L = %.4f + (%.4f)·ln(N)" % (fit["intercept"], fit["slope"]))
-    ax.set_xlabel("ln(数据量 / %s)" % kind)
+    ax.set_xlabel(size_axis_label(kind))
     ax.set_ylabel("最优验证损失")
     ax.set_title("缩放律：最优验证损失 vs ln(数据量)")
     ax.grid(alpha=0.25)

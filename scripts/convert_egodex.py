@@ -19,8 +19,9 @@ def main(argv=None):
     parser.add_argument("--input", required=True, help="含 *.hdf5 的目录，例如解压后的 test/")
     parser.add_argument("--out", required=True, help="统一 JSON 输出目录")
     parser.add_argument("--limit", type=int, default=None, help="只转换前 N 条，便于抽样")
+    parser.add_argument("--workers", type=int, default=1, help="并行进程数。1 表示当前进程逐条转换")
     args = parser.parse_args(argv)
-    written = convert_tree(args.input, args.out, limit=args.limit)
+    written = convert_tree(args.input, args.out, limit=args.limit, workers=args.workers)
     print("wrote %d episodes to %s" % (len(written), args.out))
     return 0
 
