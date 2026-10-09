@@ -1,0 +1,24 @@
+# 开放第一视角样本的预训练配方。对应 lerobot 0.6.1 的数据集版本 v3.0。
+# 不改 pusht 上的 ACT。这一条只吃 QC 通过之后导出的手部数据。
+lerobot: "0.6.1"
+codebase_version: v3.0
+robot_type: egodex_human
+policy: linear_bc
+device: cpu
+steps: 20
+learning_rate: 0.01
+
+# observation.state[140] = 左手 21×3 | 右手 21×3 | 左手腕 7 | 右手腕 7
+# 手腕是 xyz（米）+ 四元数 xyzw，世界系。无效手的关节块为 0，hand_valid 为 0。
+# action[14] = 下一帧左手腕 7 | 下一帧右手腕 7。片段最后一帧丢掉。
+# 语言：帧时刻落在 SUBTASK 内就用子任务句子，否则用 TASK.instruction。
+state: observation.state
+action: next_wrist_pose
+language: subtask_else_task_instruction
+qc: yield_csv accepted=yes
+
+commands:
+  - python scripts/ego_to_lerobot.py --episodes outputs/egodex_unified --yield-csv outputs/yield_episodes.csv --out outputs/egodex_lerobot
+  - python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot --steps 20 --log outputs/ego_pretrain_all.log
+  - python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot --steps 20 --max-frames 8 --log outputs/ego_pretrain_8.log
+  - python scripts/scaling_law.py --runs outputs/ego_pretrain_runs.yaml
