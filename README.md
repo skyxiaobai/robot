@@ -71,11 +71,11 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | `scripts/scaling_law.py` | 多次 run 的最优验证损失对 ln(数据量) 拟合，写入 HTML；无输入则跳过。示例 `examples/scaling_law_runs.yaml` |
 | `scripts/convert_egodex.py` | EgoDex HDF5 → 统一 episode JSON。`--workers` 多进程；缺置信度记为未知 |
 | `scripts/egodata_qc.py` | 手出画 / 视线飘移 / 模糊代理 / 静止 的 QC，以及训练产出率 HTML、CSV |
-| `scripts/egodata_coverage.py` | 按环境、物体、任务、动作类型统计覆盖并标出空档 |
+| `scripts/egodata_coverage.py` | 按环境、物体、任务、动作类型统计覆盖并标出空档。逐条累加，不把全部 JSON 放进内存 |
 | `scripts/validate_hierarchy.py` | 校验四级标注。样例 `examples/hierarchy_annotation.json` |
 | `scripts/demo_open_dataset_pipeline.py` | 用合成 EgoDex 式样本把上面几步串起来 |
 | `scripts/ego_to_lerobot.py` | QC 通过的统一 episode → LeRobot v3.0。动作是手腕增量，mp4 可缩放到 224 |
-| `scripts/ego_pretrain_bc.py` | 岭回归线性 BC。固定 episode 验证集，日志有 `val_loss` 和保持不动的基线 |
+| `scripts/ego_pretrain_bc.py` | 岭回归线性 BC。固定验证集，轮转抽满 `--max-frames`，损失逐维标准化并用科学计数法 |
 | `examples/ego_pretrain_bc.yaml` | 线性 BC 配方：增量动作、horizon、不同数据量 |
 | `examples/ego_act_train.yaml` | 同一导出上的 lerobot 0.6.1 ACT（`chunk_size=16`，Colab GPU） |
 | `scripts/collect_datasize_evidence.py` 等 | 分析取证脚本 |

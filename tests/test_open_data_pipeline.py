@@ -15,7 +15,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import h5py  # noqa: E402
 
 from egodata.coverage import (  # noqa: E402
+    accumulate_coverage,
+    coarse_object_class,
     coverage_report,
+    finalize_coverage,
     normalize_action,
     normalize_environment,
     normalize_object_name,
@@ -415,11 +418,39 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(normalize_action("uncharge"), "charge")
         self.assertEqual(normalize_action("unzip"), "zip")
         self.assertEqual(normalize_action("scoop"), "scoop")
+        self.assertEqual(normalize_action("gather"), "pick")
+        self.assertEqual(normalize_action("take"), "pick")
+        self.assertEqual(normalize_action("unstock"), "remove")
+        self.assertEqual(normalize_action("stock"), "place")
+        self.assertEqual(normalize_action("add"), "place")
+        self.assertEqual(normalize_action("push"), "push")
+        self.assertEqual(normalize_action("roll"), "roll")
+        self.assertEqual(normalize_action("color"), "color")
+        self.assertEqual(normalize_action("use"), "other")
+        self.assertEqual(coarse_object_class("plush"), "toy")
+        self.assertEqual(coarse_object_class("shoelace"), "cloth")
+        self.assertEqual(coarse_object_class("battery"), "electronics")
+        self.assertEqual(coarse_object_class("ice"), "food")
+        self.assertEqual(coarse_object_class("device"), "electronics")
         self.assertEqual(
             normalize_environment("table:wood, position:sitting, background:brown"),
             "tabletop|table=wood|position=sitting|background=brown",
         )
+        self.assertEqual(
+            normalize_environment("tablecloth:blue, position:sitting, background:pink"),
+            "tabletop|tablecloth=blue|position=sitting|background=pink",
+        )
+        self.assertEqual(
+            normalize_environment("tablecloth:lavendar, background:lavender"),
+            "tabletop|tablecloth=lavender|background=lavender",
+        )
         self.assertEqual(normalize_environment("kitchen"), "kitchen")
+        streamed = {}
+        accumulate_coverage(streamed, first)
+        accumulate_coverage(streamed, second)
+        streamed_report = finalize_coverage(streamed, 2)
+        self.assertEqual(streamed_report["gaps"], report["gaps"])
+        self.assertEqual(streamed_report["episodes"], report["episodes"])
         with tempfile.TemporaryDirectory() as tmp:
             html_path = Path(tmp) / "coverage.html"
             csv_path = Path(tmp) / "coverage.csv"

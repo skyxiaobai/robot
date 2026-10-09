@@ -16,8 +16,11 @@ seed: 0
 # action 每一行 = 下一步左手腕增量 7 | 右手腕增量 7。
 # 增量是 dxyz + 相对四元数。保持不动 = dxyz 0 且四元数 0,0,0,1。
 # 线性 BC 把连续 horizon 行拼成一块来回归。验证集按 episode 固定留出，
-# 各档 --max-frames 共用；训练集按种子打乱后整段累加。
-# 日志有 val_loss，另有 copy_current_wrist（保持不动的验证误差）。
+# 各档 --max-frames 共用。训练集在这条顺序上轮转抽取动作块，直到取满预算：
+# 预算为 N 时会用到最多 N 条 episode，而不是只吃最长的前两条。
+# 损失是按训练集逐维标准化之后的 MSE（平移和旋转分开记），
+# val_loss 用科学计数法，scaling_law.py 按这个精度读取。
+# copy_current_wrist 是同一套标准化下「保持不动」的验证误差。
 state: observation.state
 action: wrist_pose_delta
 language: subtask_else_task_instruction
