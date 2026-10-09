@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-分析 /mnt/sda/app/robot 的训练产物，生成图表 + 自包含 HTML 报告。
+分析训练产物，生成图表 + 自包含 HTML 报告。
+
+根目录优先级: --root > 环境变量 ROBOT_ROOT > /mnt/sda/app/robot
 
 数据源:
   - ACT·pusht (LeRobot 复现, job=pusht_act_100k, 实际训练 100K 步, log_freq=200):
@@ -14,13 +16,15 @@
       /tmp/train_official.log      : 段1 0 → 100K (500 条)
       /tmp/train_official_200k.log : 段2 100K → 200K (500 条)
       outputs/train/act_pusht_official/checkpoints/ : 至 200000
-  - outputs/eval/2026-08-01/* : pusht 评估（通过 /tmp/eval_*.log 映射到 checkpoint）
+  - outputs/eval/**/eval_info.json : pusht 评估（历史 2026-08-01 目录，或 Colab 新跑的评估）
+  - outputs/colab_train.log : 若存在且本机没有 /tmp/train_50k.log，用它作为一条从 0 开始的连续训练曲线
   - outputs/mimicgen_gen.log          : Square 数据集（MimicGen）生成统计
   - outputs/mimicgen_train_image.log  : BC-RNN image 在 Square 上的训练
   - outputs/mimicgen_train_lowdim.log : BC-RNN low-dim 在 Square 上的训练
 
 输出: <outdir>/training_report.html (自包含)
 """
+import argparse
 import base64
 import glob
 import io
@@ -32,7 +36,20 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-ROOT = "/mnt/sda/app/robot"
+
+def resolve_root() -> str:
+    parser = argparse.ArgumentParser(description="生成训练 HTML 报告")
+    parser.add_argument(
+        "--root",
+        default=None,
+        help="工程根目录。未指定时读环境变量 ROBOT_ROOT，否则用 /mnt/sda/app/robot",
+    )
+    args, _unknown = parser.parse_known_args()
+    root = args.root or os.environ.get("ROBOT_ROOT") or "/mnt/sda/app/robot"
+    return os.path.abspath(root)
+
+
+ROOT = resolve_root()
 OUT = os.path.join(ROOT, "outputs", "report_20260801")
 os.makedirs(OUT, exist_ok=True)
 
@@ -58,14 +75,41 @@ def fig_to_b64(fig):
     return base64.b64encode(buf.read()).decode("ascii")
 
 
+def _fmt(val, spec):
+    if val is None:
+        return "—"
+    try:
+        return format(val, spec)
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _loss_at(steps, values, step):
+    if step in steps:
+        return values[steps.index(step)]
+    return None
+
+
+def _is_train_log_line(line: str) -> bool:
+    # 日志格式把 lerobot_train.py 截成 ot_train.py。v0.6.1 的指标行仍是 ot_train.py:641，
+    # 这里只认脚本名，避免行号变动后 Colab 日志画不出曲线。
+    return "ot_train.py" in line or "lerobot_train.py" in line
+
+
 # ---------------------------------------------------------------- 1. ACT·pusht 训练曲线
 # 每段日志按 log_freq=200 采样，第 i 条 INFO 对应全局步长 = seg_start + (i+1)*200
-ACT_SEGS = [  # (path, seg_start_step)
-    (os.path.join(ROOT, "train.log"), 0),
-    ("/tmp/train_50k.log", 10000),
-    ("/tmp/train_80k.log", 50000),
-    ("/tmp/train_100k.log", 80000),
-]
+_COLAB_LOG = os.path.join(ROOT, "outputs", "colab_train.log")
+if os.path.isfile(_COLAB_LOG) and not os.path.isfile("/tmp/train_50k.log"):
+    # Colab 一次跑完（或断线后续写）的连续日志。本机没有原来的 /tmp 分段时用它，
+    # 避免和仓库里只覆盖 0–10K 的 train.log 叠成两条从 0 起算的曲线。
+    ACT_SEGS = [(_COLAB_LOG, 0)]
+else:
+    ACT_SEGS = [  # (path, seg_start_step)
+        (os.path.join(ROOT, "train.log"), 0),
+        ("/tmp/train_50k.log", 10000),
+        ("/tmp/train_80k.log", 50000),
+        ("/tmp/train_100k.log", 80000),
+    ]
 
 act_steps, act_loss, act_l1, act_kld = [], [], [], []
 for path, seg_start in ACT_SEGS:
@@ -73,7 +117,7 @@ for path, seg_start in ACT_SEGS:
         continue
     _n = 0
     for line in open(path, encoding="utf-8", errors="ignore"):
-        if "ot_train.py:641" not in line:
+        if not _is_train_log_line(line):
             continue
         m = re.search(r"loss:([\d.]+).*?l1_loss:([\d.]+) kld_loss:([\d.]+)", line)
         if not m:
@@ -96,7 +140,7 @@ for path, seg_start in OFF_SEGS:
         continue
     _n = 0
     for line in open(path, encoding="utf-8", errors="ignore"):
-        if "ot_train.py:641" not in line:
+        if not _is_train_log_line(line):
             continue
         m = re.search(r"loss:([\d.]+).*?l1_loss:([\d.]+) kld_loss:([\d.]+)", line)
         if not m:
@@ -105,10 +149,10 @@ for path, seg_start in OFF_SEGS:
         off_steps.append(seg_start + _n * 200)
         off_loss.append(float(m.group(1)))
 
-official_ckpts = sorted(
-    int(d) for d in os.listdir(os.path.join(ROOT, "outputs", "train", "act_pusht_official", "checkpoints"))
-    if d.isdigit()
-)
+_off_ckpt_dir = os.path.join(ROOT, "outputs", "train", "act_pusht_official", "checkpoints")
+official_ckpts = []
+if os.path.isdir(_off_ckpt_dir):
+    official_ckpts = sorted(int(d) for d in os.listdir(_off_ckpt_dir) if d.isdigit())
 
 # ---- 合并图：两条 ACT 训练曲线
 fig, ax1 = plt.subplots(figsize=(9.5, 4.8))
@@ -118,7 +162,13 @@ ax1.plot(act_steps, act_kld, color=PALETTE[2], lw=1.0, ls=":", alpha=0.7, label=
 ax1.plot(off_steps, off_loss, color=PALETTE[5], lw=1.8, ls="-.", label="ACT 官方复现 (0→200K)")
 ax1.set_xlabel("训练步数")
 ax1.set_ylabel("loss")
-ax1.set_title("ACT 策略 · pusht 完整训练损失曲线（分四段日志合并）")
+if act_steps and 100000 in act_steps:
+    _act_title = "ACT 策略 · pusht 完整训练损失曲线（分四段日志合并）"
+elif act_steps:
+    _act_title = f"ACT 策略 · pusht 训练损失曲线（日志覆盖至 {act_steps[-1]} 步）"
+else:
+    _act_title = "ACT 策略 · pusht 训练损失曲线（无日志）"
+ax1.set_title(_act_title)
 ax1.grid(alpha=0.25)
 ax1.legend(loc="upper right", fontsize=9)
 # 里程碑标注（交替上下偏移避免重叠）
@@ -154,7 +204,7 @@ EVAL_CKPT = {
 }
 
 evals = []
-for f in sorted(glob.glob(os.path.join(ROOT, "outputs", "eval", "2026-08-01", "*", "eval_info.json"))):
+for f in sorted(glob.glob(os.path.join(ROOT, "outputs", "eval", "**", "eval_info.json"), recursive=True)):
     name = os.path.basename(os.path.dirname(f))
     d = json.load(open(f))
     o = d.get("overall", {})
@@ -168,30 +218,39 @@ for f in sorted(glob.glob(os.path.join(ROOT, "outputs", "eval", "2026-08-01", "*
         "n": o.get("n_episodes", 0),
     })
 
-if not evals:
-    raise SystemExit("未找到任何 eval_info.json，检查 outputs/eval 路径")
-
-fig, ax = plt.subplots(figsize=(10, 4.8))
-xs = range(len(evals))
-ax.bar([x - 0.19 for x in xs], [e["pc_success"] for e in evals], width=0.38,
-       color=PALETTE[0], label="成功率 %")
-ax.bar([x + 0.19 for x in xs], [e["avg_max_reward"] * 100 for e in evals], width=0.38,
-       color=PALETTE[1], label="平均最高回报×100")
-labels = [f"{e['hhmm']}\n{e['ckpt']}" for e in evals]
-ax.set_xticks(list(xs))
-ax.set_xticklabels(labels, rotation=45, fontsize=7)
-ax.set_ylabel("%")
-ax.set_title(f"ACT·pusht 评估结果（{len(evals)} 次，每集 horizon 300；下排标注所用 checkpoint）")
-ax.legend()
-ax.grid(axis="y", alpha=0.25)
-fig_b64_eval = fig_to_b64(fig)
+if evals:
+    fig, ax = plt.subplots(figsize=(10, 4.8))
+    xs = range(len(evals))
+    ax.bar([x - 0.19 for x in xs], [e["pc_success"] for e in evals], width=0.38,
+           color=PALETTE[0], label="成功率 %")
+    ax.bar([x + 0.19 for x in xs], [e["avg_max_reward"] * 100 for e in evals], width=0.38,
+           color=PALETTE[1], label="平均最高回报×100")
+    labels = [f"{e['hhmm']}\n{e['ckpt']}" for e in evals]
+    ax.set_xticks(list(xs))
+    ax.set_xticklabels(labels, rotation=45, fontsize=7)
+    ax.set_ylabel("%")
+    ax.set_title(f"ACT·pusht 评估结果（{len(evals)} 次，每集 horizon 300；下排标注所用 checkpoint）")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.25)
+    fig_b64_eval = fig_to_b64(fig)
+    best_eval = max(evals, key=lambda e: e["pc_success"])
+    best_mr = max(evals, key=lambda e: e["avg_max_reward"])
+else:
+    fig, ax = plt.subplots(figsize=(8, 2.6))
+    ax.text(0.5, 0.5, "未找到 outputs/eval/**/eval_info.json", ha="center", va="center")
+    ax.axis("off")
+    fig_b64_eval = fig_to_b64(fig)
+    best_eval = {"pc_success": None, "avg_max_reward": None}
+    best_mr = best_eval
 
 # ---------------------------------------------------------------- 4. Square 数据生成
 gen = {}
-gen_log = open(os.path.join(ROOT, "outputs", "mimicgen_gen.log"), encoding="utf-8", errors="ignore").read()
-m = re.search(r"Final Data Generation Stats\s*\n(\{.*?\})", gen_log, re.S)
-if m:
-    gen = json.loads(m.group(1))
+_gen_path = os.path.join(ROOT, "outputs", "mimicgen_gen.log")
+if os.path.isfile(_gen_path):
+    gen_log = open(_gen_path, encoding="utf-8", errors="ignore").read()
+    m = re.search(r"Final Data Generation Stats\s*\n(\{.*?\})", gen_log, re.S)
+    if m:
+        gen = json.loads(m.group(1))
 
 fig, axes = plt.subplots(1, 2, figsize=(9.4, 4.2))
 if gen:
@@ -240,6 +299,11 @@ def parse_robomimic(path):
 
 
 def plot_bcrnn(path, title):
+    if not os.path.isfile(path):
+        fig, ax = plt.subplots(figsize=(8, 2.4))
+        ax.set_title(title + "（日志缺失）")
+        ax.axis("off")
+        return [], [], [], [], fig_to_b64(fig)
     epochs, losses, r_ep, r_sr = parse_robomimic(path)
     fig, ax1 = plt.subplots(figsize=(9, 4.6))
     ax1.plot(epochs, losses, color=PALETTE[0], lw=1.4, label="训练 loss（对数似然,负值）")
@@ -288,9 +352,6 @@ def summarize(epochs, losses, r_ep, r_sr):
 img_sum = summarize(img_ep, img_loss, img_r_ep, img_r_sr)
 low_sum = summarize(low_ep, low_loss, low_r_ep, low_r_sr)
 
-best_eval = max(evals, key=lambda e: e["pc_success"])
-best_mr = max(evals, key=lambda e: e["avg_max_reward"])
-
 act_final_loss = act_loss[-1] if act_loss else None
 act_final_l1 = act_l1[-1] if act_l1 else None
 off_final_loss = off_loss[-1] if off_loss else None
@@ -300,29 +361,81 @@ def img_tag(b64):
     return f'<img src="data:image/png;base64,{b64}" style="max-width:100%;border:1px solid #e2e8f0;border-radius:8px;">'
 
 
+loss_10k = _loss_at(act_steps, act_loss, 10000)
+loss_50k = _loss_at(act_steps, act_loss, 50000)
+loss_100k = _loss_at(act_steps, act_loss, 100000)
+kld_est = (act_loss[-1] - act_l1[-1]) if act_loss and act_l1 else None
+if act_steps and act_steps[-1] >= 100000:
+    act_scale = f"{act_total_steps:,} 步（4 段日志合并，37 个 checkpoint）"
+else:
+    covered = act_steps[-1] if act_steps else 0
+    act_scale = f"目标 {act_total_steps:,} 步；当前日志覆盖至 {covered:,} 步"
+if evals:
+    sr_min = min(e["pc_success"] for e in evals)
+    sr_max = max(e["pc_success"] for e in evals)
+    eval_summary = f"{len(evals)} 次评估，成功率 {sr_min:.0f}–{sr_max:.0f}%"
+else:
+    eval_summary = "无 eval_info.json"
+gen_sr = float(gen["success_rate"]) if gen.get("success_rate") is not None else None
+best_sr_txt = "—" if best_eval.get("pc_success") is None else f"{best_eval['pc_success']:.0f}%"
+best_mr_txt = "—" if best_mr.get("avg_max_reward") is None else f"{best_mr['avg_max_reward']:.2f}"
+known_eval_ckpts = [e for e in evals if e["ckpt"] != "未知"]
+if len(known_eval_ckpts) >= 10:
+    eval_note = (
+        "下排标注各次评估所用 checkpoint：<code>12-32</code>→072000、"
+        "<code>12-34</code>→last(≈080000)、<code>14-07~14-11</code>→100000"
+        "（官方复现 100K 于 15:11 完成后另有 15:17–15:19 三次，仍失败）。"
+        f"20 次评估成功率 0–5%，平均最高回报 0.41（最高 {best_mr_txt}）。"
+        "<b>关键结论</b>：从 72K 到 100K，评估指标几乎不变 —— 该任务（push-t）的瓶颈不在训练量。"
+    )
+elif evals:
+    eval_note = (
+        f"本次读到 {len(evals)} 份 eval_info.json，最好成功率 {best_sr_txt}，"
+        f"最高平均回报 {best_mr_txt}。仓库里那次完整实验是 20 次评估、成功率 0–5%。"
+    )
+else:
+    eval_note = (
+        "未找到 <code>outputs/eval/**/eval_info.json</code>。"
+        "Colab 评估单元会把 <code>eval_info.json</code> 写到该目录，再跑本脚本即可画进报告。"
+        "仓库记录的完整实验是 20 次评估、成功率 0–5%。"
+    )
+def _bcrnn_cells(summ):
+    if not summ["epochs"] or summ["final_loss"] is None:
+        return "—", "—", "—", "—"
+    last = f"{summ['last_sr']*100:.0f}%" if summ["last_sr"] is not None else "—"
+    return (
+        f"{summ['epochs']} epochs",
+        f"loss {summ['final_loss']:.2f}",
+        f"成功率 {summ['best_sr']*100:.0f}% @ep{summ['best_ep']}",
+        last,
+    )
+
+
 rows = []
 rows.append(f"""<tr><td>ACT · pusht（LeRobot 复现）</td><td>train.log + /tmp/train_{'{'}50k,80k,100k{'}'}.log</td>
-<td>{act_total_steps:,} 步（4 段日志合并，37 个 checkpoint）</td>
-<td>{act_final_loss:.3f}</td><td>{act_final_l1:.3f} / {act_loss[-1]-act_l1[-1] if act_loss and act_l1 else 0:.3f}*</td>
-<td>20 次评估，成功率 0–5%</td></tr>""")
+<td>{act_scale}</td>
+<td>{_fmt(act_final_loss, '.3f')}</td><td>{_fmt(act_final_l1, '.3f')} / {_fmt(kld_est, '.3f')}*</td>
+<td>{eval_summary}</td></tr>""")
 rows.append(f"""<tr><td>ACT 官方复现 · pusht</td><td>/tmp/train_official*.log</td>
 <td>200,000 步（2 段日志）</td>
-<td>{off_final_loss:.3f}</td><td>—</td><td>demo 视频均为 fail（cov 0.0–0.93）</td></tr>""")
+<td>{_fmt(off_final_loss, '.3f')}</td><td>—</td><td>demo 视频均为 fail（cov 0.0–0.93）</td></tr>""")
 if gen:
     rows.append(f"""<tr><td>Square 数据集生成（MimicGen）</td><td>mimicgen_gen.log</td>
 <td>成功 {gen.get('num_success')} / 尝试 {gen.get('num_attempts')}</td>
 <td>成功率 {float(gen.get('success_rate', 0)):.1f}%</td><td>ep长度 {float(gen.get('ep_length_mean', 0)):.0f}±{float(gen.get('ep_length_std', 0)):.0f}</td>
 <td>耗时 {float(gen.get('time spent (hrs)', 0)):.2f} hrs</td></tr>""")
+img_epochs, img_loss_cell, img_best_cell, img_last = _bcrnn_cells(img_sum)
+low_epochs, low_loss_cell, low_best_cell, low_last = _bcrnn_cells(low_sum)
 rows.append(f"""<tr><td>BC-RNN image · Square</td><td>mimicgen_train_image.log</td>
-<td>{img_sum['epochs']} epochs</td>
-<td>loss {img_sum['final_loss']:.2f}</td>
-<td>成功率 {img_sum['best_sr']*100:.0f}% @ep{img_sum['best_ep']}</td>
-<td>最近一次 {img_sum['last_sr']*100 if img_sum['last_sr'] is not None else '—'}%</td></tr>""")
+<td>{img_epochs}</td>
+<td>{img_loss_cell}</td>
+<td>{img_best_cell}</td>
+<td>最近一次 {img_last}</td></tr>""")
 rows.append(f"""<tr><td>BC-RNN low-dim · Square</td><td>mimicgen_train_lowdim.log</td>
-<td>{low_sum['epochs']} epochs</td>
-<td>loss {low_sum['final_loss']:.2f}</td>
-<td>成功率 {low_sum['best_sr']*100:.0f}% @ep{low_sum['best_ep']}</td>
-<td>最近一次 {low_sum['last_sr']*100 if low_sum['last_sr'] is not None else '—'}%</td></tr>""")
+<td>{low_epochs}</td>
+<td>{low_loss_cell}</td>
+<td>{low_best_cell}</td>
+<td>最近一次 {low_last}</td></tr>""")
 
 html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -354,12 +467,12 @@ html = f"""<!DOCTYPE html>
 
 <div class="kpi">
 <div><b>100,000</b><span>ACT·pusht 实际训练步数</span></div>
-<div><b>{act_final_loss:.3f}</b><span>ACT 复现最终 loss (100K)</span></div>
-<div><b>0.118</b><span>loss @50K</span></div>
-<div><b>0.074</b><span>loss @100K</span></div>
+<div><b>{_fmt(act_final_loss, '.3f')}</b><span>ACT 复现最终 loss</span></div>
+<div><b>{_fmt(loss_50k, '.3f')}</b><span>loss @50K</span></div>
+<div><b>{_fmt(loss_100k, '.3f')}</b><span>loss @100K</span></div>
 <div><b>{len(evals)}</b><span>pusht 评估次数</span></div>
-<div><b>{best_eval['pc_success']:.0f}%</b><span>最佳评估成功率</span></div>
-<div><b>{gen.get('success_rate', 0):.1f}%</b><span>Square 生成成功率</span></div>
+<div><b>{best_sr_txt}</b><span>最佳评估成功率</span></div>
+<div><b>{_fmt(gen_sr, '.1f')}{'%' if gen_sr is not None else ''}</b><span>Square 生成成功率</span></div>
 <div><b>{low_sum['best_sr']*100:.0f}%</b><span>BC-RNN low-dim 最佳成功率</span></div>
 </div>
 
@@ -379,14 +492,11 @@ html = f"""<!DOCTYPE html>
 
 <h2>③ ACT · pusht 评估结果（{len(evals)} 次，已映射 checkpoint）</h2>
 <div class="card">{img_tag(fig_b64_eval)}</div>
-<p class="note">下排标注各次评估所用 checkpoint：<code>12-32</code>→072000、<code>12-34</code>→last(≈080000)、
-<code>14-07~14-11</code>→100000（官方复现 100K 于 15:11 完成后另有 15:17–15:19 三次，仍失败）。
-20 次评估成功率 0–5%，平均最高回报 0.41（最高 {best_mr['avg_max_reward']:.2f}）。
-<b>关键结论</b>：从 72K 到 100K，评估指标几乎不变 —— 该任务（push-t）的瓶颈不在训练量。</p>
+<p class="note">{eval_note}</p>
 
 <h2>④ Square 数据集生成（MimicGen）</h2>
 <div class="card">{img_tag(fig_b64_gen)}</div>
-<p class="note">用 MimicGen 生成 {gen.get('num_success', 0)} 条成功轨迹，生成成功率 {float(gen.get('success_rate', 0)):.1f}%。
+<p class="note">用 MimicGen 生成 {gen.get('num_success', 0) if gen else '—'} 条成功轨迹，生成成功率 {_fmt(gen_sr, '.1f')}{'%' if gen_sr is not None else ''}。
 该数据随后用于 BC-RNN 训练（下图）。</p>
 
 <h2>⑤ BC-RNN · Square 训练（image 与 low-dim 对比）</h2>
@@ -402,10 +512,20 @@ with open(os.path.join(OUT, "training_report.html"), "w", encoding="utf-8") as f
     f.write(html)
 
 print(f"报告已生成: {OUT}/training_report.html")
-print(f"ACT: 合并 {len(act_steps)} 条 INFO，steps 0→{act_steps[-1]}，loss_final={act_final_loss:.3f} l1={act_final_l1:.3f}")
-print(f"  里程碑: 10K={act_loss[act_steps.index(10000)]:.3f} 50K={act_loss[act_steps.index(50000)]:.3f} 100K={act_loss[act_steps.index(100000)]:.3f}")
-print(f"OFF: 合并 {len(off_steps)} 条 INFO，loss_final(200K)={off_final_loss:.3f}")
-print(f"Eval: n={len(evals)} best_success={best_eval['pc_success']:.0f}% best_mr={best_mr['avg_max_reward']:.2f}")
+if act_steps and act_final_loss is not None and act_final_l1 is not None:
+    print(f"ACT: 合并 {len(act_steps)} 条 INFO，steps 0→{act_steps[-1]}，loss_final={act_final_loss:.3f} l1={act_final_l1:.3f}")
+    miles = []
+    for label, step, val in (("10K", 10000, loss_10k), ("50K", 50000, loss_50k), ("100K", 100000, loss_100k)):
+        if val is not None:
+            miles.append(f"{label}={val:.3f}")
+    print("  里程碑:", " ".join(miles) if miles else "日志未覆盖 10K/50K/100K")
+else:
+    print("ACT: 无可用训练日志")
+if off_steps and off_final_loss is not None:
+    print(f"OFF: 合并 {len(off_steps)} 条 INFO，loss_final(200K)={off_final_loss:.3f}")
+else:
+    print("OFF: 无官方复现日志")
+print(f"Eval: n={len(evals)} best_success={best_sr_txt} best_mr={best_mr_txt}")
 print(f"Gen: success_rate={gen.get('success_rate')} num_success={gen.get('num_success')}")
 print(f"BCRNN image: epochs={img_sum['epochs']} best_sr={img_sum['best_sr']:.3f}@{img_sum['best_ep']}")
 print(f"BCRNN low:   epochs={low_sum['epochs']} best_sr={low_sum['best_sr']:.3f}@{low_sum['best_ep']}")
