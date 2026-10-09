@@ -55,6 +55,18 @@ python scripts/ego_visualize.py traj3d \
     --out outputs/open_data_demo/viz/traj3d.png
 ```
 
+自有头戴会话（设备还没有，目录见规格 §7.7）收成同一份 JSON。有 `hands.json` 和标定时会做双目尺度校正；`--backend mediapipe` 在 CPU 上跑，HaMeR / WiLoR 需要仓库外的 MANO 权重：
+
+```bash
+python scripts/convert_headcam.py --session /path/to/session --out outputs/headcam/episode.json
+python scripts/egodata_qc.py --episodes outputs/headcam/episode.json \
+    --html outputs/headcam/yield.html --csv outputs/headcam/yield.csv
+python scripts/ego_visualize.py overlay --episode outputs/headcam/episode.json \
+    --out outputs/headcam/overlay.png --width 640
+```
+
+Colab：[`notebooks/headcam_hand_pose_colab.ipynb`](notebooks/headcam_hand_pose_colab.ipynb)。默认用合成双目检查三角化误差（厘米），再跑 QC 和骨架叠加。HaMeR / WiLoR 单元默认关闭。
+
 EgoDex 转换只会填 ENVIRONMENT 和 TASK。时间分段 SUBTASK 和分手 INSTRUCTION 在源数据里没有，校验不加 `--strict` 时只报告缺级。
 
 QC 通过的片段可以导出成 **LeRobot v3.0**（与本仓库的 lerobot 0.6.1 一致）。`observation.state` 是双手关节加当前手腕，`action` 是下一步手腕增量；线性 BC 把连续 16 步拼成一块，并在固定的 episode 验证集上写下 `val_loss`。真实 mp4 默认缩到 224。ACT 配方在 `examples/ego_act_train.yaml`。转换可以加 `--workers`。
@@ -87,6 +99,9 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | `scripts/validate_hierarchy.py` | 校验四级标注。样例 `examples/hierarchy_annotation.json` |
 | `scripts/demo_open_dataset_pipeline.py` | 用合成 EgoDex 式样本把上面几步串起来 |
 | `scripts/ego_visualize.py` | 手骨架叠加、质检对照、世界系轨迹。投影与 QC 相同。不把画面提交进仓库 |
+| `scripts/convert_headcam.py` | 头戴会话目录 → 统一 episode。HaMeR / WiLoR / MediaPipe，双目三角化，TUM 位姿 |
+| `scripts/headcam/hand_pose.py` | 上面三个后端、Kalibr/OpenCV 标定、尺度校正、手腕 6DoF。MANO 权重不入库 |
+| `notebooks/headcam_hand_pose_colab.ipynb` | 合成双目的厘米误差、QC 和叠加；可选 GPU 上的 HaMeR / WiLoR，并和 EgoDex 手腕比较 |
 | `scripts/ego_to_lerobot.py` | QC 通过的统一 episode → LeRobot v3.0。动作是手腕增量，mp4 可缩放到 224 |
 | `scripts/ego_pretrain_bc.py` | 岭回归线性 BC。特征和动作都用全训练池统计量，可扫描 l2，多种子写均值和标准差 |
 | `examples/ego_pretrain_bc.yaml` | 线性 BC 配方：增量动作、horizon、不同数据量 |
@@ -109,6 +124,7 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 notebooks/           Colab：ACT·pusht，以及开放数据集质检/覆盖
 docs/                分析文档（规格/BOM/方案/差距/过程记录）
 scripts/egodata/     统一 episode、EgoDex 适配、QC、覆盖、标注校验
+scripts/headcam/     头戴手部后端、双目三角化、TUM 位姿。不含 MANO 权重
 scripts/             分析取证与命令行入口
 outputs/             训练产物与本地报告（大数据不入库）
 data/ hf_cache/      数据集与缓存（不入库）

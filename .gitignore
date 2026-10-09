@@ -31,3 +31,11 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# MANO / HaMeR / WiLoR 权重（非商业许可，禁止入库）
+/models/mano/
+/models/hamer/
+/models/wilor/
+MANO_RIGHT.pkl
+MANO_LEFT.pkl
+/outputs/headcam_demo/
