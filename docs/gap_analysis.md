@@ -21,20 +21,21 @@
 
 `scripts/ego_visualize.py` 可以把统一 episode 画出来：手骨架叠加、通过/拒绝对照、头和手腕的世界系轨迹。投影和 QC 相同。Colab 合成样本单元会写 PNG 和短 MP4。转换现在会进入符号链接的任务目录；以前 `Path.rglob` 会把这些目录整段跳过。
 
-自有头戴设备还缺这些，仓库里都还没有实现：
+自有头戴会话（规格 §7.7，设备还没有）现在可以收成同一份 JSON。`scripts/headcam/hand_pose.py` 接 HaMeR、WiLoR 和 CPU 上的 MediaPipe；左右目 2D 用标定三角化，修正单目尺度。相机位姿读 TUM 文件，没有文件时是单位阵。`scripts/convert_headcam.py` 写出的 episode 直接进现有的 QC、覆盖、导出和可视化。笔记本是 `notebooks/headcam_hand_pose_colab.ipynb`。
 
-- 手部姿态估计（HaMeR / WiLoR）：从第一视角图像得到 21 个关节
-- 双目三角化：用左右目把关节收到公制深度
-- SLAM：双目加 IMU 得到每帧头部在世界系的位姿
-- 标定：相机内参、相机之间的外参、IMU 到相机的外参
-- 自动语言标注：按时间切开的子任务和分手指令
+自有设备仍缺这些：
+
+- SLAM：仓库不跑双目加 IMU 的里程计，只读已经算好的 TUM。没有轨迹时坐标留在相机系
+- 标定计算：只读取 Kalibr / OpenCV yaml，不在这里求内参、外参或 IMU 到相机的外参
+- 自动语言标注：按时间切开的子任务和分手指令。转换器仍然留空
+- HaMeR / WiLoR 的权重：MANO 是非商业许可，不入库。没装权重时测试走合成双目，MediaPipe 测试在未安装时跳过
 
 ## 1. 逐段对照
 
 | 阶段 | 现在有什么 | 还缺什么 | 优先级 |
 |---|---|---|---|
 | 下载开放数据 | 已核对 EgoDex `test.zip`（见 §2）。没有下载脚本，避免把 16GB 拉进 CI | 需要时用 README 里的 `curl`。HOT3D clips、`lerobot/umi_cup_in_the_wild` 没有适配器 | P2：再加一个数据集 |
-| 转成统一格式 | `scripts/egodata/schema.py` + `egodex.py`，`scripts/convert_egodex.py`。关节矩阵整段读取，`--workers` 可多进程。没有 confidences 时置信度为未知。四元数在片段内连续。任务目录是符号链接时也会进入。`ego_to_lerobot.py` 写成 LeRobot v3.0，真实 mp4 可缩放到 224 | 只接了 EgoDex。没有源 mp4 时视频仍是 16×16 占位 | P2：再加一个数据集 |
+| 转成统一格式 | `scripts/egodata/schema.py` + `egodex.py`，`scripts/convert_egodex.py`。关节矩阵整段读取，`--workers` 可多进程。没有 confidences 时置信度为未知。四元数在片段内连续。任务目录是符号链接时也会进入。`ego_to_lerobot.py` 写成 LeRobot v3.0，真实 mp4 可缩放到 224。自有会话用 `scripts/convert_headcam.py`：HaMeR / WiLoR / MediaPipe、双目三角化、TUM 位姿，输出同一份 JSON | 开放数据只接了 EgoDex。没有源 mp4 时视频仍是 16×16 占位。头戴侧不跑 SLAM，也不做标定求解 | P2：再加一个数据集；SLAM 仍在设备侧 |
 | QC / 产出率 | `scripts/egodata/qc.py`，`scripts/egodata_qc.py`。手出画、视线飘移、相机角速度（模糊代理）、长时间静止。产出率 = 通过片段的帧数 / 原始帧数。`ego_visualize.py qc_compare` 用同一套逐帧标记画对照 | 模糊还没看像素（拉普拉斯）。坏段只能整段丢掉，不能把好的子段切出来留用 | P1：有 mp4 时加像素模糊；子段裁剪 |
 | 可视化 | `scripts/ego_visualize.py`：`overlay`（21 点骨架、手腕轨迹、任务文字，PNG/MP4）、`qc_compare`、`traj3d`。投影与 QC 相同。开放数据笔记本里有合成样本单元 | 不读像素，也不做手部估计。生成的图不入库 | P2：抽样时看几条真实 mp4 |
 | 覆盖统计 | `scripts/egodata/coverage.py`。桌布 `tablecloth:`、坐姿和背景都留在环境名里，`lavendar` 收成 `lavender`。物体类别在出报告时按当前词表重算，脚本逐条累加、不把全部 JSON 留在内存里。动作词表含组装、滚动、推动、涂色等，take/gather、stock/add 收到已有类别 | 词表仍是手写的，笼统的 `use` 仍算 other。没有「该采多少才算补上」的数量目标 | P2：按目标小时数做配额 |
@@ -107,7 +108,7 @@ ACT 训练入口是 `scripts/ego_act_scaling.py` 和 `notebooks/egodex_act_scali
 
 - 不下载、不提交 test.zip 或任何 HDF5/MP4/导出数据集，也不提交 EgoDex 画面。可视化测试用临时生成的小视频。真实数据上的 PNG/MP4 只留在本机或 Colab。
 - 不在转换器里伪造时间分段语言。SUBTASK 为空时整段用 TASK.instruction。
-- 不跑 SLAM。EgoDex 的世界系是设备上算好的；自有头戴还没有相机，规格 §7.2 的双目/SLAM 仍然是硬件到位以后的事。
+- 不在仓库里跑 SLAM，也不把 IMU 双重积分。`convert_headcam.py` 只读取已有的 TUM；没有轨迹时相机位姿是单位阵，`coordinate_frame` 为 `camera`。标定文件只读，不求解。
 - 不把 pusht ACT 改成吃手部关节。手部预训练用单独的配方，动作是手腕增量。
 - 单元测试不导入 torch。装了 lerobot 0.6.1 时，用合成数据跑 1 步 CPU 的 `ego_act_scaling.py --run`，只确认命令能启动。完整四档仍在 Colab GPU。
 - 不在这一轮用 3,243 条把 ACT 训完。
@@ -118,4 +119,4 @@ ACT 训练入口是 `scripts/ego_act_scaling.py` 和 `notebooks/egodex_act_scali
 2. 导出时加上 `--video-size 224`，在 GPU 上按 `examples/ego_act_train.yaml` 训 ACT。不同小时数的 `val_loss` 交给 `scripts/scaling_law.py`。线性 BC 只作基线，并和 `copy_current_wrist` 比。
 3. 时间分段和分手指令单独做标注，过 `validate_hierarchy.py --strict` 再进训练。导出已经会读 SUBTASK。
 4. 像素模糊和 HOT3D 仍排在这条链路之后。
-5. 自有头戴设备还缺：手部姿态估计（HaMeR / WiLoR）、双目三角化、SLAM、标定、自动语言标注。
+5. 自有头戴还缺：在设备上跑 SLAM 并把 TUM 写进会话、做 Kalibr/OpenCV 标定、以及自动语言标注。手部后端、双目三角化和会话转换已经在 `scripts/headcam/` 与 `scripts/convert_headcam.py`。MANO / HaMeR / WiLoR 权重不要提交。
