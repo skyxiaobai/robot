@@ -3,9 +3,11 @@
 """拟合「最优验证损失 ~ a + b·ln(数据量)」并写入 HTML 报告。
 
 输入是一份 YAML 或 CSV：每行一次训练的名字、数据量（小时或条数）、日志路径。
-从日志里取验证损失的最小值，对 ln(数据量) 做线性拟合，把散点与拟合线画进报告。
+从日志里取验证损失。同一数据量的多种子先取均值，并画标准差。
+同时拟合对数直线和饱和幂律 ``L = L∞ + A·N^(-α)``（不依赖 scipy），
+两条都写入报告；R² 更高的那条作为图上的默认曲线，打平则用对数直线。
 若日志里有 ``copy_current_wrist``、``trans_mse``、``rot_mse``，同时画出保持不动
-基线、平移/旋转拆分，并对验证损失与基线的比值再拟合一条直线。
+基线、平移/旋转拆分，并对验证损失与基线的比值做同样的两种拟合。
 没有 --runs、配置不存在、或有效 run 不足 2 个时直接跳过，退出码为 0。
 
 示例:
@@ -75,14 +77,29 @@ def _load_text(text):
     return text
 
 
-def extract_run_metrics(text):
-    """读取与最小验证损失同一段的基线、平移和旋转。
+_AGG_FIELDS = (
+    ("val_loss", "val_loss_mean"),
+    ("val_loss_std", "val_loss_std"),
+    ("copy_current_wrist", "copy_current_wrist_mean"),
+    ("copy_current_wrist_std", "copy_current_wrist_std"),
+    ("trans_mse", "trans_mse_mean"),
+    ("trans_mse_std", "trans_mse_std"),
+    ("rot_mse", "rot_mse_mean"),
+    ("rot_mse_std", "rot_mse_std"),
+    ("val_baseline_ratio", "val_baseline_ratio_mean"),
+    ("val_baseline_ratio_std", "val_baseline_ratio_std"),
+)
 
-    传入已存在的文件路径时读取文件；否则把参数当作日志正文。
-    两条 ``val_loss`` 之间的指标算在前一条上，避免 ``trans_mse`` 被后一步抢走。
-    ``copy_trans_mse`` 不会被当成 ``trans_mse``。没有验证损失时返回 None。
-    """
-    text = _load_text(text)
+
+def _last_named_number(name, text):
+    pattern = re.compile(r"(?<![A-Za-z_])" + re.escape(name) + r"\s*[:=]\s*" + _NUMBER)
+    found = pattern.findall(text)
+    if not found:
+        return None
+    return float(found[-1])
+
+
+def _metrics_from_seed_blocks(text):
     matches = list(_VAL_RE.finditer(text))
     if not matches:
         return None
@@ -98,10 +115,34 @@ def extract_run_metrics(text):
                 record[key] = float(found[-1])
         if best is None or record["val_loss"] < best["val_loss"]:
             best = record
-    copy_loss = best.get("copy_current_wrist")
-    if copy_loss:
-        best["val_baseline_ratio"] = best["val_loss"] / copy_loss
     return best
+
+
+def extract_run_metrics(text):
+    """读取验证损失，以及同一段里的基线、平移和旋转。
+
+    传入已存在的文件路径时读取文件；否则把参数当作日志正文。
+    日志里若有 ``val_loss_mean``，用多种子均值，不用其中最小的那一次。
+    否则取最小的 ``val_loss``。两条 ``val_loss`` 之间的指标算在前一条上。
+    ``copy_trans_mse`` 不会被当成 ``trans_mse``。没有验证损失时返回 None。
+    """
+    text = _load_text(text)
+    if _last_named_number("val_loss_mean", text) is not None:
+        record = {}
+        for key, name in _AGG_FIELDS:
+            value = _last_named_number(name, text)
+            if value is not None:
+                record[key] = value
+        if "val_loss" not in record:
+            return None
+    else:
+        record = _metrics_from_seed_blocks(text)
+        if record is None:
+            return None
+    copy_loss = record.get("copy_current_wrist")
+    if copy_loss and "val_baseline_ratio" not in record:
+        record["val_baseline_ratio"] = record["val_loss"] / copy_loss
+    return record
 
 
 def extract_best_val_loss(text):
@@ -133,7 +174,169 @@ def fit_log_linear(sizes, losses):
     ss_tot = sum((y - y_mean) ** 2 for y in ys)
     ss_res = sum((y - (intercept + slope * x)) ** 2 for x, y in zip(xs, ys))
     r2 = 1.0 if ss_tot == 0 else 1.0 - ss_res / ss_tot
-    return {"intercept": intercept, "slope": slope, "r2": r2}
+    return {"form": "log", "intercept": intercept, "slope": slope, "r2": r2}
+
+
+def _r_squared(ys, predicted):
+    mean = sum(ys) / len(ys)
+    ss_tot = sum((y - mean) ** 2 for y in ys)
+    ss_res = sum((y - pred) ** 2 for y, pred in zip(ys, predicted))
+    if ss_tot == 0:
+        return 1.0
+    return 1.0 - ss_res / ss_tot
+
+
+def _ols_line(xs, ys):
+    n = len(xs)
+    x_mean = sum(xs) / n
+    y_mean = sum(ys) / n
+    var = sum((x - x_mean) ** 2 for x in xs)
+    if var == 0:
+        return None
+    slope = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys)) / var
+    return y_mean - slope * x_mean, slope
+
+
+def predict_loss(fit, size):
+    """按拟合形式计算某个数据量上的损失。"""
+    size = float(size)
+    if fit.get("form") == "power":
+        return fit["linf"] + fit["A"] * (size ** (-fit["alpha"]))
+    return fit["intercept"] + fit["slope"] * math.log(size)
+
+
+def fit_power_saturating(sizes, losses):
+    """拟合 ``L = L∞ + A·N^(-α)``，α>0 且 A>0。找不到下降曲线时返回 None。
+
+    对每个 α，A 和 L∞ 有闭式最小二乘。α 在对数网格上搜索后再局部加密。
+    不使用 scipy。
+    """
+    sizes = [float(s) for s in sizes]
+    ys = [float(y) for y in losses]
+    if len(sizes) < 3 or any(s <= 0 for s in sizes):
+        return None
+    logs = [math.log(s) for s in sizes]
+    best = None
+
+    def consider(alpha):
+        nonlocal best
+        if alpha <= 0:
+            return
+        xs = [math.exp(-alpha * log_s) for log_s in logs]
+        coef = _ols_line(xs, ys)
+        if coef is None:
+            return
+        linf, amp = coef
+        if amp <= 0:
+            return
+        predicted = [linf + amp * x for x in xs]
+        score = _r_squared(ys, predicted)
+        if best is None or score > best["r2"]:
+            best = {"form": "power", "linf": linf, "A": amp, "alpha": alpha, "r2": score}
+
+    for index in range(64):
+        alpha = math.exp(math.log(0.02) + (math.log(4.0) - math.log(0.02)) * index / 63.0)
+        consider(alpha)
+    if best is None:
+        return None
+    center = best["alpha"]
+    for index in range(41):
+        consider(center * math.exp((index - 20) * 0.06))
+    return best
+
+
+def select_fit(log_fit, power_fit):
+    """R² 更高的作为默认。打平或没有幂律时用对数直线。"""
+    if power_fit is not None and power_fit["r2"] > log_fit["r2"]:
+        return power_fit
+    return log_fit
+
+
+def describe_fit(fit):
+    """一行公式，给报告和终端用。"""
+    if fit.get("form") == "power":
+        return "L = %s + %s·N^(-%s)" % (
+            format_metric(fit["linf"]), format_metric(fit["A"]), format_metric(fit["alpha"]),
+        )
+    return "L = %s + (%s)·ln(N)" % (format_metric(fit["intercept"]), format_metric(fit["slope"]))
+
+
+def label_offsets(xs, ys):
+    """给靠得很近的点错开标注，避免 256k 和全量叠在一起。
+
+    返回与输入等长的 ``(dx, dy)``，单位是点。
+    """
+    count = len(xs)
+    offsets = [(8, 8)] * count
+    if count < 2:
+        return offsets
+    xspan = max(xs) - min(xs) or 1.0
+    yspan = max(ys) - min(ys) or 1.0
+    candidates = [(8, 10), (8, -16), (-72, 10), (-72, -16), (8, 24), (8, -30)]
+    placed = []
+    for index in sorted(range(count), key=lambda i: (xs[i], ys[i])):
+        chosen = candidates[-1]
+        for cand in candidates:
+            clear = True
+            for other, pdx, pdy in placed:
+                far_point = (
+                    abs((xs[index] - xs[other]) / xspan) > 0.08
+                    or abs((ys[index] - ys[other]) / yspan) > 0.08
+                )
+                far_label = abs(cand[0] - pdx) > 24 or abs(cand[1] - pdy) > 12
+                if not far_point and not far_label:
+                    clear = False
+                    break
+            if clear:
+                chosen = cand
+                break
+        offsets[index] = chosen
+        placed.append((index, chosen[0], chosen[1]))
+    return offsets
+
+
+def _sample_std(values):
+    if len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    return math.sqrt(sum((value - mean) ** 2 for value in values) / (len(values) - 1))
+
+
+def _group_by_size(points):
+    """同一数据量的多次运行合成一个点：均值和样本标准差。"""
+    order = []
+    buckets = {}
+    for point in points:
+        key = point["size"]
+        if key not in buckets:
+            order.append(key)
+            buckets[key] = []
+        buckets[key].append(point)
+    grouped = []
+    for size in order:
+        group = buckets[size]
+        if len(group) == 1:
+            grouped.append(group[0])
+            continue
+        losses = [point["loss"] for point in group]
+        merged = {
+            "name": "、".join(point["name"] for point in group),
+            "size": size,
+            "size_kind": group[0]["size_kind"],
+            "loss": sum(losses) / len(losses),
+            "loss_std": _sample_std(losses),
+            "n_seeds": len(group),
+            "log": " ; ".join(point["log"] for point in group),
+        }
+        for key in ("copy_current_wrist", "trans_mse", "rot_mse", "val_baseline_ratio"):
+            values = [point[key] for point in group if point.get(key) is not None]
+            if not values:
+                continue
+            merged[key] = sum(values) / len(values)
+            if len(values) >= 2:
+                merged[key + "_std"] = _sample_std(values)
+        grouped.append(merged)
+    return grouped
 
 
 def _unquote(value):
@@ -246,28 +449,49 @@ def analyze_config(path):
             "size": run["size"],
             "size_kind": run["size_kind"],
             "loss": metrics["val_loss"],
+            "loss_std": metrics.get("val_loss_std"),
             "copy_current_wrist": metrics.get("copy_current_wrist"),
+            "copy_current_wrist_std": metrics.get("copy_current_wrist_std"),
             "trans_mse": metrics.get("trans_mse"),
+            "trans_mse_std": metrics.get("trans_mse_std"),
             "rot_mse": metrics.get("rot_mse"),
+            "rot_mse_std": metrics.get("rot_mse_std"),
             "val_baseline_ratio": metrics.get("val_baseline_ratio"),
+            "val_baseline_ratio_std": metrics.get("val_baseline_ratio_std"),
             "log": run["log"],
         })
     kinds = {p["size_kind"] for p in points}
     if len(points) < 2 or len(kinds) != 1:
         return None
     points.sort(key=lambda p: p["size"])
-    fit = fit_log_linear([p["size"] for p in points], [p["loss"] for p in points])
+    points = _group_by_size(points)
+    if len(points) < 2:
+        return None
+    log_fit = fit_log_linear([p["size"] for p in points], [p["loss"] for p in points])
+    power_fit = fit_power_saturating([p["size"] for p in points], [p["loss"] for p in points])
+    fit = select_fit(log_fit, power_fit)
     ratio_points = [p for p in points if p.get("val_baseline_ratio") is not None]
+    ratio_log_fit = None
+    ratio_power_fit = None
     ratio_fit = None
     if len(ratio_points) >= 2:
-        ratio_fit = fit_log_linear(
+        ratio_log_fit = fit_log_linear(
             [p["size"] for p in ratio_points],
             [p["val_baseline_ratio"] for p in ratio_points],
         )
+        ratio_power_fit = fit_power_saturating(
+            [p["size"] for p in ratio_points],
+            [p["val_baseline_ratio"] for p in ratio_points],
+        )
+        ratio_fit = select_fit(ratio_log_fit, ratio_power_fit)
     return {
         "points": points,
         "fit": fit,
+        "log_fit": log_fit,
+        "power_fit": power_fit,
         "ratio_fit": ratio_fit,
+        "ratio_log_fit": ratio_log_fit,
+        "ratio_power_fit": ratio_power_fit,
         "skipped": skipped,
         "size_kind": points[0]["size_kind"],
     }
@@ -293,17 +517,18 @@ def _series(points, key):
     return xs, ys
 
 
-def _fit_line(ax, xs, fit, color):
-    if not xs or not fit:
+def _draw_fit(ax, sizes, fit, color, primary):
+    if not sizes or not fit:
         return
-    x0, x1 = min(xs), max(xs)
+    logs = [math.log(float(size)) for size in sizes]
+    x0, x1 = min(logs), max(logs)
     pad = (x1 - x0) * 0.08 or 0.2
-    line_x = [x0 - pad, x1 + pad]
-    line_y = [fit["intercept"] + fit["slope"] * x for x in line_x]
-    ax.plot(
-        line_x, line_y, color=color, lw=1.8,
-        label="L = %s + (%s)·ln(N)" % (format_metric(fit["intercept"]), format_metric(fit["slope"])),
-    )
+    line_x = [x0 - pad + (x1 - x0 + 2 * pad) * i / 40.0 for i in range(41)]
+    line_y = [predict_loss(fit, math.exp(x)) for x in line_x]
+    style = "-" if primary else "--"
+    width = 1.8 if primary else 1.2
+    prefix = "默认 " if primary else ""
+    ax.plot(line_x, line_y, color=color, lw=width, ls=style, label=prefix + describe_fit(fit))
 
 
 def plot_b64(result):
@@ -317,11 +542,20 @@ def plot_b64(result):
     panels = 1 + int(has_split) + int(has_ratio)
     fig, axes = plt.subplots(1, panels, figsize=(8.2 * panels, 4.6), squeeze=False)
     ax = axes[0, 0]
-    ax.scatter(xs, [p["loss"] for p in points], s=46, color="#2563eb", zorder=3, label="验证损失")
-    for point, x in zip(points, xs):
-        ax.annotate(point["name"], xy=(x, point["loss"]), xytext=(6, 6),
+    losses = [p["loss"] for p in points]
+    loss_err = [p.get("loss_std") or 0.0 for p in points]
+    if any(loss_err):
+        ax.errorbar(xs, losses, yerr=loss_err, fmt="o", ms=6, color="#2563eb",
+                    ecolor="#93c5fd", capsize=3, zorder=3, label="验证损失")
+    else:
+        ax.scatter(xs, losses, s=46, color="#2563eb", zorder=3, label="验证损失")
+    offsets = label_offsets(xs, losses)
+    for point, x, y, (dx, dy) in zip(points, xs, losses, offsets):
+        ax.annotate(point["name"], xy=(x, y), xytext=(dx, dy),
                     textcoords="offset points", fontsize=8, color="#334155")
-    _fit_line(ax, xs, fit, "#f59e0b")
+    _draw_fit(ax, [p["size"] for p in points], fit, "#f59e0b", True)
+    other = result.get("power_fit") if fit.get("form") != "power" else result.get("log_fit")
+    _draw_fit(ax, [p["size"] for p in points], other, "#94a3b8", False)
     if has_baseline:
         base_x, base_y = _series(points, "copy_current_wrist")
         ax.plot(base_x, base_y, color="#64748b", lw=1.6, marker="s", ms=5, label="保持不动基线")
@@ -348,9 +582,17 @@ def plot_b64(result):
     if has_ratio:
         ax_ratio = axes[0, panel]
         ratio_x, ratio_y = _series(points, "val_baseline_ratio")
-        ax_ratio.plot(ratio_x, ratio_y, color="#2563eb", lw=1.6, marker="o", label="val / 基线")
+        ratio_err = [p.get("val_baseline_ratio_std") or 0.0 for p in points if p.get("val_baseline_ratio") is not None]
+        if any(ratio_err):
+            ax_ratio.errorbar(ratio_x, ratio_y, yerr=ratio_err, fmt="o", ms=5, color="#2563eb",
+                              ecolor="#93c5fd", capsize=3, label="val / 基线")
+        else:
+            ax_ratio.plot(ratio_x, ratio_y, color="#2563eb", lw=1.6, marker="o", label="val / 基线")
         ax_ratio.axhline(1.0, color="#94a3b8", lw=1.0, label="与基线持平")
-        _fit_line(ax_ratio, ratio_x, result.get("ratio_fit"), "#f59e0b")
+        ratio_sizes = [p["size"] for p in points if p.get("val_baseline_ratio") is not None]
+        _draw_fit(ax_ratio, ratio_sizes, result.get("ratio_fit"), "#f59e0b", True)
+        ratio_other = result.get("ratio_power_fit") if result.get("ratio_fit", {}).get("form") != "power" else result.get("ratio_log_fit")
+        _draw_fit(ax_ratio, ratio_sizes, ratio_other, "#94a3b8", False)
         ax_ratio.set_xlabel(size_axis_label(kind))
         ax_ratio.set_ylabel("验证损失 / 基线")
         ax_ratio.set_title("相对基线")
@@ -360,11 +602,17 @@ def plot_b64(result):
     return _fig_to_b64(fig)
 
 
+def _fmt_with_std(value, std):
+    text = _fmt_optional(value)
+    if value is None or not std:
+        return text
+    return text + " ± " + format_metric(std)
+
+
 def render_section(result):
     """返回可嵌进训练报告的 HTML 片段。"""
     fit = result["fit"]
     kind = _KIND_LABEL[result["size_kind"]]
-    per_decade = fit["slope"] * math.log(10)
     has_extra = any(
         point.get("copy_current_wrist") is not None
         or point.get("trans_mse") is not None
@@ -385,7 +633,7 @@ def render_section(result):
                 "<tr><td>%s</td><td>%.4g %s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td></tr>"
                 % (
                     html.escape(point["name"]), point["size"], kind,
-                    format_metric(point["loss"]),
+                    _fmt_with_std(point["loss"], point.get("loss_std")),
                     _fmt_optional(point.get("copy_current_wrist")),
                     _fmt_optional(point.get("val_baseline_ratio")),
                     _fmt_optional(point.get("trans_mse")),
@@ -396,7 +644,8 @@ def render_section(result):
         else:
             rows.append(
                 "<tr><td>%s</td><td>%.4g %s</td><td>%s</td><td><code>%s</code></td></tr>"
-                % (html.escape(point["name"]), point["size"], kind, format_metric(point["loss"]),
+                % (html.escape(point["name"]), point["size"], kind,
+                   _fmt_with_std(point["loss"], point.get("loss_std")),
                    html.escape(point["log"]))
             )
     skipped = ""
@@ -404,17 +653,19 @@ def render_section(result):
         skipped = "<p class=\"note\">已跳过缺少日志或没有验证损失的 run：%s。</p>" % html.escape(
             "、".join(result["skipped"])
         )
+    log_fit = result["log_fit"]
+    power_fit = result.get("power_fit")
+    power_text = describe_fit(power_fit) + "，R² = %.4f" % power_fit["r2"] if power_fit else "未找到 A&gt;0 的下降曲线"
+    default_name = "饱和幂律" if fit.get("form") == "power" else "对数直线"
     ratio_note = ""
     ratio_fit = result.get("ratio_fit")
     if ratio_fit:
-        ratio_decade = ratio_fit["slope"] * math.log(10)
         ratio_note = (
-            "<p class=\"note\">相对基线（验证损失 / copy_current_wrist）拟合："
-            "<b>L = %s + (%s)·ln(N)</b>，R² = %.4f。"
-            "数据量每增加 10 倍，比值变化 %s。比值小于 1 表示好于保持不动。</p>"
+            "<p class=\"note\">相对基线（验证损失 / copy_current_wrist）默认曲线是%s：<b>%s</b>，R² = %.4f。"
+            "比值小于 1 表示好于保持不动。</p>"
             % (
-                format_metric(ratio_fit["intercept"]), format_metric(ratio_fit["slope"]),
-                ratio_fit["r2"], format_metric(ratio_decade),
+                "饱和幂律" if ratio_fit.get("form") == "power" else "对数直线",
+                describe_fit(ratio_fit), ratio_fit["r2"],
             )
         )
     img = plot_b64(result)
@@ -422,14 +673,16 @@ def render_section(result):
 <div class="card"><img src="data:image/png;base64,%s" style="max-width:100%%;border:1px solid #e2e8f0;border-radius:8px;"></div>
 <table>%s
 %s</table>
-<p class="note">拟合（自然对数）：<b>L = %s + (%s)·ln(N)</b>，R² = %.4f。
-数据量每增加 10 倍，拟合损失变化 %s。
-这是 EgoScale 报告的 log-linear 关系：最优验证损失对预训练小时数（或条数）的对数近似线性。
-每个 run 取日志中的最小验证损失，不使用训练损失。</p>
+<p class="note">默认曲线是<b>%s</b>：<b>%s</b>，R² = %.4f。
+对数直线：%s，R² = %.4f。
+饱和幂律 L = L∞ + A·N^(-α)：%s。
+同一数据量有多次运行时，点是均值，误差线是样本标准差。
+每个 run 取日志中的最小验证损失；若日志写了 val_loss_mean，则用多种子均值。不使用训练损失。</p>
 %s%s""" % (
         img, header, "".join(rows),
-        format_metric(fit["intercept"]), format_metric(fit["slope"]), fit["r2"],
-        format_metric(per_decade), ratio_note, skipped,
+        default_name, describe_fit(fit), fit["r2"],
+        describe_fit(log_fit), log_fit["r2"],
+        power_text, ratio_note, skipped,
     )
 
 
@@ -505,12 +758,13 @@ def main(argv=None):
         handle.write(render_report(result))
     fit = result["fit"]
     print("缩放律报告已生成: %s" % out)
-    print("L = %s + (%s)·ln(N)  R2=%.4f  n=%d" % (
-        format_metric(fit["intercept"]), format_metric(fit["slope"]), fit["r2"], len(result["points"])))
+    print("默认 %s  R2=%.4f  n=%d" % (describe_fit(fit), fit["r2"], len(result["points"])))
+    print("对数直线 %s  R2=%.4f" % (describe_fit(result["log_fit"]), result["log_fit"]["r2"]))
+    if result.get("power_fit"):
+        print("饱和幂律 %s  R2=%.4f" % (describe_fit(result["power_fit"]), result["power_fit"]["r2"]))
     ratio_fit = result.get("ratio_fit")
     if ratio_fit:
-        print("val/baseline L = %s + (%s)·ln(N)  R2=%.4f" % (
-            format_metric(ratio_fit["intercept"]), format_metric(ratio_fit["slope"]), ratio_fit["r2"]))
+        print("val/baseline %s  R2=%.4f" % (describe_fit(ratio_fit), ratio_fit["r2"]))
     return 0
 
 

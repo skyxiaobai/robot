@@ -19,9 +19,10 @@ seed: 0
 # 各档 --max-frames 共用。每条 episode 内先按种子打乱动作块，再轮转取满预算：
 # 小预算不会只抽到片段开头，更小预算仍是更大预算的前缀。
 # 预算为 N 时会用到最多 N 条 episode，而不是只吃最长的前两条。
-# 动作的均值和标准差只从全部训练池算一次，验证目标和保持不动基线用同一套，
-# 所以各档 val_loss 可以比较。平移和旋转分开记，并写 val_baseline_ratio。
-# val_loss 用科学计数法，scaling_law.py 按这个精度读取，并拟合比值。
+# 动作和特征的均值、标准差只从全部训练池算一次，验证目标和保持不动基线用同一套。
+# 岭回归系数在训练样本内部选择；--seeds 0,1 会写均值和标准差。
+# 平移和旋转分开记，并写 val_baseline_ratio。
+# val_loss 用科学计数法。scaling_law.py 同时拟合对数直线和饱和幂律。
 state: observation.state
 action: wrist_pose_delta
 language: subtask_else_task_instruction

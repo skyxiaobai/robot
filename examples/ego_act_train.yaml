@@ -5,6 +5,8 @@
 # chunk_size 向后看 16 步，组成动作块。可选 --include-hand 再加关节增量。
 # 真实 mp4 用 ego_to_lerobot.py --video-size 224（或 256）缩成正方形，不要按 1080p 重编码。
 # 线性 BC 是同一目标上的快速基线，见 examples/ego_pretrain_bc.yaml。
+# 多档 ACT、固定验证集和缩放报告见 notebooks/egodex_act_scaling_colab.ipynb。
+# lerobot 0.6.1 的 ACT 只条件于图像和 state，没有语言编码器。
 lerobot: "0.6.1"
 codebase_version: v3.0
 robot_type: egodex_human
