@@ -25,7 +25,8 @@ def add_root_argument(parser):
 def resolve_root(argv=None):
     parser = argparse.ArgumentParser()
     add_root_argument(parser)
-    args = parser.parse_args(argv)
+    # analyze_training.py 还会带 --scaling；这里只取 --root，其余留给调用方。
+    args, _unknown = parser.parse_known_args(argv)
     return os.path.abspath(args.root)
 
 

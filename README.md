@@ -10,6 +10,12 @@
 | ACT | LeRobot v0.6.1 | pusht（206 集，10fps） | image[3,96,96]+state[2] → action[2]（chunk 100） | loss 收敛 0.074@100K；评估 0-5% |
 | BC-RNN | robomimic | MimicGen Square（1000 条 × 160 步 @20Hz） | obs+image → actions(160,7) | image 68% / lowdim 76% |
 
+## 在 Colab 上复现 ACT · pusht
+
+[`notebooks/act_pusht_colab.ipynb`](notebooks/act_pusht_colab.ipynb) 在 Colab GPU 上按 `train.log` 的超参训练并评估 LeRobot v0.6.1 ACT（pusht，共 100K 步）：检查 GPU、可选挂载 Google Drive、安装 `lerobot[pusht,training]==0.6.1` 与 `gym-pusht`、克隆本仓库、支持从 `checkpoints/last` 断点续训、无头评估并把 rollout 存成 mp4、再用 `scripts/analyze_training.py --root` 生成报告。
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/skyxiaobai/robot/blob/main/notebooks/act_pusht_colab.ipynb)
+
 ## 分析文档导航
 
 | 文档 | 内容 |
@@ -33,6 +39,7 @@
 ## 目录说明
 
 ```
+notebooks/           Colab 复现笔记本（ACT · pusht）
 docs/                分析文档（规格/BOM/方案/过程记录）
 scripts/             分析取证与生成脚本
 outputs/             训练产物（checkpoints 等大文件不入库）

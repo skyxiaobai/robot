@@ -12,11 +12,13 @@
       /tmp/train_80k.log    : 段3 50K → 80K (150 条)
       /tmp/train_100k.log   : 段4 80K → 100K (100 条)
       outputs/checkpoints/  : 003000 → 100000 共 37 个 checkpoint
+      outputs/colab_train.log : Colab 一次跑完的连续日志。存在且本机没有
+        /tmp/train_50k.log 时，用它代替上面四段（从 0 起算，log_freq=200）
   - ACT 官方复现 (act_pusht_official, 训练 200K):
       /tmp/train_official.log      : 段1 0 → 100K (500 条)
       /tmp/train_official_200k.log : 段2 100K → 200K (500 条)
       outputs/train/act_pusht_official/checkpoints/ : 至 200000
-  - outputs/eval/2026-08-01/* : pusht 评估（通过 /tmp/eval_*.log 映射到 checkpoint）
+  - outputs/eval/**/eval_info.json : pusht 评估（历史 2026-08-01 目录，或 Colab 写到 outputs/eval/colab/）
   - outputs/mimicgen_gen.log          : Square 数据集（MimicGen）生成统计
   - outputs/mimicgen_train_image.log  : BC-RNN image 在 Square 上的训练
   - outputs/mimicgen_train_lowdim.log : BC-RNN low-dim 在 Square 上的训练
@@ -86,6 +88,12 @@ def read_text(path):
         return fh.read()
 
 
+def _is_train_log_line(line):
+    # 日志格式把 lerobot_train.py 截成 ot_train.py。v0.6.1 的指标行是 ot_train.py:641，
+    # 这里只认脚本名，避免行号变动后 Colab 日志画不出曲线。配置转储行没有 loss 三元组，会被丢掉。
+    return "ot_train.py" in line or "lerobot_train.py" in line
+
+
 def parse_segment(path, seg_start):
     """Return (steps, loss, l1, kld, kl_weight or None). Missing files yield empty lists."""
     text = read_text(path)
@@ -96,7 +104,7 @@ def parse_segment(path, seg_start):
     steps, loss, l1, kld = [], [], [], []
     n = 0
     for line in text.splitlines():
-        if "ot_train.py:641" not in line:
+        if not _is_train_log_line(line):
             continue
         m = LOSS_RE.search(line)
         if not m:
@@ -119,12 +127,19 @@ def fig_to_b64(fig):
 
 # ---------------------------------------------------------------- 1. ACT·pusht 训练曲线
 # 每段日志按 log_freq=200 采样，第 i 条 INFO 对应全局步长 = seg_start + (i+1)*200
-ACT_SEGS = [  # (path, seg_start_step)
-    (os.path.join(ROOT, "train.log"), 0),
-    ("/tmp/train_50k.log", 10000),
-    ("/tmp/train_80k.log", 50000),
-    ("/tmp/train_100k.log", 80000),
-]
+_COLAB_LOG = os.path.join(ROOT, "outputs", "colab_train.log")
+# Colab 一次跑完（或断线后续写）的连续日志。本机没有原来的 /tmp 分段时用它，
+# 避免和仓库里只覆盖 0–10K 的 train.log 叠成两条从 0 起算的曲线。
+_USE_COLAB_LOG = os.path.isfile(_COLAB_LOG) and not os.path.isfile("/tmp/train_50k.log")
+if _USE_COLAB_LOG:
+    ACT_SEGS = [(_COLAB_LOG, 0)]
+else:
+    ACT_SEGS = [  # (path, seg_start_step)
+        (os.path.join(ROOT, "train.log"), 0),
+        ("/tmp/train_50k.log", 10000),
+        ("/tmp/train_80k.log", 50000),
+        ("/tmp/train_100k.log", 80000),
+    ]
 
 act_steps, act_loss, act_l1, act_kld = [], [], [], []
 kl_weight = None
@@ -164,7 +179,12 @@ ax1.plot(act_steps, act_kld, color=PALETTE[2], lw=1.0, ls=":", alpha=0.7, label=
 ax1.plot(off_steps, off_loss, color=PALETTE[5], lw=1.8, ls="-.", label="ACT 官方复现 (0→200K)")
 ax1.set_xlabel("训练步数")
 ax1.set_ylabel("loss")
-ax1.set_title("ACT 策略 · pusht 完整训练损失曲线（分四段日志合并）")
+if _USE_COLAB_LOG and act_steps:
+    ax1.set_title(f"ACT 策略 · pusht 训练损失曲线（Colab 日志覆盖至 {act_steps[-1]} 步）")
+elif act_steps:
+    ax1.set_title("ACT 策略 · pusht 完整训练损失曲线（分四段日志合并）")
+else:
+    ax1.set_title("ACT 策略 · pusht 训练损失曲线（无日志）")
 ax1.grid(alpha=0.25)
 ax1.legend(loc="upper right", fontsize=9)
 # 里程碑标注（交替上下偏移避免重叠）
@@ -200,8 +220,8 @@ EVAL_CKPT = {
 }
 
 evals = []
-eval_glob = os.path.join(ROOT, "outputs", "eval", "2026-08-01", "*", "eval_info.json")
-for f in sorted(glob.glob(eval_glob)):
+eval_glob = os.path.join(ROOT, "outputs", "eval", "**", "eval_info.json")
+for f in sorted(glob.glob(eval_glob, recursive=True)):
     name = os.path.basename(os.path.dirname(f))
     try:
         with open(f, encoding="utf-8") as fh:
@@ -395,11 +415,29 @@ def img_tag(b64):
     return f'<img src="data:image/png;base64,{b64}" style="max-width:100%;border:1px solid #e2e8f0;border-radius:8px;">'
 
 
+known_eval_ckpts = [e for e in evals if e["ckpt"] != "未知"]
+historical_evals = len(known_eval_ckpts) >= 10
+if _USE_COLAB_LOG:
+    covered = act_steps[-1] if act_steps else 0
+    act_source = "outputs/colab_train.log"
+    act_scale = f"目标 {act_total_steps:,} 步；当前日志覆盖至 {covered:,} 步"
+else:
+    act_source = "train.log + /tmp/train_{50k,80k,100k}.log"
+    act_scale = f"{act_total_steps:,} 步（4 段日志合并，37 个 checkpoint）"
+if historical_evals:
+    eval_cell = "20 次评估，成功率 0–5%"
+elif evals:
+    sr_min = min(e["pc_success"] for e in evals)
+    sr_max = max(e["pc_success"] for e in evals)
+    eval_cell = f"{len(evals)} 次评估，成功率 {sr_min:.0f}–{sr_max:.0f}%"
+else:
+    eval_cell = "无 eval_info.json（完整实验为 20 次，成功率 0–5%）"
+
 rows = []
-rows.append(f"""<tr><td>ACT · pusht（LeRobot 复现）</td><td>train.log + /tmp/train_{'{'}50k,80k,100k{'}'}.log</td>
-<td>{act_total_steps:,} 步（4 段日志合并，37 个 checkpoint）</td>
+rows.append(f"""<tr><td>ACT · pusht（LeRobot 复现）</td><td>{act_source}</td>
+<td>{act_scale}</td>
 <td>{fmt(act_final_loss)}</td><td>{fmt(act_final_l1)} / {fmt(kld_component)}*</td>
-<td>20 次评估，成功率 0–5%</td></tr>""")
+<td>{eval_cell}</td></tr>""")
 rows.append(f"""<tr><td>ACT 官方复现 · pusht</td><td>/tmp/train_official*.log</td>
 <td>200,000 步（2 段日志）</td>
 <td>{fmt(off_final_loss)}</td><td>—</td><td>demo 视频均为 fail（cov 0.0–0.93）</td></tr>""")
@@ -419,16 +457,24 @@ rows.append(f"""<tr><td>BC-RNN low-dim · Square</td><td>mimicgen_train_lowdim.l
 <td>成功率 {low_sum['best_sr']*100:.0f}% @ep{low_sum['best_ep']}</td>
 <td>最近一次 {low_sum['last_sr']*100 if low_sum['last_sr'] is not None else '—'}%</td></tr>""")
 
-if fig_b64_eval and best_mr:
+if fig_b64_eval and best_mr and historical_evals:
     eval_section = f"""<h2>③ ACT · pusht 评估结果（{len(evals)} 次，已映射 checkpoint）</h2>
 <div class="card">{img_tag(fig_b64_eval)}</div>
 <p class="note">下排标注各次评估所用 checkpoint：<code>12-32</code>→072000、<code>12-34</code>→last(≈080000)、
 <code>14-07~14-11</code>→100000（官方复现 100K 于 15:11 完成后另有 15:17–15:19 三次，仍失败）。
 20 次评估成功率 0–5%，平均最高回报 0.41（最高 {best_mr['avg_max_reward']:.2f}）。
 <b>关键结论</b>：从 72K 到 100K，评估指标几乎不变 —— 该任务（push-t）的瓶颈不在训练量。</p>"""
+elif fig_b64_eval and best_mr:
+    eval_section = f"""<h2>③ ACT · pusht 评估结果（{len(evals)} 次）</h2>
+<div class="card">{img_tag(fig_b64_eval)}</div>
+<p class="note">本次读到 {len(evals)} 份 <code>outputs/eval/**/eval_info.json</code>，
+最好成功率 {best_eval['pc_success']:.0f}%，最高平均回报 {best_mr['avg_max_reward']:.2f}。
+仓库里那次完整实验是 20 次评估、成功率 0–5%。</p>"""
 else:
     eval_section = """<h2>③ ACT · pusht 评估结果</h2>
-<p class="note">未找到 outputs/eval 下的 eval_info.json，已跳过评估图。</p>"""
+<p class="note">未找到 outputs/eval 下的 eval_info.json，已跳过评估图。
+Colab 评估单元会把 <code>eval_info.json</code> 复制到 <code>outputs/eval/colab/</code>。
+仓库记录的完整实验是 20 次评估、成功率 0–5%。</p>"""
 
 html = f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
