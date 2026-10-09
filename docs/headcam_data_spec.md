@@ -1,11 +1,13 @@
-# 头戴式数据采集设备规格（纯头显 · v8）
+# 头戴式数据采集设备规格（纯头显 · v9）
 
-> **适用工程**：`/mnt/sda/app/robot` ｜ **文档日期**：2026-08-01
+> **适用工程**：`/mnt/sda/app/robot` ｜ **文档日期**：2026-10-09（v8 正文 2026-08-01 保留）
 >
 > **推导逻辑（一条链，一一对应）**：模型训练消费什么 → 数据采集必须产出什么 → 头戴硬件器件需求是什么。
-> **每一条「必须」都引用工程内真实存在的 checkpoint / 训练配置 / 数据集字段作为依据，不靠猜测**。
+> **每一条「必须」都引用工程内真实存在的 checkpoint / 训练配置 / 数据集字段作为依据，不靠猜测**。v9 新增的 EgoScale 对齐项来自公开演讲口径，在正文标明「参考方案」，不写成工程内已有 checkpoint。
 >
 > **v8 变更**：按「纯头显（无手腕相机、无手套）」收敛范围，删除训练数据报告、外部产品规格（Ego 头显 / iPhone）、未来 Pipeline 接入检查流程、版本历史等非设备规格内容。
+>
+> **v9 变更**（对照 Jim Fan「Robotics End Game」中的 NVIDIA EgoScale）：保留 v8 全文。把**逐帧手部关节关键点 + 世界坐标系手腕 6DoF 位姿**升为核心标签，并写明头戴 IMU 单独不够、需要双目和/或 SLAM。增加稠密时间分段子任务语言标注、无感佩戴要求（重量、长时间佩戴、自动上传），以及 EgoScale 式数据配比参考方案。详见 §7。当前 ACT/BC-RNN 输入契约仍以 §1–§3 为准。
 
 ---
 
@@ -16,7 +18,9 @@
 | ① 模型训练（真实配置） | 2 套：LeRobot ACT（`image[3,96,96]` + `state[2]` → `action[2]`）+ robomimic BC-RNN（obs + `actions(160,7)`=6DoF 含姿态） |
 | ② 数据采集（数据集契约） | 必须字段：RGB 图像流、状态向量、动作向量、时间戳、集号/帧号、`next.done`；手部动作从第一视角画面内估计（MediaPipe），retargeting 后成为 action |
 | ③ 头戴硬件（一一对应） | **头戴摄像头**（RGB 图像流+手部关键点）+ **头戴 IMU**（ego-motion 补偿，非数据集字段）+ **SOC**（落盘+手部推理）。A 档 ≈370-555 元、B 档 ≈700-945 元，均 ≤1000 元 |
-| 明确不需要 | 手腕相机、Flex 手套、按钮/LED、双目（可选升级，非必需）、麦克风/显示屏 |
+| ④ v9 核心几何标签 | 逐帧 `observation.hand_joints`（21×3，世界系）+ `observation.wrist_pose`（xyz + 四元数，世界系 6DoF）。头戴 IMU 单独不够，必须双目和/或 SLAM（§7.1–§7.2） |
+| ⑤ v9 语言与佩戴 | 稠密时间分段子任务标注；无感佩戴：头戴重量、可长时间佩戴、采集段自动上传（§7.3–§7.4） |
+| 明确不需要 | 手腕相机、Flex 手套、按钮/LED、麦克风/显示屏。双目在「只满足当前 ACT 输入契约」时仍非数据集字段（§3.3）；一旦要写世界系手腕 6DoF，双目/SLAM 变为必需（§7.2） |
 
 ---
 
@@ -81,6 +85,9 @@ camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=
 | 6 | `next.done` / `next.reward` | BC-RNN / LeRobot 分集 | 软件生成（`next.done` 仅末帧 True） |
 | 7 | 归一化统计（min/max/mean/std） | ACT `MEAN_STD` | 采集后离线生成（非采集时要求） |
 | 8 | 手部动作（人手关键点，中间表示） | 纯头显定位新增 | **头戴摄像头画面内 MediaPipe 估计**，retargeting 后写入 `action` |
+| 9 | `observation.hand_joints` 逐帧 21×3，**世界系** | v9 预训练核心标签（§7.1） | 画面内手部几何 × 相机位姿；不能只靠头戴 IMU |
+| 10 | `observation.wrist_pose` 逐帧 7 维（xyz+四元数），**世界系 6DoF** | v9 预训练核心标签（§7.1） | 双目（或等价度量深度）+ SLAM/VIO；头戴 IMU 只辅助，不单独构成该标签 |
+| 11 | `language_segments` 稠密时间分段子任务 | v9 语言监督（§7.3） | 采集后标注；与帧时钟同一时间基准 |
 
 **频度结论**（已核实）：pusht 数据集实际 **10fps**（`info.json` `fps=10`）。采集 **≥10fps 即满足当前契约**；≥30fps 是 LeRobot 官方范式与手部追踪质量推荐值而非硬性。state/action 采样频率由机器人控制频率决定（MimicGen/robosuite 默认 20Hz），硬性要求是**与图像同一时间基准对齐**。注：BC-RNN 的 `rollout.n=50` 是评估 episode 数、`horizon=400` 是单次 rollout 最大步数——均不是采样频率。
 
@@ -100,6 +107,7 @@ camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=
 | `observation.image` 帧稳定（相机随头运动） | **头戴 IMU**（VIO/ego-motion 补偿） | ✅ 必须（非数据集字段） | 无补偿则画面内手部轨迹被头部晃动污染（对标 EgoDex/EgoMimic 头显 SLAM 方案） |
 | `action` 位置（3D） | 头戴摄像头 + 画面内 MediaPipe（PnP 恢复） | ✅ 必须 | Square `action` 实测 6DoF；位置由视觉估计 |
 | `action` 姿态（3D 旋转） | 同上（姿态精度⚠️ 依赖单目视觉） | ⚠️ 部分覆盖 | 头戴 IMU ≠ 手部 IMU；**姿态升级 = 双目视差三角测量（§3.3 可选），非 IMU** |
+| `observation.hand_joints` / `observation.wrist_pose`（世界系，v9） | 头戴相机 + **双目或 SLAM**（IMU 仅辅助 VIO） | ✅ 写该标签时必须 | 头戴 IMU 测的是头，不是手，也给不出度量世界系。见 §7.2 |
 | `action` 夹爪维度 | MediaPipe 手指屈伸（来自画面） | ✅ 随头戴相机 | 无需手套 |
 | `observation.state` | — | ⛔ 非头戴 | 来自机器人本体 |
 | `timestamp` / `episode_index` / `frame_index` | — | ⛔ 非硬件 | 采集软件生成 |
@@ -134,7 +142,7 @@ camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=
 
 ### 3.2 明确不加的硬件
 
-**手腕相机、手腕 IMU**（纯头显定位，手部关键点从头戴画面取）、**Flex 手套**（无手套且只能测单轴屈伸）、**按钮/LED**（便利件）、**麦克风/显示屏**。**双目默认不加**（当前数据集/训练无要求，仅作为姿态精度升级路线可选启用，见 §3.3）。
+**手腕相机、手腕 IMU**（纯头显定位，手部关键点从头戴画面取）、**Flex 手套**（无手套且只能测单轴屈伸）、**按钮/LED**（便利件）、**麦克风/显示屏**。**双目默认不加**（当前数据集/训练无要求，仅作为姿态精度升级路线可选启用，见 §3.3）。**例外**：若落盘 §7 的世界系手腕 6DoF，双目和/或 SLAM 不再是可选项。
 
 ### 3.3 双目升级路线（可选，非必需）
 
@@ -194,6 +202,14 @@ camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=
 - 两者均须与图像**同时间戳**写入同一 parquet，并在 `info.json` 声明字段。
 - **坐标系一致性**：PnP/MANO 恢复的关键点坐标须先做**相机内参 + 外参标定**（头戴相机 ↔ 世界/头部坐标），否则同一物理点跨帧坐标系不一致。
 
+**v9 追加字段**（与上面的 image/state/action 并列，不替换它们）：
+
+- `observation.hand_joints`：`float32[21,3]`，米，世界系，MediaPipe 21 点顺序。
+- `observation.wrist_pose`：`float32[7]`，世界系手腕位置（米）+ 四元数 `xyzw`。
+- `meta/language_segments.jsonl`：每集一行，稠密子任务分段（§7.3）。
+
+三者都要在 `info.json` 里声明。世界系的定义、为什么头戴 IMU 不够、以及无感佩戴要求见 §7。
+
 ---
 
 ## 5. 验证清单（组装后确认硬件达标）
@@ -204,6 +220,9 @@ camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=
 - [ ] 标定头戴相机内参（棋盘格）+ 外参，多次佩戴/重启后坐标系一致
 - [ ] 产出文件能被 `lerobot` 训练脚本直接读取（`info.json` 结构自检）
 - [ ] 戴好头戴，MediaPipe 跑握拳/张开/抓取 3 组动作：关键点连续、无长时间跟丢、遮挡恢复 <1s、手不出画
+- [ ] （v9）同一段视频能导出世界系 `hand_joints` 与 `wrist_pose`：关掉双目/SLAM、只留头戴 IMU 时，该标签应被标为无效而不是静默写成 IMU 读数
+- [ ] （v9）一集的 `language_segments` 覆盖整段时间，相邻段首尾相接
+- [ ] （v9）头戴部分不用手扶也能连续佩戴 ≥1 小时；封口后的 episode 在有网络时自动上传，无需拷卡
 
 ---
 
@@ -214,7 +233,89 @@ camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=
 3. **软件时间戳上限**：1000 元内无法做 PTP/亚毫秒硬件同步，软件时钟误差 10-50ms；对纯视频模仿学习可用，对精密 VLA 需升级同步方案。
 4. **Zero 2W 算力瓶颈**：四核 A53@1GHz + 512MB，USB UVC 采集无硬编码通道，1080p@30 全链路（抓帧+编码+parquet+IMU+MediaPipe 推理）可能丢帧。缓解：720p@30、v4l2m2m 硬编码、推理下放 PC；**组装后先做 10 分钟满载压测**，丢帧则走档次 C。
 5. **当前模型均为 benchmark 仿真数据训练**（pusht 96×96、MimicGen Square），真实采集数据接入后需重新做归一化统计（stats.json）与图像尺寸适配。
-6. **IMU 必需但非数据集字段，且头戴 IMU ≠ 手部 IMU**：头戴 IMU 只做 ego-motion 补偿、只测头部姿态，不能提供手部旋转自由度——6DoF action 姿态分量由单目视觉估计，精度粗。需要手部姿态冗余只能回手腕 IMU/手套路线，与纯头显约束冲突。
+6. **IMU 必需但非数据集字段，且头戴 IMU ≠ 手部 IMU**：头戴 IMU 只做 ego-motion 补偿、只测头部姿态，不能提供手部旋转自由度——6DoF action 姿态分量由单目视觉估计，精度粗。需要手部姿态冗余只能回手腕 IMU/手套路线，与纯头显约束冲突。v9 的世界系手腕 6DoF 同样不能由头戴 IMU 单独给出，路径是双目/SLAM（§7.2），不是改戴手腕 IMU。
+
+---
+
+## 7. EgoScale 对齐（v9）：世界系手部标签、语言、无感佩戴、数据配比
+
+本节是预训练数据契约的**参考方案**，依据 Jim Fan「Robotics End Game」里 NVIDIA EgoScale 的公开口径，不是工程内已有 checkpoint。v8 的 ACT/pusht、BC-RNN/Square 契约（§1–§3）继续有效：那些模型今天不读 depth，也不读下面这些字段。两套契约并存——当前策略训练看 §2 的 image/state/action；要做 EgoScale 式预训练，采集必须额外交出本节的标签。
+
+### 7.1 核心标签：逐帧手部关节 + 世界系手腕 6DoF
+
+每一帧都要有，并且和 `observation.image` 同一时间戳：
+
+| 字段 | shape / dtype | 坐标系 | 语义 |
+|---|---|---|---|
+| `observation.hand_joints` | `float32[21, 3]` | **世界系**，单位米 | 21 个手部关节位置，顺序与 MediaPipe Hands 一致（0 为手腕根） |
+| `observation.wrist_pose` | `float32[7]` | **世界系** | 手腕 6DoF：`xyz`（米）+ 四元数 `xyzw` |
+
+世界系指这一集里重力对齐、不跟相机一起动的 SLAM 世界系。相机系关键点、头部 IMU 系姿态都**不算**这条标签已经完成。
+
+落盘：与 image 同 timestamp 写入 parquet，并在 `meta/info.json` 声明 shape。缺测帧写入 NaN，并另有 `observation.hand_valid`（`bool`，该帧手部几何是否可用），禁止用 0 填充冒充有效姿态。
+
+### 7.2 头戴 IMU 单独不够：要双目和/或 SLAM
+
+头戴 IMU 测的是头部刚体的角速度和比力。手是另一刚体，IMU 看不到手指，也给不出手腕在世界系里的位置。
+
+世界系手腕 6DoF 至少要两条几何：
+
+1. **手在相机系里的度量三维**：双目视差（或等价的度量深度）把关节从像素三角化到相机系。单目 MediaPipe + PnP 有尺度歧义，不能单独当世界系米制标签。
+2. **相机在世界系里的位姿** `T_world_cam`：视觉 SLAM，或视觉惯性里程计（VIO）。头戴 IMU 可以给 VIO 提供短期旋转、估计零偏，但没有视觉地图时，IMU 双重积分的位置会漂，不能当作世界系。
+
+合成：`p_world = T_world_cam · p_cam`。手腕朝向同样左乘相机位姿。只录头戴 IMU、不做双目也不做 SLAM，这条核心标签无效。
+
+这和 §3.3 不冲突：§3.3 说的是**当前 ACT/Square 训练不消费 depth 字段**，所以「只为了今天的 ACT 输入」不必买双目。§7 的标签是另一份契约，写它的时候双目和/或 SLAM 是必需路径。
+
+### 7.3 稠密时间分段的子任务语言
+
+不是一集一个任务名。把一集切成首尾相接的短时段，每段一句正在做的子任务。
+
+文件：`meta/language_segments.jsonl`，每集一行。
+
+```json
+{"episode_index": 0, "segments": [
+  {"t_start": 0.00, "t_end": 1.35, "subtask": "伸手接近杯柄"},
+  {"t_start": 1.35, "t_end": 2.80, "subtask": "握住杯柄"},
+  {"t_start": 2.80, "t_end": 5.10, "subtask": "把杯子放到托盘上"}
+]}
+```
+
+要求：
+
+- `t_start` / `t_end` 使用与帧 `timestamp` 相同的时钟，单位秒。
+- 稠密：段与段首尾相接（上一段 `t_end` = 下一段 `t_start`），并盖住该集第一帧到最后一帧。空档若短于 0.5 秒，并入相邻段；更长的空档写成明确子任务（如「停住」），不留未标注空洞。
+- `episodes.jsonl` 里的整集任务描述可以保留，但不能代替分段。
+
+### 7.4 无感佩戴（unobtrusiveness）
+
+采集设备要让人忘记自己戴着它，否则第一视角视频里的动作会变形。三条验收，不引用未经公开的克重指标：
+
+| 要求 | 含义 | 本工程验收 |
+|---|---|---|
+| 重量 | 头上只留相机和必要支架，电池与 SOC 不堆在头上 | 与 §3.1 一致：充电宝分体放口袋。戴好后不需要用手扶着设备 |
+| 长时间佩戴 | 能连续戴着做日常操作，而不是每几分钟摘一次 | 连续佩戴 ≥ 1 小时，不勒、不滑、不热到必须摘下。设计目标是一天内累计戴数小时 |
+| 自动上传 | 佩戴者不拷贝存储卡、不手动整理文件 | episode 封口后，有网络时自动上传到数据集目录；失败重试。本地副本保留到上传确认 |
+
+### 7.5 EgoScale 式数据配比（参考方案）
+
+公开口径的两段式配比，用作采集规划的参照，不是本仓库已经存下的小时数：
+
+| 阶段 | 数据 | 规模（参考） | 监督 |
+|---|---|---|---|
+| 预训练 | 第一视角人类视频 | **约 21,000 小时** | 预测逐帧手部关节 + 手腕位姿（§7.1） |
+| 动作微调 | 动捕（mocap） | **约 50 小时** | 带动作标签的人体运动 |
+| 动作微调 | 遥操作（teleop） | **约 4 小时** | 机器人动作 |
+
+预训练阶段的最优验证损失对预训练小时数呈 **log-linear**：损失大约是 `a + b·ln(小时)`。小时数按数量级增加，损失按直线下降，而不是按小时线性下降。本仓库用 `scripts/scaling_law.py` 在多次不同数据量的 run 上拟合这条线（示例配置 `examples/scaling_law_runs.yaml`）。有效 run 不足时脚本跳过，不改其余训练报告。
+
+和文末「微调 50–150 条」的关系：那是**当前没有大规模第一视角预训练时**，每个任务的真实演示下限。§7.5 的 21k / 50h / 4h 是另一条路线的参照配比；两段式方案里怎么引用，见 `docs/twostage_pretrain_finetune_plan.md`。
+
+### 7.6 和 v8 契约怎么同时成立
+
+- 今天的 ACT 仍吃 `observation.image` + `observation.state`，输出 `action`。这些字段继续按 §2、§4 落盘。
+- §7.1 的关节和手腕位姿是预训练标签，可以离线从视频估计后再写回 parquet；估计失败的帧用 `hand_valid=false`，不要把单目猜测标成世界系米制真值。
+- 语言分段是标注产物，不要求头戴硬件上有麦克风。v8「不加麦克风」仍然成立。
 
 ---
 
