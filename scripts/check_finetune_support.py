@@ -2,7 +2,9 @@
 """Check LeRobot finetune support + pretrained_path + MimicGen camera options."""
 import json, os, re, glob
 
-ROOT = "/mnt/sda/app/robot"
+from repo_root import resolve_root
+
+ROOT = resolve_root()
 
 print("=== 1. 现有 config 的 pretrained_path / resume ===")
 for p in sorted(glob.glob(os.path.join(ROOT, "outputs/checkpoints/*/pretrained_model/train_config.json"))):

@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """Collect local evidence for the data-volume section of headcam_data_spec.md."""
 import json
-import h5py
+import os
 import glob
+
+from repo_root import dataset_fps, resolve_root
+
+ROOT = resolve_root()
 
 print("=== pusht dataset (LeRobot) ===")
 try:
-    info = json.load(open("data/pusht/meta/info.json"))
+    with open(os.path.join(ROOT, "data/pusht/meta/info.json"), encoding="utf-8") as f:
+        info = json.load(f)
     print("total_episodes:", info.get("total_episodes"))
-    vi = info.get("video_info", {})
-    print("video.fps:", vi.get("video.fps"))
+    print("fps:", dataset_fps(info))
     feats = info.get("features", {})
     for k in ("observation.image", "observation.state", "action"):
         f = feats.get(k, {})
         print(f"  {k}: shape={f.get('shape')} dtype={f.get('dtype')}")
     # episodes.jsonl for per-episode frame counts
-    ep = json.loads(open("data/pusht/meta/episodes.jsonl").read().strip().split("\n")[0])
+    with open(os.path.join(ROOT, "data/pusht/meta/episodes.jsonl"), encoding="utf-8") as f:
+        ep = json.loads(f.read().strip().split("\n")[0])
     print("episode keys:", sorted(ep.keys()))
     n_frames = ep.get("length") or ep.get("num_frames") or "?"
     print("first episode length:", n_frames)
@@ -25,6 +30,7 @@ except Exception as e:
 print()
 print("=== Square dataset (MimicGen demo.hdf5) ===")
 try:
+    import h5py
     p = "/tmp/core_datasets/square/demo_src_square_task_D1/demo.hdf5"
     f = h5py.File(p, "r")
     data = f["data"]
@@ -49,7 +55,9 @@ except Exception as e:
 print()
 print("=== ACT train config (pusht) ===")
 try:
-    c = json.load(open("outputs/checkpoints/100000/pretrained_model/train_config.json"))
+    cfg = os.path.join(ROOT, "outputs/checkpoints/100000/pretrained_model/train_config.json")
+    with open(cfg, encoding="utf-8") as f:
+        c = json.load(f)
     print("steps:", c.get("steps"))
     print("batch_size:", c.get("batch_size"))
     print("log_freq:", c.get("log_freq"))
@@ -64,7 +72,8 @@ print("=== BC-RNN config (Square) ===")
 try:
     cs = sorted(glob.glob("/tmp/core_train_configs/bc_rnn_*_ds_*_seed_101.json"))
     if cs:
-        c = json.load(open(cs[0]))
+        with open(cs[0], encoding="utf-8") as f:
+            c = json.load(f)
         print("config file:", cs[0])
         print("seq_length:", c.get("seq_length"))
         print("rollout:", c.get("rollout"))

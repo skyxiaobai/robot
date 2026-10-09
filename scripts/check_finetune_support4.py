@@ -2,7 +2,9 @@
 """Find ACT config.py and check lerobot_train.py CLI for fine-tuning args."""
 import os, re, glob
 
-ROOT = "/mnt/sda/app/robot"
+from repo_root import resolve_root
+
+ROOT = resolve_root()
 
 print("=== 1. ACT policy config 位置 ===")
 for pat in ("lerobot/src/lerobot/policies/act/*.py", "lerobot/lerobot/policies/act/*.py"):
@@ -27,7 +29,7 @@ else:
 
 print()
 print("=== 3. ACT policy.py 里 pretrained 加载逻辑 ===")
-for f in glob.glob(os.path.join(ROOT, "leroder/src/lerobot/policies/act/policy.py")) + glob.glob(os.path.join(ROOT, "lerobot/src/lerobot/policies/act/policy.py")):
+for f in glob.glob(os.path.join(ROOT, "lerobot/src/lerobot/policies/act/policy.py")):
     if os.path.exists(f):
         txt = open(f).read()
         for kw in ("pretrained_path", "load_state_dict", "from_pretrained", "resume"):
