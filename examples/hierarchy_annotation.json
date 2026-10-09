@@ -1,0 +1,20 @@
+{
+  "duration_s": 2.0,
+  "environment": {
+    "name": "tabletop",
+    "detail": "table:wood, position:sitting, background:brown",
+    "source": "egodex_attr"
+  },
+  "task": {
+    "name": "open_close_insert_remove_case",
+    "instruction": "打开盒子，取出垫子和鸭子，再把盒子盖上。"
+  },
+  "subtasks": [
+    {"t_start": 0.0, "t_end": 1.0, "text": "打开盒盖"},
+    {"t_start": 1.0, "t_end": 2.0, "text": "取出盒内物品并合盖"}
+  ],
+  "instructions": [
+    {"t_start": 0.0, "t_end": 1.0, "hand": "right", "text": "右手扳开卡扣"},
+    {"t_start": 1.0, "t_end": 2.0, "hand": "left", "text": "左手取出垫子和鸭子"}
+  ]
+}

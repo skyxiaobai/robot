@@ -13,9 +13,11 @@
 import argparse
 
 import cv2
-import gym_aloha  # noqa: F401  注册 gym_aloha/AlohaInsertion-v0
-import gym_pusht  # noqa: F401  注册 gym_pusht/PushT-v0
+import gym_aloha  # 导入即注册 gym_aloha/AlohaInsertion-v0
+import gym_pusht  # 导入即注册 gym_pusht/PushT-v0
 import gymnasium as gym
+
+_ = (gym_aloha, gym_pusht)
 
 
 def main():

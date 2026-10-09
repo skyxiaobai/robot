@@ -7,6 +7,13 @@
 # 数据集与模型缓存
 /data/
 /hf_cache/
+/test.zip
+/outputs/open_data_demo/
+/outputs/egodex_unified/
+/outputs/yield_report.html
+/outputs/yield_episodes.csv
+/outputs/coverage_report.html
+/outputs/coverage_counts.csv
 
 # 训练大产物：checkpoints / 训练中间状态 / rollout 视频
 /outputs/checkpoints/
