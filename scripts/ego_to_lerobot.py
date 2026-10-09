@@ -23,9 +23,29 @@ def main(argv=None):
     parser.add_argument("--yield-csv", required=True, help="egodata_qc 写出的 CSV")
     parser.add_argument("--out", required=True, help="LeRobot 数据集根目录")
     parser.add_argument("--repo-id", default="local/egodex", help="写进导出说明的数据集 id")
+    parser.add_argument("--horizon", type=int, default=16, help="多步动作长度，写入导出说明。parquet 每行仍是一步增量")
+    parser.add_argument("--include-hand", action="store_true", help="action 里再加上双手关节 xyz 增量")
+    parser.add_argument(
+        "--video-size",
+        type=int,
+        default=224,
+        help="真实 mp4 缩成的正方形边长（偶数）。占位视频仍是 16。传 0 表示不缩放",
+    )
     args = parser.parse_args(argv)
-    summary = export_lerobot(args.episodes, args.yield_csv, args.out, repo_id=args.repo_id)
-    print("episodes %d frames %d -> %s" % (summary["episodes"], summary["frames"], summary["out"]))
+    video_size = None if int(args.video_size) == 0 else int(args.video_size)
+    summary = export_lerobot(
+        args.episodes,
+        args.yield_csv,
+        args.out,
+        repo_id=args.repo_id,
+        include_hand=args.include_hand,
+        video_size=video_size,
+        horizon=args.horizon,
+    )
+    print(
+        "episodes %d frames %d horizon %d -> %s"
+        % (summary["episodes"], summary["frames"], summary["horizon"], summary["out"])
+    )
     return 0
 
 

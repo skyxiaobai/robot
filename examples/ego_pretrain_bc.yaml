@@ -1,24 +1,30 @@
-# 开放第一视角样本的预训练配方。对应 lerobot 0.6.1 的数据集版本 v3.0。
-# 不改 pusht 上的 ACT。这一条只吃 QC 通过之后导出的手部数据。
+# 开放第一视角样本的线性 BC 基线。对应 lerobot 0.6.1 的数据集版本 v3.0。
+# ACT 配方在 examples/ego_act_train.yaml。这一条不安装 torch。
 lerobot: "0.6.1"
 codebase_version: v3.0
 robot_type: egodex_human
 policy: linear_bc
+learner: ridge
 device: cpu
-steps: 20
-learning_rate: 0.01
+horizon: 16
+val_fraction: 0.1
+seed: 0
 
 # observation.state[140] = 左手 21×3 | 右手 21×3 | 左手腕 7 | 右手腕 7
-# 手腕是 xyz（米）+ 四元数 xyzw，世界系。无效手的关节块为 0，hand_valid 为 0。
-# action[14] = 下一帧左手腕 7 | 下一帧右手腕 7。片段最后一帧丢掉。
-# 语言：帧时刻落在 SUBTASK 内就用子任务句子，否则用 TASK.instruction。
+# 手腕是 xyz（米）+ 四元数 xyzw，世界系。无效手的关节块为 0。
+# 置信度缺失（源 HDF5 没有 confidences）视为未知，不把关节置 0。
+# action 每一行 = 下一步左手腕增量 7 | 右手腕增量 7。
+# 增量是 dxyz + 相对四元数。保持不动 = dxyz 0 且四元数 0,0,0,1。
+# 线性 BC 把连续 horizon 行拼成一块来回归。验证集按 episode 固定留出，
+# 各档 --max-frames 共用；训练集按种子打乱后整段累加。
+# 日志有 val_loss，另有 copy_current_wrist（保持不动的验证误差）。
 state: observation.state
-action: next_wrist_pose
+action: wrist_pose_delta
 language: subtask_else_task_instruction
 qc: yield_csv accepted=yes
 
 commands:
-  - python scripts/ego_to_lerobot.py --episodes outputs/egodex_unified --yield-csv outputs/yield_episodes.csv --out outputs/egodex_lerobot
-  - python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot --steps 20 --log outputs/ego_pretrain_all.log
-  - python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot --steps 20 --max-frames 8 --log outputs/ego_pretrain_8.log
+  - python scripts/ego_to_lerobot.py --episodes outputs/egodex_unified --yield-csv outputs/yield_episodes.csv --out outputs/egodex_lerobot --horizon 16 --video-size 224
+  - python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot --max-frames 1000 --log outputs/ego_pretrain_1k.log
+  - python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot --max-frames 8000 --log outputs/ego_pretrain_8k.log
   - python scripts/scaling_law.py --runs outputs/ego_pretrain_runs.yaml

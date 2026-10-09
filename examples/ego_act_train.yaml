@@ -1,0 +1,28 @@
+# 开放第一视角样本上的 ACT。对应 lerobot 0.6.1，数据集版本 v3.0。
+# 不改 pusht 上的 ACT。这一条吃 QC 通过并导出的手部数据。
+#
+# parquet 里每一行 action 是下一步双手手腕增量（14 维：dxyz + 相对四元数）。
+# chunk_size 向后看 16 步，组成动作块。可选 --include-hand 再加关节增量。
+# 真实 mp4 用 ego_to_lerobot.py --video-size 224（或 256）缩成正方形，不要按 1080p 重编码。
+# 线性 BC 是同一目标上的快速基线，见 examples/ego_pretrain_bc.yaml。
+lerobot: "0.6.1"
+codebase_version: v3.0
+robot_type: egodex_human
+policy: act
+device: cuda
+chunk_size: 16
+n_action_steps: 16
+n_obs_steps: 1
+video_size: 224
+batch_size: 8
+steps: 2000
+learning_rate: 1.0e-5
+
+state: observation.state
+action: wrist_pose_delta
+language: subtask_else_task_instruction
+qc: yield_csv accepted=yes
+
+commands:
+  - python scripts/ego_to_lerobot.py --episodes outputs/egodex_unified --yield-csv outputs/yield_episodes.csv --out outputs/egodex_lerobot --horizon 16 --video-size 224
+  - lerobot-train --dataset.repo_id=local/egodex --dataset.root=outputs/egodex_lerobot --policy.type=act --policy.device=cuda --policy.push_to_hub=false --policy.chunk_size=16 --policy.n_action_steps=16 --policy.n_obs_steps=1 --batch_size=8 --steps=2000 --save_freq=500 --log_freq=50 --num_workers=2 --seed=1000 --wandb.enable=false --policy.optimizer_lr=1e-5 --policy.optimizer_lr_backbone=1e-5 --output_dir=outputs/ego_act --job_name=egodex_act

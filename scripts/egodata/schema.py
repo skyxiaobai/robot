@@ -34,7 +34,11 @@ MEDIAPIPE_21 = (
 
 
 def rotmat_to_quat_xyzw(rotation):
-    """旋转矩阵 → 四元数 (x, y, z, w)。"""
+    """旋转矩阵 → 四元数 (x, y, z, w)。
+
+    不强制 ``w >= 0``。``q`` 和 ``-q`` 是同一个旋转，按符号截断会让相邻帧
+    在半球边界上翻转。一条轨迹里的连续性由 ``make_quaternions_continuous`` 保证。
+    """
     matrix = np.asarray(rotation, dtype=float)
     trace = float(np.trace(matrix))
     if trace > 0.0:
@@ -66,9 +70,27 @@ def rotmat_to_quat_xyzw(rotation):
     if norm == 0:
         return [0.0, 0.0, 0.0, 1.0]
     quat /= norm
-    if quat[3] < 0:
-        quat = -quat
     return [float(v) for v in quat]
+
+
+def make_quaternions_continuous(quats):
+    """让序列里每个四元数与上一帧落在同一半球（点积 >= 0）。
+
+    缺测帧（非有限值）不参与，也不打断已经建立的参考。返回新的 float 数组。
+    """
+    out = np.asarray(quats, dtype=float).copy()
+    if out.ndim != 2 or out.shape[1] != 4:
+        raise ValueError("四元数序列必须是 (N, 4)")
+    previous = None
+    for index in range(out.shape[0]):
+        current = out[index]
+        if not np.isfinite(current).all():
+            continue
+        if previous is not None and float(np.dot(current, previous)) < 0.0:
+            current = -current
+            out[index] = current
+        previous = current
+    return out
 
 
 def _as_floats(value):

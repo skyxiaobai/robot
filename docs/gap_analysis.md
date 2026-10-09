@@ -9,21 +9,21 @@
 
 仓库里原来只有「仿真 benchmark 怎么训练」和「将来头戴设备该采什么」。中间从原始第一视角数据到可训练样本的质检、覆盖和标注是空的。这次补上统一 episode、EgoDex 适配器、产出率、覆盖报告和四级标注校验，并且用合成 HDF5 测过。真实 EgoDex 测试集的下载地址和单条 HDF5 结构已经核对过，16GB 的 zip 不进仓库。
 
-QC 通过的统一 episode 已经能写成 LeRobot 0.6.1 的 v3.0 数据集（`scripts/ego_to_lerobot.py`）。CPU 上的线性 BC（`scripts/ego_pretrain_bc.py`）会打出 `val_loss`，`scripts/scaling_law.py` 可以直接吃不同帧数的两次 run。动作是下一帧双手手腕，不把当前姿态复制成标签。
+在完整 EgoDex 测试集（3,243 条、约 82.6 万帧）上跑过一轮之后，修了几处会让曲线和产出率失真的问题：没有 `confidences` 组时不再当成置信度 0；四元数按相邻帧保持同一半球，不再每帧强制 `w >= 0`；线性 BC 用固定的 episode 验证集和收敛的岭回归，并记下「保持当前手腕」的基线。动作改成多步手腕增量。导出按条释放 JSON，真实 mp4 默认可缩到 224。ACT 的 `lerobot-train` 命令在 `examples/ego_act_train.yaml` 和 Colab 后半段，CPU 冒烟不安装 torch。
 
-还没接上的是：用完整的 `lerobot-train` / ACT 在 GPU 上吃这份 140 维状态，以及给 EgoDex 补上真正按时间切开的子任务和分手指令。像素模糊、HOT3D、自有设备 SLAM 仍不在这条链路上。截断帧数只证明缩放律接口能读第一视角日志，不是真实小时数的拟合。
+还没接上的是：在这 3,243 条上真正把 ACT 训完，以及给 EgoDex 补上按时间切开的子任务和分手指令。像素模糊、HOT3D、自有设备 SLAM 仍不在这条链路上。
 
 ## 1. 逐段对照
 
 | 阶段 | 现在有什么 | 还缺什么 | 优先级 |
 |---|---|---|---|
 | 下载开放数据 | 已核对 EgoDex `test.zip`（见 §2）。没有下载脚本，避免把 16GB 拉进 CI | 需要时用 README 里的 `curl`。HOT3D clips、`lerobot/umi_cup_in_the_wild` 没有适配器 | P2：再加一个数据集 |
-| 转成统一格式 | `scripts/egodata/schema.py` + `scripts/egodata/egodex.py`，`scripts/convert_egodex.py`。世界系 21 点关节、手腕 xyz+xyzw、相机位姿、整段语言。`scripts/ego_to_lerobot.py` 写成 LeRobot v3.0 | 只接了 EgoDex。没有源 mp4 时视频是 16×16 占位 | P2：再加一个数据集 |
+| 转成统一格式 | `scripts/egodata/schema.py` + `egodex.py`，`scripts/convert_egodex.py`。关节矩阵整段读取，`--workers` 可多进程。没有 confidences 时置信度为未知。四元数在片段内连续。`ego_to_lerobot.py` 写成 LeRobot v3.0，真实 mp4 可缩放到 224 | 只接了 EgoDex。没有源 mp4 时视频仍是 16×16 占位 | P2：再加一个数据集 |
 | QC / 产出率 | `scripts/egodata/qc.py`，`scripts/egodata_qc.py`。手出画、视线飘移、相机角速度（模糊代理）、长时间静止。产出率 = 通过片段的帧数 / 原始帧数 | 模糊还没看像素（拉普拉斯）。坏段只能整段丢掉，不能把好的子段切出来留用 | P1：有 mp4 时加像素模糊；子段裁剪 |
-| 覆盖统计 | `scripts/egodata/coverage.py`，`scripts/egodata_coverage.py`。环境 / 物体 / 物体类别 / 任务 / 动作类型，HTML+CSV，封闭词表里计数为 0 的算空档 | 词表是手写的一小套，不是从 111 个 EgoDex 任务自动长出来的目标配额。没有「该采多少才算补上」的数量目标 | P2：按目标小时数做配额 |
+| 覆盖统计 | `scripts/egodata/coverage.py`。EgoDex 的 `table` / `position` / `background` 会留在环境名里，不再全部收成一个 tabletop。动作词表含组装、充电、拉链、舀取等。物体名去掉空格和常见复数 | 词表仍是手写的，不是从 111 个任务自动长出来的配额。没有「该采多少才算补上」的数量目标 | P2：按目标小时数做配额 |
 | 四级标注 | 规格 §8.1，样例 `examples/hierarchy_annotation.json`，校验 `scripts/validate_hierarchy.py`。EgoDex 转换只填 ENVIRONMENT 和 TASK | EgoDex 没有时间分段 SUBTASK，也没有分手 INSTRUCTION。不能把整段描述切成假时间段 | **P1：标注**（人工或模型），不要在转换器里编造 |
-| LeRobot 训练 | pusht ACT 笔记本仍在（image+state[2] → action[2]）。另外 `scripts/ego_pretrain_bc.py` 在导出的手部数据上做线性 BC（CPU），日志有 `val_loss`。配方 `examples/ego_pretrain_bc.yaml` | 还没有用 lerobot 0.6.1 的 ACT / `lerobot-train` 吃 140 维状态和 14 维手腕动作。pusht 的 action[2] 没有改 | **P1：有 GPU 时把同一导出接上 ACT** |
-| 缩放律 | `scripts/scaling_law.py`：最优验证损失对 ln(数据量)。线性 BC 用 `--max-frames` 打出不同数据量，测试里已经喂给拟合 | 还没有真实 EgoDex 不同小时数的预训练 run。截断帧数只验证接口 | P2：有了多组真实 run 再拟合，不必改公式 |
+| LeRobot 训练 | pusht ACT 笔记本仍在（image+state[2] → action[2]）。手部数据的动作是下一步手腕增量，线性 BC 回归连续 16 步（`examples/ego_pretrain_bc.yaml`）。ACT 命令在 `examples/ego_act_train.yaml`，Colab 单元在 GPU 上把 `RUN_ACT` 打开即可跑 | 还没有在完整测试集、224 视频上把 ACT 训完。pusht 的 action[2] 没有改 | **P1：用真实导出把 ACT 训出一组可比较的 run** |
+| 缩放律 | `scripts/scaling_law.py`。横轴是 `ln(N)（单位）`，不再写成「数据量 / 数据量」。线性 BC 的各档共用同一批验证 episode，日志里的 `val_loss` 可以直接喂进去 | 还没有真实 EgoDex 不同小时数的 ACT run。线性模型在增量目标上仍可能很快饱和，要用 ACT 的曲线才看得出数据量 | P2：有了多组 ACT run 再拟合，不必改公式 |
 
 优先级的意思：P1 是下一条数据链路还没通的地方；P2 是数据集种类、配额和自有设备 SLAM，不挡住现在用开放数据做质检。
 
@@ -50,37 +50,46 @@ QC 通过的统一 episode 已经能写成 LeRobot 0.6.1 的 v3.0 数据集（`s
 
 - 来源、帧率、`coordinate_frame=arkit_world`（集内静止，集与集的原点不必相同）
 - 相机内参、每帧 4×4 相机位姿、由主点推出来的图像宽高
-- 左右手各 21×3 关节（MediaPipe 顺序；对不上的 EgoDex 掌骨点不塞进去）、手腕 7 维（xyz + xyzw）、手腕置信度
+- 左右手各 21×3 关节（MediaPipe 顺序；对不上的 EgoDex 掌骨点不塞进去）、手腕 7 维（xyz + xyzw）、手腕置信度。没有 confidences 组时置信度是 null，四元数在片段内与上一帧同半球
 - `annotation`：四级标注。EgoDex 只填环境和整段任务，子任务和分手指令是空数组
 - `coverage`：归一后的环境、原始物体名、粗类别、任务名、动作类型
 
 21 点对照写在 `scripts/egodata/egodex.py`：手腕用 `leftHand`/`rightHand`，食指尖用 `*IndexFingerTip`，拇指用 Knuckle → IntermediateBase → IntermediateTip → Tip。这是 ARKit 名字到 MediaPipe 的近似，不是逐点解剖注册。
 
-## 4. LeRobot 导出（已接上）
+## 4. LeRobot 导出和预训练（已接上）
 
-`scripts/ego_to_lerobot.py` 只读 `egodata_qc` 产出率 CSV 里 `accepted=yes` 的片段（同一 id 多行时以最后一行为准），写成 lerobot 0.6.1 的 **codebase v3.0**：`meta/info.json`、`meta/stats.json`、`meta/tasks.parquet`（索引名是句子）、`meta/episodes/`、`data/chunk-000/file-000.parquet`、按片段一条的 mp4。冒烟不安装 torch；文件按 0.6.1 的读写器落盘，训练脚本用 pyarrow 读 parquet。
+`scripts/ego_to_lerobot.py` 只读 `egodata_qc` 产出率 CSV 里 `accepted=yes` 的片段（同一 id 多行时以最后一行为准），写成 lerobot 0.6.1 的 **codebase v3.0**。导出时一次只展开一条 JSON，打包后即丢掉，避免把全部嵌套列表留在内存里。读 parquet 的线性 BC 用 pyarrow 扁平数组，不再 `to_pylist()`。
 
-向量（世界系，与统一 episode 相同）：
+转换侧（全量测试集上暴露出来的问题）：
 
-- `observation.state` 长度 140 = 左手 21×3、右手 21×3、左手腕 7、右手腕 7。某只手有缺测关节或手腕置信度低于 0.5 时，该手 63 维关节置 0，`observation.hand_valid` 对应侧为 0。手腕 7 维只要数字齐全就保留。
-- `action` 长度 14 = **下一帧**左手腕 7 维再接右手腕 7 维（xyz 米 + 四元数 xyzw）。片段最后一帧丢掉，不把当前姿态复制成动作。
-- 语言在 `task_index`：帧时刻落在某条 SUBTASK 的半开区间里就用子任务句子，否则用 `TASK.instruction`，再否则用任务名。
+- 454 条 HDF5 没有 `confidences` 组。以前记成 0，QC 把它们全部当成手出画，导出时关节也被置 0。现在记为未知（JSON `null`）：关节齐全就算这只手可用，出画只看投影。读到了低于 0.5 的数字仍然算低置信。
+- 四元数不再每帧强制 `w >= 0`。`q` 和 `-q` 是同一个旋转，强制符号会在半球边界上让相邻帧翻转。现在在一条片段内部让后一帧与前一帧点积不小于 0。
+- HDF5 的 N×4×4 按关节一次读出。`convert_egodex.py --workers N` 按文件多进程，id 和输出路径与单进程相同。
 
-没有旁边的源 mp4 时写 16×16 占位视频，并在特征 info 里标 `egodata.image_source=placeholder`。有同名 mp4 时裁到保留的帧数。
+向量（世界系）：
 
-`scripts/ego_pretrain_bc.py` 是 `action ≈ state @ W` 的全批量线性 BC（CPU，学习率 0.01）。日志第一行有帧数，后面是 `step=K train_loss: … val_loss: …`。`--max-frames` 截断帧数，用来给 `scripts/scaling_law.py` 提供不同数据量。配方在 `examples/ego_pretrain_bc.yaml`。Colab 单元在 `notebooks/open_dataset_pipeline_colab.ipynb` 后半段，接着合成演示的产出率 CSV 往下跑。
+- `observation.state` 长度 140 = 左手 21×3、右手 21×3、左手腕 7、右手腕 7。某只手有缺测关节，或置信度是数字且低于 0.5 时，该手 63 维关节置 0。置信度未知不算无效。
+- `action` 每一行是**下一步**相对当前手腕的增量，长度 14：左手 `dxyz` + 相对四元数，再接右手。相对四元数是 `q_next * conj(q_now)`，取 `w >= 0`。保持不动是 dxyz 全 0、四元数 `0,0,0,1`。片段最后一帧丢掉。`--include-hand` 时再接双手关节 xyz 增量。多步目标不摊进这一列：线性 BC 拼连续 `horizon` 行（默认 16），ACT 用同样的 `chunk_size`。
+- 语言仍是该帧 SUBTASK，否则 `TASK.instruction`。
+
+没有源 mp4 时写 16×16 占位视频。有同名 mp4 时裁到保留帧数，并用 `--video-size`（默认 224，偶数）缩成正方形，避免 1080p 重编码。
+
+`scripts/ego_pretrain_bc.py` 在标准化特征上做岭回归（闭式解，线性模型已经收敛）。验证集默认是 10% 的 episode，种子固定，所有 `--max-frames` 共用；训练集按同一随机顺序整段累加。只有一条片段时（合成冒烟）才改留该条末尾的固定样本。日志有 `val_loss`，另有 `copy_current_wrist`（保持不动的验证误差）。缩放律只匹配 `val_loss`。
+
+ACT：`examples/ego_act_train.yaml`，Colab 笔记本末尾。`lerobot-train --policy.type=act --policy.chunk_size=16`，`--dataset.root` 指向导出目录。CPU 冒烟不安装 lerobot。
 
 ## 5. 仍然不做的事
 
 - 不下载、不提交 test.zip 或任何 HDF5/MP4/导出数据集。测试用临时合成文件，形状和属性按上面那条真实文件来。
 - 不在转换器里伪造时间分段语言。SUBTASK 为空时整段用 TASK.instruction。
 - 不跑 SLAM。EgoDex 的世界系是设备上算好的；自有头戴还没有相机，规格 §7.2 的双目/SLAM 仍然是硬件到位以后的事。
-- 不把 pusht ACT 改成吃手部关节。那是另一条训练契约。线性 BC 只证明导出和验证损失日志能接上。
-- 不安装 `lerobot==0.6.1`（它会拉 torch）来做 CPU 冒烟。
+- 不把 pusht ACT 改成吃手部关节。手部预训练用单独的配方，动作是手腕增量。
+- 不安装 `lerobot==0.6.1` 来做 CPU 冒烟。ACT 命令留给有 GPU 的 Colab。
+- 不在这一轮用 3,243 条把 ACT 训完。配方和短程命令已经能启动。
 
 ## 6. 建议的下一步
 
-1. 在有磁盘的机器上解压 EgoDex test，跑 `scripts/demo_open_dataset_pipeline.py --input <test目录> --limit 20`，再跑 `ego_to_lerobot.py`，看真实数据的产出率和导出帧数，而不是只看合成样本。
-2. 有 GPU 时用同一份 v3.0 导出接 `lerobot-train` 的 ACT，输入仍是手部状态和图像，动作仍是下一帧手腕，不要改回 pusht 的 action[2]。
-3. 时间分段和分手指令单独做标注，过 `validate_hierarchy.py --strict` 再进训练。导出已经会读 SUBTASK，不需要改格式。
-4. 真实数据上至少两次不同小时数的预训练日志，直接交给现成的 `scripts/scaling_law.py`。`--max-frames` 只适合接口验证。
+1. 用修好的转换器重跑 EgoDex test（`--workers` 大于 1），再看产出率。没有 confidences 的 12 个任务不应再整任务被拒。
+2. 导出时加上 `--video-size 224`，在 GPU 上按 `examples/ego_act_train.yaml` 训 ACT。不同小时数的 `val_loss` 交给 `scripts/scaling_law.py`。线性 BC 只作基线，并和 `copy_current_wrist` 比。
+3. 时间分段和分手指令单独做标注，过 `validate_hierarchy.py --strict` 再进训练。导出已经会读 SUBTASK。
+4. 像素模糊、HOT3D、自有设备 SLAM 仍排在这条链路之后。

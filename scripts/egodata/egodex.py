@@ -7,13 +7,27 @@
 ``camera/intrinsic`` 主点 (960, 540) 对应 1920×1080；
 属性里有 environment、task、llm_description、llm_objects、llm_verbs。
 位姿是录制时 ARKit 的静止世界系，本模块不重新跑 SLAM。
+
+没有 ``confidences`` 组时，手腕置信度记为未知（JSON 里是 null），不当成 0。
+未知表示「源数据没写这个通道」：关节齐全就算这只手可用，QC 只靠投影判断出画。
+读到了低于 0.5 的数字才算低置信。
 """
 from pathlib import Path
 
 import numpy as np
 
-from egodata.coverage import coarse_object_class, normalize_action, normalize_environment
-from egodata.schema import SCHEMA_VERSION, rotmat_to_quat_xyzw, save_episode
+from egodata.coverage import (
+    coarse_object_class,
+    normalize_action,
+    normalize_environment,
+    normalize_object_name,
+)
+from egodata.schema import (
+    SCHEMA_VERSION,
+    make_quaternions_continuous,
+    rotmat_to_quat_xyzw,
+    save_episode,
+)
 
 EGODEX_FPS = 30.0
 
@@ -88,39 +102,72 @@ def _image_size(intrinsic):
     return max(width, 1), max(height, 1)
 
 
+def _column_translations(transforms, name, num_frames):
+    """一次读出 N×4×4，只留平移。没有这个关节时返回 None。"""
+    if name not in transforms:
+        return None
+    matrices = np.asarray(transforms[name])
+    if matrices.shape[0] != num_frames or matrices.shape[-2:] != (4, 4):
+        raise ValueError("%s 的形状应为 (%d, 4, 4)，实际是 %s" % (name, num_frames, matrices.shape))
+    return np.asarray(matrices[:, :3, 3], dtype=np.float64)
+
+
+def _wrist_poses(transforms, wrist_name, num_frames):
+    """手腕 xyz + 连续四元数。整段缺失时返回 None。"""
+    if wrist_name not in transforms:
+        return None
+    matrices = np.asarray(transforms[wrist_name], dtype=np.float64)
+    if matrices.shape[0] != num_frames or matrices.shape[-2:] != (4, 4):
+        raise ValueError("%s 的形状应为 (%d, 4, 4)，实际是 %s" % (wrist_name, num_frames, matrices.shape))
+    quats = np.stack([rotmat_to_quat_xyzw(matrices[index, :3, :3]) for index in range(num_frames)])
+    quats = make_quaternions_continuous(quats)
+    return np.concatenate([matrices[:, :3, 3], quats], axis=1)
+
+
+def _confidence_column(conf_group, wrist_name, num_frames):
+    """没有 confidences 组、或没有该手腕时，整列记为未知（None），不当成 0。"""
+    if conf_group is None or wrist_name not in conf_group:
+        return [None] * num_frames
+    values = np.asarray(conf_group[wrist_name], dtype=np.float64).reshape(-1)
+    if values.shape[0] != num_frames:
+        raise ValueError("%s 置信度长度应为 %d，实际是 %d" % (wrist_name, num_frames, values.shape[0]))
+    column = []
+    for value in values:
+        if not np.isfinite(value):
+            column.append(None)
+        else:
+            column.append(float(value))
+    return column
+
+
 def _hand_series(handle, prefix, num_frames):
-    joints = []
-    wrist_pose = []
-    confidence = []
-    valid = []
     transforms = handle["transforms"]
     conf_group = handle["confidences"] if "confidences" in handle else None
     wrist_name = prefix + "Hand"
+    columns = [_column_translations(transforms, prefix + suffix, num_frames) for suffix in _JOINT_SUFFIXES]
+    poses = _wrist_poses(transforms, wrist_name, num_frames)
+    confidence = _confidence_column(conf_group, wrist_name, num_frames)
+    joints = []
+    wrist_pose = []
+    valid = []
     for frame_index in range(num_frames):
         frame_joints = []
-        for suffix in _JOINT_SUFFIXES:
-            name = prefix + suffix
-            if name not in transforms:
+        for column in columns:
+            if column is None or not np.isfinite(column[frame_index]).all():
                 frame_joints.append(None)
-                continue
-            translation = transforms[name][frame_index][:3, 3]
-            frame_joints.append([float(v) for v in translation])
-        if wrist_name in transforms:
-            matrix = transforms[wrist_name][frame_index]
-            quat = rotmat_to_quat_xyzw(matrix[:3, :3])
-            translation = [float(v) for v in matrix[:3, 3]]
-            pose = translation + quat
-        else:
+            else:
+                frame_joints.append([float(value) for value in column[frame_index]])
+        if poses is None or not np.isfinite(poses[frame_index]).all():
             pose = None
-        if conf_group is not None and wrist_name in conf_group:
-            conf = float(conf_group[wrist_name][frame_index])
         else:
-            conf = 0.0
+            pose = [float(value) for value in poses[frame_index]]
+        conf = confidence[frame_index]
         finite = pose is not None and all(point is not None for point in frame_joints)
-        confidence.append(conf)
-        wrist_pose.append(pose if pose is not None else [None] * 7)
+        # 置信度未知时，关节齐全即视为可用；读到了数字才用 0.5 阈值。
+        confident = conf is None or conf >= 0.5
         joints.append(frame_joints)
-        valid.append(bool(finite and conf >= 0.5))
+        wrist_pose.append(pose if pose is not None else [None] * 7)
+        valid.append(bool(finite and confident))
     return {
         "joints": joints,
         "wrist_pose": wrist_pose,
@@ -142,6 +189,7 @@ def load_episode_hdf5(path, episode_id=None):
         task_name = _attr(handle, "task", path.parent.name).strip() or path.parent.name
         environment_raw = _attr(handle, "environment", "")
         objects = _string_list(handle.attrs["llm_objects"]) if "llm_objects" in handle.attrs else []
+        objects = [normalize_object_name(name) for name in objects]
         verbs = _string_list(handle.attrs["llm_verbs"]) if "llm_verbs" in handle.attrs else []
         instruction = active_language({key: handle.attrs[key] for key in handle.attrs})
         hands = {
@@ -195,19 +243,37 @@ def load_episode_hdf5(path, episode_id=None):
     }
 
 
-def convert_tree(root, out_dir, limit=None):
-    """把目录下的 ``*.hdf5`` 写成统一 JSON。``limit`` 只转换前若干条。"""
+def _convert_one(job):
+    path, episode_id, destination = job
+    episode = load_episode_hdf5(path, episode_id=episode_id)
+    save_episode(episode, destination)
+    return destination
+
+
+def convert_tree(root, out_dir, limit=None, workers=1):
+    """把目录下的 ``*.hdf5`` 写成统一 JSON。``limit`` 只转换前若干条。
+
+    ``workers > 1`` 时按文件多进程转换。输出路径和 episode_id 与单进程相同。
+    """
     root = Path(root)
     out_dir = Path(out_dir)
     files = sorted(root.rglob("*.hdf5"))
     if limit is not None:
         files = files[: int(limit)]
-    written = []
+    jobs = []
     for path in files:
         relative = path.relative_to(root).with_suffix("")
         episode_id = "egodex/" + relative.as_posix()
-        episode = load_episode_hdf5(path, episode_id=episode_id)
         destination = out_dir / relative.with_suffix(".json")
-        save_episode(episode, destination)
-        written.append(destination)
-    return written
+        jobs.append((str(path), episode_id, str(destination)))
+    if not jobs:
+        return []
+    worker_count = max(1, int(workers))
+    if worker_count == 1:
+        written = [_convert_one(job) for job in jobs]
+    else:
+        import multiprocessing
+
+        with multiprocessing.Pool(worker_count) as pool:
+            written = pool.map(_convert_one, jobs, chunksize=4)
+    return [Path(path) for path in written]
