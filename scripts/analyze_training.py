@@ -22,6 +22,10 @@
   - outputs/mimicgen_train_lowdim.log : BC-RNN low-dim 在 Square 上的训练
 
 输出: <outdir>/training_report.html (自包含)
+
+可选: --scaling <yaml或csv>
+  把多次不同数据量 run 的最优验证损失拟合进同一份 HTML（见 scaling_law.py）。
+  未提供、文件不存在、或有效 run 不足 2 个时跳过该节，不影响其余报告。
 """
 import base64
 import glob
@@ -29,6 +33,12 @@ import io
 import json
 import os
 import re
+import sys
+
+_SCRIPTS = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS not in sys.path:
+    sys.path.insert(0, _SCRIPTS)
+import scaling_law
 
 import matplotlib
 matplotlib.use("Agg")
@@ -367,6 +377,19 @@ else:
     kld_component = None
     kld_note = "* 未找到 ACT 训练日志，kld_loss 留空。"
 
+
+def _scaling_config_from_argv(argv):
+    if "--scaling" not in argv:
+        return None
+    idx = argv.index("--scaling")
+    if idx + 1 >= len(argv) or argv[idx + 1].startswith("-"):
+        return None
+    return argv[idx + 1]
+
+
+_scaling_cfg = _scaling_config_from_argv(sys.argv[1:])
+scaling_section = scaling_law.section_html(_scaling_cfg) if _scaling_cfg else ""
+
 # ---------------------------------------------------------------- HTML 报告
 def img_tag(b64):
     return f'<img src="data:image/png;base64,{b64}" style="max-width:100%;border:1px solid #e2e8f0;border-radius:8px;">'
@@ -474,6 +497,7 @@ html = f"""<!DOCTYPE html>
 low-dim 版（低维状态输入）训练 {low_sum['epochs']} epochs，成功率最高 {low_sum['best_sr']*100:.0f}% ——
 两者对比可量化"视觉输入对策略成功率的影响"。</p>
 
+{scaling_section}
 </div></body></html>"""
 
 with open(os.path.join(OUT, "training_report.html"), "w", encoding="utf-8") as f:
