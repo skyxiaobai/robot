@@ -1,4 +1,4 @@
-# 头戴式数据采集设备规格（纯头显 · v9）
+# 头戴式数据采集设备规格（纯头显 · v10）
 
 > **适用工程**：`/mnt/sda/app/robot` ｜ **文档日期**：2026-10-09（v8 正文 2026-08-01 保留）
 >
@@ -8,6 +8,8 @@
 > **v8 变更**：按「纯头显（无手腕相机、无手套）」收敛范围，删除训练数据报告、外部产品规格（Ego 头显 / iPhone）、未来 Pipeline 接入检查流程、版本历史等非设备规格内容。
 >
 > **v9 变更**（对照 Jim Fan「Robotics End Game」中的 NVIDIA EgoScale）：保留 v8 全文。把**逐帧手部关节关键点 + 世界坐标系手腕 6DoF 位姿**升为核心标签，并写明头戴 IMU 单独不够、需要双目和/或 SLAM。增加稠密时间分段子任务语言标注、无感佩戴要求（重量、长时间佩戴、自动上传），以及 EgoScale 式数据配比参考方案。详见 §7。当前 ACT/BC-RNN 输入契约仍以 §1–§3 为准。
+>
+> **v10 变更**（对照覆盖度采集、产出率 QC、四级语言标注）：保留 v9 全文。增加 §8：四级标注（ENVIRONMENT / TASK / 时间分段 SUBTASK / 分手 INSTRUCTION）及 JSON 样例、训练产出率与自动 QC 的定义、按环境/物体/任务/动作类型统计的覆盖词表。没有自有头戴设备时，用开放数据集上的位姿和元数据先把这三件事跑起来，工具见 `scripts/egodata/`。
 
 ---
 
@@ -20,6 +22,7 @@
 | ③ 头戴硬件（一一对应） | **头戴摄像头**（RGB 图像流+手部关键点）+ **头戴 IMU**（ego-motion 补偿，非数据集字段）+ **SOC**（落盘+手部推理）。A 档 ≈370-555 元、B 档 ≈700-945 元，均 ≤1000 元 |
 | ④ v9 核心几何标签 | 逐帧 `observation.hand_joints`（21×3，世界系）+ `observation.wrist_pose`（xyz + 四元数，世界系 6DoF）。头戴 IMU 单独不够，必须双目和/或 SLAM（§7.1–§7.2） |
 | ⑤ v9 语言与佩戴 | 稠密时间分段子任务标注；无感佩戴：头戴重量、可长时间佩戴、采集段自动上传（§7.3–§7.4） |
+| ⑥ v10 质检与覆盖 | 四级标注、片段级产出率、环境/物体/任务/动作覆盖空档（§8）。开放数据集上的实现见 `scripts/egodata/` |
 | 明确不需要 | 手腕相机、Flex 手套、按钮/LED、麦克风/显示屏。双目在「只满足当前 ACT 输入契约」时仍非数据集字段（§3.3）；一旦要写世界系手腕 6DoF，双目/SLAM 变为必需（§7.2） |
 
 ---
@@ -316,6 +319,89 @@ camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=
 - 今天的 ACT 仍吃 `observation.image` + `observation.state`，输出 `action`。这些字段继续按 §2、§4 落盘。
 - §7.1 的关节和手腕位姿是预训练标签，可以离线从视频估计后再写回 parquet；估计失败的帧用 `hand_valid=false`，不要把单目猜测标成世界系米制真值。
 - 语言分段是标注产物，不要求头戴硬件上有麦克风。v8「不加麦克风」仍然成立。
+
+---
+
+## 8. 覆盖度、产出率与四级标注（v10）
+
+没有自有头戴设备时，先在开放数据集上按同一套定义做质检和覆盖统计。EgoDex 测试集的位姿已经在 ARKit 世界系里（设备端 SLAM 的结果），所以这一节的工具**消费**世界系轨迹，不在本仓库里重跑 SLAM。
+
+### 8.1 四级标注
+
+v9 §7.3 只有「一集切成首尾相接的子任务」。v10 把它放进四层，由粗到细：
+
+| 层级 | 粒度 | 写什么 |
+|---|---|---|
+| ENVIRONMENT | 整段 | 场景类别：桌面、厨房、起居、工作间、户外，或未知 |
+| TASK | 整段 | 任务名 + 一句整段指令 |
+| SUBTASK | 时间分段 | 与 v9 `language_segments` 相同：首尾相接，盖住整段 |
+| INSTRUCTION | 时间分段、分手 | 这一小段里左手、右手或双手具体在做什么 |
+
+样例（亦可直接校验 `examples/hierarchy_annotation.json`）：
+
+```json
+{
+  "duration_s": 2.0,
+  "environment": {
+    "name": "tabletop",
+    "detail": "table:wood, position:sitting, background:brown",
+    "source": "egodex_attr"
+  },
+  "task": {
+    "name": "open_close_insert_remove_case",
+    "instruction": "打开盒子，取出垫子和鸭子，再把盒子盖上。"
+  },
+  "subtasks": [
+    {"t_start": 0.0, "t_end": 1.0, "text": "打开盒盖"},
+    {"t_start": 1.0, "t_end": 2.0, "text": "取出盒内物品并合盖"}
+  ],
+  "instructions": [
+    {"t_start": 0.0, "t_end": 1.0, "hand": "right", "text": "右手扳开卡扣"},
+    {"t_start": 1.0, "t_end": 2.0, "hand": "left", "text": "左手取出垫子和鸭子"}
+  ]
+}
+```
+
+约束：
+
+- `environment.name`、`task.name`、`task.instruction` 不能空。
+- `subtasks` 按时间排序后从 0 开始，上一段 `t_end` 等于下一段 `t_start`（容差 1ms），最后一段的 `t_end` 等于片段时长。
+- `instructions[].hand` 只能是 `left`、`right`、`both`。时间必须落在片段内。分手指令不必彼此首尾相接：两只手可以只在其中一段时间有指令。
+- EgoDex 的 HDF5 属性只有整段的 `environment`、`task`、`llm_description`。转换器填 ENVIRONMENT 和 TASK，`subtasks` 与 `instructions` 留空，不把整段指令匀成假的时间分段。校验器用 `--strict` 时把缺级当成失败。
+
+校验：`python scripts/validate_hierarchy.py examples/hierarchy_annotation.json --strict`
+
+### 8.2 产出率与自动 QC
+
+**产出率（yield）** = 通过片段级 QC 的帧数 / 原始帧数。被拒绝的整段不进入训练集，哪怕其中有几帧是好的。报告里同时给出坏帧比例，方便以后改成「切掉坏段再留好段」。
+
+一条片段被拒绝，当且仅当坏帧比例 **> 20%**（`max_bad_fraction`）。一帧只要命中下面任一条，就是坏帧。阈值是 `scripts/egodata/qc.py` 里的默认值，调用时可以改。
+
+| 标记 | 含义 | 现在用的信号 | 默认阈值 |
+|---|---|---|---|
+| `hands_out_of_frame` | 手出画或跟丢 | 两只手的手腕都投影到画面外、在相机后方，或手腕置信度低于下限。投影用相机位姿的逆，按 OpenCV 约定（+Z 向前、+Y 向下）。主点两倍取整得到宽高：EgoDex 实测内参主点 (960, 540) → 1920×1080 | 置信度 < 0.5 |
+| `view_drift` | 视线飘离手 | 仍在画面内的手腕中点，与相机前向（位姿矩阵第三列）的夹角过大 | > 50° |
+| `blur` | 运动模糊 | 相邻帧相机旋转的角速度。没有像素时用它代替拉普拉斯方差 | > 1.5 rad/s |
+| `staged_static` | 摆拍或干等 | 两只手腕的世界系速度都低于下限，且连续时长达到阈值。更短的停顿保留 | < 0.015 m/s 且连续 ≥ 1.0 s |
+
+EgoDex 手腕置信度的含义来自数据集说明：它表示这只手是否被整体检测到，低置信度即跟丢或出画，不能把缺测写成 0。
+
+报告：`python scripts/egodata_qc.py --episodes <统一JSON目录> --html outputs/yield_report.html --csv outputs/yield_episodes.csv`
+
+### 8.3 覆盖词表
+
+采集和抽查都按四根轴计数，空档是封闭词表里片段数为 0 的取值。任务名和原始物体名是开放词表，只统计出现过的值。
+
+| 轴 | 封闭取值 |
+|---|---|
+| environment | `tabletop` `kitchen` `living_room` `workshop` `outdoor` `unknown` |
+| object_class | `container` `tool` `cloth` `food` `electronics` `toy` `furniture` `tableware` `other` `unknown` |
+| action_type | `pick` `place` `open` `close` `pour` `wipe` `fold` `tie` `cut` `stir` `insert` `remove` `stack` `screw` `throw` `type` `other` `unknown` |
+| task / object | 开放词表。EgoDex 用目录名或属性 `task`，物体用 `llm_objects` |
+
+EgoDex 的 `environment` 属性是自由文本（例如 `table:wood, position:sitting, background:brown`）。含 table / desk / sitting 归入 `tabletop`，含 kitchen / fridge / sink 归入 `kitchen`，对不上则为 `unknown`。`llm_verbs` 用子串归入动作类型，归不上的记为 `other`。
+
+报告：`python scripts/egodata_coverage.py --episodes <统一JSON目录> --html outputs/coverage_report.html --csv outputs/coverage_counts.csv`
 
 ---
 
