@@ -26,7 +26,8 @@ from egodata.lerobot_export import (  # noqa: E402
     pack_action,
     pack_state,
 )
-from ego_pretrain_bc import _select_indices, train_bc  # noqa: E402
+from ego_pretrain_bc import DEFAULT_L2_GRID, _select_indices, train_bc, train_bc_seeds  # noqa: E402
+import ego_act_scaling  # noqa: E402
 import scaling_law  # noqa: E402
 
 
@@ -183,6 +184,9 @@ class ExportTest(unittest.TestCase):
             self.assertEqual(info["features"]["observation.state"]["shape"], [STATE_DIM])
             self.assertEqual(info["features"]["action"]["shape"], [ACTION_DIM])
             self.assertEqual(info["features"]["observation.image"]["dtype"], "video")
+            stats = json.loads((out / "meta" / "stats.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(stats["observation.image"]["mean"]), 3)
+            self.assertIn("std", stats["observation.image"])
             table = pq.read_table(out / "data" / "chunk-000" / "file-000.parquet")
             data = table.to_pydict()
             self.assertEqual(len(data["action"]), 5)
@@ -288,6 +292,19 @@ class TrainSmokeTest(unittest.TestCase):
             self.assertTrue(set(small["train_episode_ids"]).isdisjoint(small["val_episode_ids"]))
             self.assertAlmostEqual(small["copy_current_wrist"], large["copy_current_wrist"], places=6)
             self.assertEqual(large["train_indices"][: small["frames"]], small["train_indices"])
+            self.assertAlmostEqual(small["feature_mean_sum"], large["feature_mean_sum"], places=6)
+            self.assertAlmostEqual(small["feature_std_sum"], large["feature_std_sum"], places=6)
+            pinned = train_bc(dataset, max_frames=4, seed=0, l2=10.0)
+            self.assertEqual(pinned["ridge_l2"], 10.0)
+            self.assertIn(small["ridge_l2"], DEFAULT_L2_GRID)
+            multi = train_bc_seeds(dataset, seeds=[0, 1], log_path=root / "seeds.log", max_frames=8)
+            metrics = scaling_law.extract_run_metrics(multi["log"])
+            self.assertAlmostEqual(metrics["val_loss"], multi["val_loss"])
+            self.assertIn("val_loss_std", metrics)
+            self.assertGreater(
+                ego_act_scaling.copy_baseline_l1(dataset, small["val_episode_ids"], horizon=2),
+                0.0,
+            )
 
     def test_small_budget_samples_past_episode_starts(self):
         episodes = np.repeat(np.arange(4), 20)
@@ -298,6 +315,35 @@ class TrainSmokeTest(unittest.TestCase):
         offsets = [int(index) % 20 for index in small]
         self.assertGreater(max(offsets), 0)
         self.assertGreater(len(pool_small), len(small))
+
+
+class ActScalingPlanTest(unittest.TestCase):
+    def test_episode_budgets_share_val_and_nest(self):
+        episodes = np.repeat(np.arange(8), 20)
+        plans = ego_act_scaling.plan_episode_budgets(
+            episodes, horizon=4, budgets=[2, 4, None], seed=0, val_fraction=0.25,
+        )
+        self.assertEqual(plans[0]["val_episode_ids"], plans[1]["val_episode_ids"])
+        self.assertEqual(plans[1]["val_episode_ids"], plans[2]["val_episode_ids"])
+        self.assertEqual(plans[0]["train_episode_ids"], plans[1]["train_episode_ids"][:2])
+        self.assertEqual(plans[1]["train_episode_ids"], plans[2]["train_episode_ids"][:4])
+        self.assertTrue(set(plans[2]["train_episode_ids"]).isdisjoint(plans[2]["val_episode_ids"]))
+        argv = ego_act_scaling.lerobot_train_argv(
+            "outputs/egodex_lerobot", plans[0]["train_episode_ids"], "outputs/act_2",
+            steps=2, batch_size=2, device="cpu", seed=0, chunk_size=16,
+        )
+        text = " ".join(argv)
+        self.assertIn("--policy.type=act", text)
+        self.assertIn("--policy.chunk_size=16", text)
+        self.assertIn("--policy.n_action_steps=16", text)
+        self.assertIn("--policy.device=cpu", text)
+        self.assertIn("--steps=2", text)
+        self.assertIn("--dataset.episodes=[%s]" % ",".join(str(item) for item in plans[0]["train_episode_ids"]), text)
+        self.assertNotIn("language", text)
+        log = ego_act_scaling.format_metrics_log(plans[0], 0.5, 1.0, 2, "cpu")
+        self.assertIn("language_conditioning=unsupported_by_act_0.6.1", log)
+        self.assertIn("image_key=observation.image", log)
+        self.assertAlmostEqual(scaling_law.extract_best_val_loss(log), 0.5)
 
     def test_source_video_is_downscaled(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -246,6 +246,17 @@ def _stats_json(array):
     return {key: np.asarray(value).reshape(-1).tolist() for key, value in raw.items()}
 
 
+def _image_stats_json():
+    """图像统计量。lerobot 0.6.1 默认用 ImageNet 的 mean/std 覆盖这两项，但键必须先存在。"""
+    return {
+        "min": [[[0.0]], [[0.0]], [[0.0]]],
+        "max": [[[1.0]], [[1.0]], [[1.0]]],
+        "mean": [[[0.485]], [[0.456]], [[0.406]]],
+        "std": [[[0.229]], [[0.224]], [[0.225]]],
+        "count": [1],
+    }
+
+
 def _write_placeholder_video(path, num_frames, fps):
     size = PLACEHOLDER_SIZE
     raw = bytearray()
@@ -488,6 +499,7 @@ def export_lerobot(
     episodes_frame.to_parquet(episodes_path, index=False)
 
     stats = {
+        IMAGE_KEY: _image_stats_json(),
         "observation.state": _stats_json(states),
         "observation.hand_valid": _stats_json(valids),
         "action": _stats_json(actions),

@@ -61,6 +61,81 @@ class ExtractBestValLossTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["val_baseline_ratio"], 1.0851e-04 / 1.2e-04)
         self.assertNotAlmostEqual(metrics["trans_mse"], 1.0e-03)
 
+    def test_seed_mean_overrides_the_minimum_val_loss(self):
+        text = "\n".join([
+            "seed=0",
+            "copy_current_wrist: 2.0",
+            "step=1 val_loss: 1.0",
+            "seed=1",
+            "copy_current_wrist: 4.0",
+            "step=1 val_loss: 3.0",
+            "val_loss_mean: 2.0",
+            "val_loss_std: 1.414214",
+            "copy_current_wrist_mean: 3.0",
+            "copy_current_wrist_std: 1.414214",
+            "val_baseline_ratio_mean: 0.7",
+            "val_baseline_ratio_std: 0.1",
+        ])
+        metrics = scaling_law.extract_run_metrics(text)
+        self.assertAlmostEqual(metrics["val_loss"], 2.0)
+        self.assertAlmostEqual(metrics["val_loss_std"], 1.414214)
+        self.assertAlmostEqual(metrics["copy_current_wrist"], 3.0)
+        self.assertNotAlmostEqual(metrics["val_loss"], 1.0)
+
+
+class PowerLawAndLabelsTest(unittest.TestCase):
+    def test_saturating_curve_prefers_power_law(self):
+        sizes = [1000.0, 4000.0, 16000.0, 64000.0, 256000.0, 400000.0]
+        linf, amp, alpha = 1.02, 30.0, 0.55
+        losses = [linf + amp * (size ** (-alpha)) for size in sizes]
+        log_fit = scaling_law.fit_log_linear(sizes, losses)
+        power_fit = scaling_law.fit_power_saturating(sizes, losses)
+        chosen = scaling_law.select_fit(log_fit, power_fit)
+        self.assertEqual(chosen["form"], "power")
+        self.assertGreater(power_fit["r2"], log_fit["r2"])
+        self.assertAlmostEqual(scaling_law.predict_loss(power_fit, 64000.0), losses[3], places=3)
+
+    def test_exact_log_line_stays_default(self):
+        sizes = [8.0, 32.0, 128.0, 512.0]
+        losses = [2.0 - 0.25 * math.log(size) for size in sizes]
+        log_fit = scaling_law.fit_log_linear(sizes, losses)
+        power_fit = scaling_law.fit_power_saturating(sizes, losses)
+        chosen = scaling_law.select_fit(log_fit, power_fit)
+        self.assertEqual(chosen["form"], "log")
+        self.assertGreater(log_fit["r2"], 0.999)
+
+    def test_nearby_labels_do_not_share_an_offset(self):
+        # 横轴跨度按真实缩放实验：最后两档靠在一起，前面的点把跨度拉开。
+        xs = [6.9, 8.3, 9.7, 11.1, 12.45, 12.89]
+        ys = [1.08, 1.05, 1.03, 1.026, 1.0194, 1.0195]
+        offsets = scaling_law.label_offsets(xs, ys)
+        self.assertNotEqual(offsets[-1], offsets[-2])
+
+    def test_same_size_seeds_become_mean_and_error_bar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            specs = [("a", 1000, 1.0), ("b", 1000, 3.0), ("c", 8000, 1.5), ("d", 8000, 1.5)]
+            lines = ["runs:"]
+            for name, size, loss in specs:
+                path = root / ("%s.log" % name)
+                path.write_text("step=1 val_loss: %s\n" % loss, encoding="utf-8")
+                lines.append("  - name: %s" % name)
+                lines.append("    size: %d" % size)
+                lines.append("    log: %s.log" % name)
+            cfg = root / "runs.yaml"
+            cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            result = scaling_law.analyze_config(str(cfg))
+            self.assertEqual(len(result["points"]), 2)
+            small = result["points"][0]
+            self.assertAlmostEqual(small["loss"], 2.0)
+            self.assertAlmostEqual(small["loss_std"], math.sqrt(2.0))
+            out = root / "report.html"
+            code = scaling_law.main(["--runs", str(cfg), "--out", str(out)])
+            self.assertEqual(code, 0)
+            html = out.read_text(encoding="utf-8")
+            self.assertIn("±", html)
+            self.assertIn("饱和幂律", html)
+
 
 class FitLogLinearTest(unittest.TestCase):
     def test_recovers_slope_against_natural_log_of_data_size(self):

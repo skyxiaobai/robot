@@ -68,16 +68,18 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | `docs/headcam_bom.csv` | **可下单采购清单**：15 列证据链版（提供的数据/格式标准/数据契约/依据/采购原因），Excel 可直接打开 |
 | `docs/twostage_pretrain_finetune_plan.md` | 两段式训练方案评估（合成预训练 → 头戴真实微调；路线 C 引用 headcam 规格 §7） |
 | `scripts/build_headcam_bom.py` | BOM 生成脚本（可复现再生成 CSV） |
-| `scripts/scaling_law.py` | 最优验证损失对 ln(数据量) 拟合。有基线时同时画保持不动、平移/旋转，并拟合 val/基线比值。无输入则跳过 |
+| `scripts/scaling_law.py` | 对数直线和饱和幂律都拟合，R² 更高的作为默认。多种子画均值和标准差。无输入则跳过 |
 | `scripts/convert_egodex.py` | EgoDex HDF5 → 统一 episode JSON。`--workers` 多进程；缺置信度记为未知 |
 | `scripts/egodata_qc.py` | 手出画 / 视线飘移 / 模糊代理 / 静止 的 QC，以及训练产出率 HTML、CSV |
 | `scripts/egodata_coverage.py` | 按环境、物体、任务、动作类型统计覆盖并标出空档。逐条累加，不把全部 JSON 放进内存 |
 | `scripts/validate_hierarchy.py` | 校验四级标注。样例 `examples/hierarchy_annotation.json` |
 | `scripts/demo_open_dataset_pipeline.py` | 用合成 EgoDex 式样本把上面几步串起来 |
 | `scripts/ego_to_lerobot.py` | QC 通过的统一 episode → LeRobot v3.0。动作是手腕增量，mp4 可缩放到 224 |
-| `scripts/ego_pretrain_bc.py` | 岭回归线性 BC。全训练池共用一套标准化，episode 内打乱后再轮转抽满预算，并写 val/基线比值 |
+| `scripts/ego_pretrain_bc.py` | 岭回归线性 BC。特征和动作都用全训练池统计量，可扫描 l2，多种子写均值和标准差 |
 | `examples/ego_pretrain_bc.yaml` | 线性 BC 配方：增量动作、horizon、不同数据量 |
 | `examples/ego_act_train.yaml` | 同一导出上的 lerobot 0.6.1 ACT（`chunk_size=16`，Colab GPU） |
+| `scripts/ego_act_scaling.py` | 按固定验证 episode 安排多档 ACT，训练后写 val_loss 和保持不动基线 |
+| `notebooks/egodex_act_scaling_colab.ipynb` | 下载 EgoDex test、224 导出，并在 T4/L4 上跑 3–4 档 ACT 缩放 |
 | `scripts/collect_datasize_evidence.py` 等 | 分析取证脚本 |
 | `outputs/mimicgen_*.log` | 训练/生成日志（已提交部分） |
 

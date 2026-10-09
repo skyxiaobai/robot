@@ -15,6 +15,8 @@
 
 第三次全量重跑说明，按每一档自己的训练子集做标准化会让基线从 2.77 变到 1.09，缩放拟合被抬高。现在均值和标准差只从全部训练池算一次，验证集和基线用同一套。轮转前先在每条 episode 内打乱动作块，小预算不再只看见片段开头，更小预算仍是前缀。缩放律同时读基线、平移、旋转，并对 val/基线比值拟合。
 
+第四次全量重跑里，测量已经稳定：基线固定在 1.088572，损失随数据量下降，但对数直线从大约 6.4 万个样本起就不再下降（全量只比保持不动好约 6%）。仓库外的 MLP 也在 25.6 万之后停住。瓶颈是输入只有手部状态。缩放报告现在同时给饱和幂律 `L = L∞ + A·N^(-α)`。特征和动作都用全训练池的统计量，岭回归系数在训练内部划分上选择。多种子会写成均值和标准差。ACT 的图像缩放在 `notebooks/egodex_act_scaling_colab.ipynb`，lerobot 0.6.1 的 ACT 仍不吃语言。
+
 还没接上的是：在这 3,243 条上真正把 ACT 训完，以及给 EgoDex 补上按时间切开的子任务和分手指令。像素模糊、HOT3D、自有设备 SLAM 仍不在这条链路上。笼统动词 `use` 仍然落在 other。
 
 ## 1. 逐段对照
@@ -26,8 +28,8 @@
 | QC / 产出率 | `scripts/egodata/qc.py`，`scripts/egodata_qc.py`。手出画、视线飘移、相机角速度（模糊代理）、长时间静止。产出率 = 通过片段的帧数 / 原始帧数 | 模糊还没看像素（拉普拉斯）。坏段只能整段丢掉，不能把好的子段切出来留用 | P1：有 mp4 时加像素模糊；子段裁剪 |
 | 覆盖统计 | `scripts/egodata/coverage.py`。桌布 `tablecloth:`、坐姿和背景都留在环境名里，`lavendar` 收成 `lavender`。物体类别在出报告时按当前词表重算，脚本逐条累加、不把全部 JSON 留在内存里。动作词表含组装、滚动、推动、涂色等，take/gather、stock/add 收到已有类别 | 词表仍是手写的，笼统的 `use` 仍算 other。没有「该采多少才算补上」的数量目标 | P2：按目标小时数做配额 |
 | 四级标注 | 规格 §8.1，样例 `examples/hierarchy_annotation.json`，校验 `scripts/validate_hierarchy.py`。EgoDex 转换只填 ENVIRONMENT 和 TASK | EgoDex 没有时间分段 SUBTASK，也没有分手 INSTRUCTION。不能把整段描述切成假时间段 | **P1：标注**（人工或模型），不要在转换器里编造 |
-| LeRobot 训练 | pusht ACT 笔记本仍在（image+state[2] → action[2]）。手部数据的动作是下一步手腕增量，线性 BC 回归连续 16 步（`examples/ego_pretrain_bc.yaml`）。ACT 命令在 `examples/ego_act_train.yaml`，Colab 单元在 GPU 上把 `RUN_ACT` 打开即可跑 | 还没有在完整测试集、224 视频上把 ACT 训完。pusht 的 action[2] 没有改 | **P1：用真实导出把 ACT 训出一组可比较的 run** |
-| 缩放律 | `scripts/scaling_law.py`。横轴是 `ln(N)（单位）`。线性 BC 各档共用验证 episode 和同一套动作标准化。日志用科学计数法。报告画出保持不动基线、平移/旋转，并拟合 val/基线比值 | 还没有真实 EgoDex 不同小时数的 ACT run。线性模型在全训练池标准化之后仍可能饱和，要用 ACT 的曲线才看得出数据量 | P2：有了多组 ACT run 再拟合，不必改公式 |
+| LeRobot 训练 | pusht ACT 笔记本仍在（image+state[2] → action[2]）。手部线性 BC 用全训练池标准化，并可扫描岭回归系数、多种子。ACT 配方在 `examples/ego_act_train.yaml` 和 `notebooks/egodex_act_scaling_colab.ipynb`：224 图像、16 步增量、固定验证 episode、三到四档 | 还没有在完整测试集上把这几档 ACT 训完。lerobot 0.6.1 的 ACT 没有语言编码器。pusht 的 action[2] 没有改 | **P1：在 Colab GPU 上跑完 ACT 四档** |
+| 缩放律 | `scripts/scaling_law.py`。对数直线和饱和幂律都报告，R² 更高的作为默认曲线。同一数据量的多种子画均值和标准差。靠得近的点标签会错开 | 还没有真实 EgoDex 的 ACT 曲线。状态-only 的线性模型在 6.4 万之后饱和，不要用对数斜率外推 | P1：用 ACT 笔记本的日志再拟合 |
 
 优先级的意思：P1 是下一条数据链路还没通的地方；P2 是数据集种类、配额和自有设备 SLAM，不挡住现在用开放数据做质检。
 
@@ -78,11 +80,17 @@
 
 没有源 mp4 时写 16×16 占位视频。有同名 mp4 时裁到保留帧数，并用 `--video-size`（默认 224，偶数）缩成正方形，避免 1080p 重编码。
 
-`scripts/ego_pretrain_bc.py` 在标准化特征上做岭回归（闭式解）。动作的逐维均值和标准差只从全部训练池算一次，所有 `--max-frames` 共用，并同样作用在验证目标和保持不动的基线上，所以各档 `val_loss` 和 `copy_current_wrist` 单位相同。平移和旋转分开记进 `trans_mse` / `rot_mse`，日志还有 `val_baseline_ratio`。验证集默认是 10% 的 episode，种子固定。抽样前先在每条 episode 内打乱动作块，再轮转直到 N 个样本：小预算覆盖片段中后段，更小预算是更大预算的前缀，而且只要条数够就会用到 N 条。日志用科学计数法。`scaling_law.py` 读取 `val_loss`、基线、平移和旋转，并对比值再拟合一条直线。
+`scripts/ego_pretrain_bc.py` 做岭回归（闭式解）。动作和特征的逐维均值、标准差都只从全部训练池算一次，所有 `--max-frames` 共用，并同样作用在验证目标和保持不动的基线上。岭回归系数默认在该档训练样本内部留出 20% 来选，`--l2` 可以钉死。`--seeds 0,1,2` 时每个种子重抽验证 episode，日志写 `val_loss_mean` 和 `val_loss_std`。平移和旋转分开记。抽样前先在每条 episode 内打乱动作块，再轮转直到 N 个样本。
+
+`scaling_law.py` 同时拟合 `a + b·ln(N)` 和 `L∞ + A·N^(-α)`（不依赖 scipy）。两条都写出 R²，更高的画成实线。同一 `size` 的多次运行合成一个点。第四次重跑的线性曲线在约 6.4 万样本后变平，默认曲线会落到饱和幂律，而不再把斜率外推成「数据翻倍就降多少」。
+
+ACT：`notebooks/egodex_act_scaling_colab.ipynb` 把 EgoDex test 下到 Drive，转换、质检、按 224 导出，再按固定验证 episode 训三到四档 lerobot 0.6.1 ACT。T4/L4 上正式四档训练大约 80 分钟，连同 16GB 下载和导出大约 2.5–3.5 小时。ACT 这一版只条件于图像和 state。
 
 覆盖报告逐条读取 JSON 后立刻丢掉，全量时不再把数 GB 的 episode 同时留在内存里。环境字段认 `tablecloth:`，并把 `lavendar` 收成 `lavender`。物体粗类别按当前关键词从物体名重算。`use` 这种笼统动词仍然算 other，不另造一个类别。
 
-ACT：`examples/ego_act_train.yaml`，Colab 笔记本末尾。`lerobot-train --policy.type=act --policy.chunk_size=16`，`--dataset.root` 指向导出目录。CPU 冒烟不安装 lerobot。
+导出的 `stats.json` 含 `observation.image`。lerobot 0.6.1 打开 ImageNet 统计量时会改写它的 mean/std，键不存在会直接报错。
+
+ACT 训练入口是 `scripts/ego_act_scaling.py` 和 `notebooks/egodex_act_scaling_colab.ipynb`。`examples/ego_act_train.yaml` 仍是单档命令。验证损失在反归一化之后的原始动作上算 L1，和保持不动基线同一单位。
 
 ## 5. 仍然不做的事
 
@@ -90,8 +98,8 @@ ACT：`examples/ego_act_train.yaml`，Colab 笔记本末尾。`lerobot-train --p
 - 不在转换器里伪造时间分段语言。SUBTASK 为空时整段用 TASK.instruction。
 - 不跑 SLAM。EgoDex 的世界系是设备上算好的；自有头戴还没有相机，规格 §7.2 的双目/SLAM 仍然是硬件到位以后的事。
 - 不把 pusht ACT 改成吃手部关节。手部预训练用单独的配方，动作是手腕增量。
-- 不安装 `lerobot==0.6.1` 来做 CPU 冒烟。ACT 命令留给有 GPU 的 Colab。
-- 不在这一轮用 3,243 条把 ACT 训完。配方和短程命令已经能启动。
+- 单元测试不导入 torch。装了 lerobot 0.6.1 时，用合成数据跑 1 步 CPU 的 `ego_act_scaling.py --run`，只确认命令能启动。完整四档仍在 Colab GPU。
+- 不在这一轮用 3,243 条把 ACT 训完。
 
 ## 6. 建议的下一步
 
