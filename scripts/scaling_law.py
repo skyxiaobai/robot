@@ -51,10 +51,19 @@ def size_axis_label(kind):
     return "ln(N)（%s）" % kind
 
 
+def format_metric(value):
+    """损失和拟合系数。小于 0.01 时用科学计数法，避免 1e-4 被写成 0.0000。"""
+    number = float(value)
+    if number != 0.0 and abs(number) < 1e-2:
+        return "%.6e" % number
+    return "%.6f" % number
+
+
 def extract_best_val_loss(text):
     """返回日志中的最小验证损失；没有验证损失时返回 None。
 
     传入已存在的文件路径时读取文件；否则把参数当作日志正文。
+    小数和科学计数法都可以，例如 ``val_loss: 1.085100e-04``。
     """
     if not isinstance(text, str) or os.path.isfile(text):
         with open(text, encoding="utf-8", errors="ignore") as handle:
@@ -234,7 +243,7 @@ def plot_b64(result):
     line_x = [x0 - pad, x1 + pad]
     line_y = [fit["intercept"] + fit["slope"] * x for x in line_x]
     ax.plot(line_x, line_y, color="#f59e0b", lw=1.8,
-            label="L = %.4f + (%.4f)·ln(N)" % (fit["intercept"], fit["slope"]))
+            label="L = %s + (%s)·ln(N)" % (format_metric(fit["intercept"]), format_metric(fit["slope"])))
     ax.set_xlabel(size_axis_label(kind))
     ax.set_ylabel("最优验证损失")
     ax.set_title("缩放律：最优验证损失 vs ln(数据量)")
@@ -252,8 +261,8 @@ def render_section(result):
     rows = []
     for point in result["points"]:
         rows.append(
-            "<tr><td>%s</td><td>%.4g %s</td><td>%.6f</td><td><code>%s</code></td></tr>"
-            % (html.escape(point["name"]), point["size"], kind, point["loss"],
+            "<tr><td>%s</td><td>%.4g %s</td><td>%s</td><td><code>%s</code></td></tr>"
+            % (html.escape(point["name"]), point["size"], kind, format_metric(point["loss"]),
                html.escape(point["log"]))
         )
     skipped = ""
@@ -266,11 +275,15 @@ def render_section(result):
 <div class="card"><img src="data:image/png;base64,%s" style="max-width:100%%;border:1px solid #e2e8f0;border-radius:8px;"></div>
 <table><tr><th>run</th><th>数据量</th><th>最优验证损失</th><th>日志</th></tr>
 %s</table>
-<p class="note">拟合（自然对数）：<b>L = %.4f + (%.4f)·ln(N)</b>，R² = %.4f。
-数据量每增加 10 倍，拟合损失变化 %.4f。
+<p class="note">拟合（自然对数）：<b>L = %s + (%s)·ln(N)</b>，R² = %.4f。
+数据量每增加 10 倍，拟合损失变化 %s。
 这是 EgoScale 报告的 log-linear 关系：最优验证损失对预训练小时数（或条数）的对数近似线性。
 每个 run 取日志中的最小验证损失，不使用训练损失。</p>
-%s""" % (img, "".join(rows), fit["intercept"], fit["slope"], fit["r2"], per_decade, skipped)
+%s""" % (
+        img, "".join(rows),
+        format_metric(fit["intercept"]), format_metric(fit["slope"]), fit["r2"],
+        format_metric(per_decade), skipped,
+    )
 
 
 def section_html(config_path):
@@ -339,8 +352,8 @@ def main(argv=None):
         handle.write(render_report(result))
     fit = result["fit"]
     print("缩放律报告已生成: %s" % out)
-    print("L = %.4f + (%.4f)·ln(N)  R2=%.4f  n=%d" % (
-        fit["intercept"], fit["slope"], fit["r2"], len(result["points"])))
+    print("L = %s + (%s)·ln(N)  R2=%.4f  n=%d" % (
+        format_metric(fit["intercept"]), format_metric(fit["slope"]), fit["r2"], len(result["points"])))
     return 0
 
 

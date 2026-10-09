@@ -222,8 +222,16 @@ class TrainSmokeTest(unittest.TestCase):
             long_result = train_bc(dataset, log_path=long_log, seed=0)
             short_result = train_bc(dataset, log_path=short_log, max_frames=2, seed=0)
             self.assertGreater(long_result["frames"], short_result["frames"])
+            self.assertEqual(short_result["frames"], 2)
             self.assertEqual(long_result["val_episode_ids"], short_result["val_episode_ids"])
             self.assertIn("copy_current_wrist:", long_result["log"])
+            self.assertIn("trans_mse:", long_result["log"])
+            self.assertIn("rot_mse:", long_result["log"])
+            self.assertRegex(long_result["log"], r"val_loss: [0-9.]+e[+-][0-9]+")
+            self.assertAlmostEqual(
+                scaling_law.extract_best_val_loss(long_result["log"]),
+                long_result["val_loss"],
+            )
             self.assertGreater(long_result["copy_current_wrist"], 0.0)
             long_loss = scaling_law.extract_best_val_loss(str(long_log))
             short_loss = scaling_law.extract_best_val_loss(str(short_log))
@@ -265,6 +273,8 @@ class TrainSmokeTest(unittest.TestCase):
             small = train_bc(dataset, max_frames=4, seed=0, log_path=root / "small.log")
             large = train_bc(dataset, max_frames=40, seed=0, log_path=root / "large.log")
             self.assertEqual(small["val_episode_ids"], large["val_episode_ids"])
+            self.assertEqual(small["frames"], 4)
+            self.assertGreaterEqual(len(small["train_episode_ids"]), 2)
             self.assertTrue(set(small["train_episode_ids"]).issubset(set(large["train_episode_ids"])))
             self.assertGreater(large["frames"], small["frames"])
             self.assertTrue(set(small["train_episode_ids"]).isdisjoint(small["val_episode_ids"]))

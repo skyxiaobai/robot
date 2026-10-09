@@ -45,6 +45,11 @@ TAXONOMY = {
         "thread",
         "dry",
         "wrap",
+        "roll",
+        "push",
+        "point",
+        "pop",
+        "color",
         "other",
         "unknown",
     ),
@@ -95,22 +100,27 @@ _LABELS = {
     "thread": "穿线",
     "dry": "擦干",
     "wrap": "包裹",
+    "roll": "滚动",
+    "push": "推动",
+    "point": "指向",
+    "pop": "按压",
+    "color": "涂色",
 }
 
 _OBJECT_KEYWORDS = (
-    ("tableware", ("cup", "mug", "plate", "bowl", "dish", "utensil", "chopstick")),
-    ("container", ("case", "box", "bag", "bin", "jar", "bottle", "drawer", "tupperware")),
-    ("cloth", ("cloth", "shirt", "towel", "sleeve")),
-    ("food", ("food", "egg", "bread", "fruit", "sandwich")),
-    ("electronics", ("phone", "airpod", "keyboard", "usb", "remote", "device")),
-    ("tool", ("tool", "brush", "screwdriver", "key", "plug")),
-    ("toy", ("lego", "toy", "dice", "card", "ball", "puzzle")),
-    ("furniture", ("table", "chair", "desk", "stool", "shelf", "furniture")),
+    ("tableware", ("cup", "mug", "plate", "bowl", "dish", "utensil", "chopstick", "spoon", "fork", "knife", "tray", "pan", "pot")),
+    ("container", ("tupperware", "bottle", "drawer", "basket", "carton", "crate", "case", "box", "jar", "bag", "bin", "lid", "cap", "can", "safe")),
+    ("cloth", ("tablecloth", "shoelace", "napkin", "glove", "cloth", "shirt", "towel", "sleeve", "sock", "lace")),
+    ("food", ("sandwich", "topping", "vegetable", "banana", "orange", "apple", "bread", "fruit", "food", "rice", "egg", "ice")),
+    ("electronics", ("headphone", "controller", "keyboard", "charger", "battery", "monitor", "adapter", "laptop", "tablet", "screen", "airpod", "cable", "mouse", "phone", "remote", "device", "usb")),
+    ("tool", ("screwdriver", "toothbrush", "scissors", "sponge", "pencil", "marker", "crayon", "broom", "brush", "tape", "tool", "plug", "pen", "key")),
+    ("toy", ("puzzle", "plush", "slime", "chess", "block", "piano", "cube", "bead", "doll", "lego", "dice", "card", "ball", "toy")),
+    ("furniture", ("furniture", "shelf", "table", "chair", "desk", "stool")),
 )
 
 _ACTION_KEYWORDS = (
-    ("pick", ("pick", "grab", "grasp")),
-    ("place", ("place", "put", "set")),
+    ("pick", ("pick", "grab", "grasp", "gather", "take")),
+    ("place", ("place", "put", "set", "stock", "add", "reset")),
     ("open", ("open", "unlock")),
     ("close", ("close", "lock")),
     ("pour", ("pour", "dump", "dispense")),
@@ -120,7 +130,7 @@ _ACTION_KEYWORDS = (
     ("cut", ("cut", "slice", "chop")),
     ("stir", ("stir", "mix", "knead")),
     ("insert", ("insert", "load", "slot", "plug")),
-    ("remove", ("remove", "extract", "unplug")),
+    ("remove", ("remove", "extract", "unplug", "unstock")),
     ("stack", ("stack", "unstack")),
     ("screw", ("screw", "unscrew")),
     ("throw", ("throw", "catch", "toss")),
@@ -133,6 +143,11 @@ _ACTION_KEYWORDS = (
     ("thread", ("thread", "unthread")),
     ("dry", ("dry",)),
     ("wrap", ("unwrap", "wrap")),
+    ("roll", ("roll", "unroll")),
+    ("push", ("push",)),
+    ("point", ("point",)),
+    ("pop", ("pop",)),
+    ("color", ("color", "colour")),
 )
 
 # 复数和常见别名。先去掉空格再查，使 "square table" 与 "squaretable" 相同。
@@ -147,7 +162,8 @@ _OBJECT_ALIASES = {
     "plushy": "plush",
 }
 
-_ENV_FIELD = re.compile(r"(table|position|background)\s*:\s*([^,;]+)")
+# tablecloth 必须写在 table 前面，否则 table 会先吃掉 tablecloth。
+_ENV_FIELD = re.compile(r"(tablecloth|table|position|background)\s*:\s*([^,;]+)")
 
 
 def _label(value):
@@ -166,24 +182,30 @@ def _room_keyword(raw):
     return None
 
 
-def normalize_environment(text):
-    """房间词表优先。EgoDex 的 ``table:`` / ``position:`` / ``background:`` 保留下来。
+def _canon_env_value(value):
+    """去掉空白，并把拼写变体收成同一个颜色名。"""
+    token = re.sub(r"\s+", "", (value or "").strip().lower())
+    return token.replace("lavendar", "lavender")
 
-    这些字段记的是桌布、坐姿或站姿、背景颜色，不是另一个房间。
-    只看到 ``table`` 或 ``sitting`` 时不再抹成单独的 ``tabletop``。
+
+def normalize_environment(text):
+    """房间词表优先。EgoDex 的桌面、桌布、坐姿和背景颜色都保留。
+
+    ``tablecloth:`` 是桌布颜色，不能被 ``table`` 前缀吃掉。
+    ``lavendar`` 与 ``lavender`` 算同一种颜色。
     """
     raw = (text or "").strip().lower()
     if not raw:
         return "unknown"
     fields = {}
     for match in _ENV_FIELD.finditer(raw):
-        fields[match.group(1)] = re.sub(r"\s+", "", match.group(2).strip())
+        fields[match.group(1)] = _canon_env_value(match.group(2))
     if fields:
         room = _room_keyword(raw)
         if room:
             return room
         parts = ["tabletop"]
-        for key in ("table", "position", "background"):
+        for key in ("table", "tablecloth", "position", "background"):
             if fields.get(key):
                 parts.append("%s=%s" % (key, fields[key]))
         return "|".join(parts)
@@ -209,12 +231,20 @@ def normalize_object_name(name):
 
 
 def coarse_object_class(name):
-    raw = (name or "").lower()
-    for label, words in _OBJECT_KEYWORDS:
-        if any(word in raw for word in words):
-            return label
-    if not raw.strip():
+    """最长关键词优先，避免 ice 把 device、pen 把别的更长名字抢走。"""
+    raw = normalize_object_name(name)
+    if raw == "unknown":
         return "unknown"
+    best_label = None
+    best_length = -1
+    for label, words in _OBJECT_KEYWORDS:
+        for word in words:
+            token = word.replace(" ", "")
+            if token and token in raw and len(token) > best_length:
+                best_label = label
+                best_length = len(token)
+    if best_label:
+        return best_label
     return "other"
 
 
@@ -251,9 +281,15 @@ def _episode_axes(episode):
         if normalized not in seen_objects:
             seen_objects.add(normalized)
             objects.append(normalized)
-    classes = list(coverage.get("object_classes") or [])
-    if not classes:
-        classes = [coarse_object_class(name) for name in objects] or ["unknown"]
+    # 类别按当前词表从物体名重算，这样补关键词不必先重转 JSON。
+    if objects:
+        classes = []
+        for name in objects:
+            mapped = coarse_object_class(name)
+            if mapped not in classes:
+                classes.append(mapped)
+    else:
+        classes = list(coverage.get("object_classes") or []) or ["unknown"]
     task = coverage.get("task") or (episode.get("annotation") or {}).get("task", {}).get("name") or "unknown"
     actions = list(coverage.get("action_types") or []) or ["unknown"]
     frames = int(episode.get("num_frames") or 0)
@@ -267,18 +303,21 @@ def _episode_axes(episode):
     }
 
 
-def coverage_report(episodes):
-    """统计各轴取值的片段数，并列出封闭词表中计数为 0 的空档。"""
-    buckets = {}
-    for episode in episodes:
-        axes = _episode_axes(episode)
-        frames = axes["frames"]
-        for axis in ("environment", "object", "object_class", "task", "action_type"):
-            for value in axes[axis]:
-                key = (axis, value)
-                bucket = buckets.setdefault(key, {"episodes": 0, "frames": 0})
-                bucket["episodes"] += 1
-                bucket["frames"] += frames
+def accumulate_coverage(buckets, episode):
+    """把一条 episode 累加进计数。调用方可以马上丢掉这条 JSON。"""
+    axes = _episode_axes(episode)
+    frames = axes["frames"]
+    for axis in ("environment", "object", "object_class", "task", "action_type"):
+        for value in axes[axis]:
+            key = (axis, value)
+            bucket = buckets.setdefault(key, {"episodes": 0, "frames": 0})
+            bucket["episodes"] += 1
+            bucket["frames"] += frames
+    return buckets
+
+
+def finalize_coverage(buckets, n_episodes):
+    """由累加结果写出报告，并补上封闭词表里的空档。"""
     counts = []
     for (axis, value), bucket in sorted(buckets.items()):
         taxonomy = TAXONOMY.get(axis)
@@ -306,7 +345,15 @@ def coverage_report(episodes):
                     "in_taxonomy": True,
                 })
     counts.sort(key=lambda row: (row["axis"], -row["episodes"], row["value"]))
-    return {"episodes": len(episodes), "counts": counts, "gaps": gaps}
+    return {"episodes": int(n_episodes), "counts": counts, "gaps": gaps}
+
+
+def coverage_report(episodes):
+    """统计各轴取值的片段数，并列出封闭词表中计数为 0 的空档。"""
+    buckets = {}
+    for episode in episodes:
+        accumulate_coverage(buckets, episode)
+    return finalize_coverage(buckets, len(episodes))
 
 
 def write_coverage_reports(report, html_path, csv_path):

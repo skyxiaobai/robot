@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from egodata.coverage import coverage_report, write_coverage_reports  # noqa: E402
+from egodata.coverage import accumulate_coverage, finalize_coverage, write_coverage_reports  # noqa: E402
 from egodata.schema import iter_episode_paths, load_episode  # noqa: E402
 
 
@@ -26,8 +26,14 @@ def main(argv=None):
     if not paths:
         print("没有找到 episode JSON", file=sys.stderr)
         return 1
-    episodes = [load_episode(path) for path in paths]
-    report = coverage_report(episodes)
+    buckets = {}
+    count = 0
+    for path in paths:
+        episode = load_episode(path)
+        accumulate_coverage(buckets, episode)
+        count += 1
+        del episode
+    report = finalize_coverage(buckets, count)
     write_coverage_reports(report, args.html, args.csv)
     print("episodes %d, gaps %d, csv %s" % (report["episodes"], len(report["gaps"]), args.csv))
     return 0

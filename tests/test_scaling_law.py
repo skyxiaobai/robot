@@ -30,6 +30,16 @@ class ExtractBestValLossTest(unittest.TestCase):
     def test_no_validation_loss_returns_none(self):
         self.assertIsNone(scaling_law.extract_best_val_loss("train_loss: 0.2\nloss:0.074"))
 
+    def test_scientific_notation_keeps_distinct_small_losses(self):
+        text = "\n".join([
+            "step=1 train_loss: 1.000000e-04 val_loss: 1.088600e-04",
+            "trans_mse: 1.000000e-06",
+            "copy_current_wrist: 1.147300e-04",
+            "step=1 val_loss: 1.085100e-04",
+        ])
+        self.assertAlmostEqual(scaling_law.extract_best_val_loss(text), 1.0851e-04)
+        self.assertNotAlmostEqual(scaling_law.extract_best_val_loss(text), 1.0886e-04)
+
 
 class FitLogLinearTest(unittest.TestCase):
     def test_recovers_slope_against_natural_log_of_data_size(self):
