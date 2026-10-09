@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Check LeRobot train CLI args, resume/pretrained support, and robomimic->lerobot conversion tools."""
-import os, re, json, glob
+import os, re, glob
 
-ROOT = "/mnt/sda/app/robot"
+from repo_root import resolve_root
+
+ROOT = resolve_root()
 
 print("=== 1. lerobot/scripts/train.py CLI 参数 ===")
 tp = os.path.join(ROOT, "lerobot/lerobot/scripts/train.py")

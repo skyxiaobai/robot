@@ -7,7 +7,9 @@
 import csv
 import os
 
-ROOT = "/mnt/sda/app/robot"
+from repo_root import resolve_root
+
+ROOT = resolve_root()
 OUT = os.path.join(ROOT, "docs", "headcam_bom.csv")
 
 HEADER = [

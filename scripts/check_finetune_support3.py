@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
 """Check LeRobot src layout: train.py CLI, ACT config, MimicGen cameras."""
+import json
 import os, re, glob
 
-ROOT = "/mnt/sda/app/robot"
+from repo_root import resolve_root
+
+ROOT = resolve_root()
+
+
+def json_load(path):
+    if not os.path.isfile(path):
+        print("   NOT FOUND:", path)
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 print("=== 1. lerobot/src/lerobot/scripts/train.py ===")
 tp = os.path.join(ROOT, "lerobot/src/lerobot/scripts/train.py")

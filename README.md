@@ -21,10 +21,11 @@
 | 文档 | 内容 |
 |---|---|
 | `docs/ANALYSIS_PROCESS.md` | **全部分析过程记录**（推导、调研、评审修正，建议从这读起） |
-| `docs/headcam_data_spec.md`（v8） | 头戴设备规格：模型训练 → 数据采集 → 硬件器件需求（一一对应） |
+| `docs/headcam_data_spec.md`（v9） | 头戴设备规格：模型训练 → 数据采集 → 硬件器件需求；v9 增加世界系手部标签、语言分段、无感佩戴与 EgoScale 配比 |
 | `docs/headcam_bom.csv` | **可下单采购清单**：15 列证据链版（提供的数据/格式标准/数据契约/依据/采购原因），Excel 可直接打开 |
-| `docs/twostage_pretrain_finetune_plan.md` | 两段式训练方案评估（合成预训练 → 头戴真实微调） |
+| `docs/twostage_pretrain_finetune_plan.md` | 两段式训练方案评估（合成预训练 → 头戴真实微调；路线 C 引用 headcam 规格 §7） |
 | `scripts/build_headcam_bom.py` | BOM 生成脚本（可复现再生成 CSV） |
+| `scripts/scaling_law.py` | 多次 run 的最优验证损失对 ln(数据量) 拟合，写入 HTML；无输入则跳过。示例 `examples/scaling_law_runs.yaml` |
 | `scripts/collect_datasize_evidence.py` 等 | 分析取证脚本 |
 | `outputs/mimicgen_*.log` | 训练/生成日志（已提交部分） |
 

@@ -1,0 +1,16 @@
+# 缩放律示例：四次预训练，数据量按 4 倍递增。
+# 合成日志的最优验证损失服从 L = 2 - 0.25·ln(hours)。
+# 相对路径相对本文件所在目录解析。
+runs:
+  - name: pretrain_8h
+    hours: 8
+    log: scaling_logs/pretrain_8h.log
+  - name: pretrain_32h
+    hours: 32
+    log: scaling_logs/pretrain_32h.log
+  - name: pretrain_128h
+    hours: 128
+    log: scaling_logs/pretrain_128h.log
+  - name: pretrain_512h
+    hours: 512
+    log: scaling_logs/pretrain_512h.log
