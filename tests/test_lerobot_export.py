@@ -26,7 +26,7 @@ from egodata.lerobot_export import (  # noqa: E402
     pack_action,
     pack_state,
 )
-from ego_pretrain_bc import train_bc  # noqa: E402
+from ego_pretrain_bc import _select_indices, train_bc  # noqa: E402
 import scaling_law  # noqa: E402
 
 
@@ -233,6 +233,14 @@ class TrainSmokeTest(unittest.TestCase):
                 long_result["val_loss"],
             )
             self.assertGreater(long_result["copy_current_wrist"], 0.0)
+            self.assertAlmostEqual(
+                short_result["copy_current_wrist"], long_result["copy_current_wrist"], places=6,
+            )
+            self.assertIn("val_baseline_ratio:", long_result["log"])
+            self.assertAlmostEqual(
+                long_result["val_baseline_ratio"],
+                long_result["val_loss"] / long_result["copy_current_wrist"],
+            )
             long_loss = scaling_law.extract_best_val_loss(str(long_log))
             short_loss = scaling_law.extract_best_val_loss(str(short_log))
             self.assertIsNotNone(long_loss)
@@ -278,6 +286,18 @@ class TrainSmokeTest(unittest.TestCase):
             self.assertTrue(set(small["train_episode_ids"]).issubset(set(large["train_episode_ids"])))
             self.assertGreater(large["frames"], small["frames"])
             self.assertTrue(set(small["train_episode_ids"]).isdisjoint(small["val_episode_ids"]))
+            self.assertAlmostEqual(small["copy_current_wrist"], large["copy_current_wrist"], places=6)
+            self.assertEqual(large["train_indices"][: small["frames"]], small["train_indices"])
+
+    def test_small_budget_samples_past_episode_starts(self):
+        episodes = np.repeat(np.arange(4), 20)
+        small, _, _, _, pool_small = _select_indices(episodes, horizon=4, max_frames=4, seed=0, val_fraction=0.25)
+        large, _, _, _, pool_large = _select_indices(episodes, horizon=4, max_frames=12, seed=0, val_fraction=0.25)
+        np.testing.assert_array_equal(pool_small, pool_large)
+        np.testing.assert_array_equal(large[: len(small)], small)
+        offsets = [int(index) % 20 for index in small]
+        self.assertGreater(max(offsets), 0)
+        self.assertGreater(len(pool_small), len(small))
 
     def test_source_video_is_downscaled(self):
         with tempfile.TemporaryDirectory() as tmp:

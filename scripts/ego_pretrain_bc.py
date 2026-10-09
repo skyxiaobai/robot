@@ -8,16 +8,17 @@
 ``copy_current_wrist:``，不会被 ``scaling_law.py`` 当成 val_loss。
 
 验证集是按 episode 留出的固定子集（默认 10%，种子固定），所有数据量共用。
-训练集在同一套随机 episode 顺序上轮转抽取动作块，直到 ``--max-frames``
-个样本：预算会取满，最后一条可以只贡献一部分块。只要训练 episode 不少于
-预算、且每条至少有一个动作块，这一档就会用到这么多条 episode，而不是把
-预算花在最长的前两条上。更小预算的样本是更大预算这条轮转序列的前缀。
-只有一条片段时（合成冒烟）改为留出该条末尾固定比例的样本。
+训练集先在每条 episode 内按同一种子打乱动作块，再在固定的 episode 顺序上
+轮转抽取，直到 ``--max-frames`` 个样本。打乱之后小预算不再只看见片段开头，
+更小预算仍是这条轮转序列的前缀。预算会取满；只要训练 episode 不少于预算、
+且每条至少有一个动作块，这一档就会用到这么多条 episode。
+只有一条片段时（合成冒烟）改为留出该条末尾固定比例，训练块同样先打乱再截断。
 
-特征和动作都按训练集的均值和标准差逐维标准化后再算 MSE，避免米和四元数
-分量混在一个平均数里、让旋转占掉几乎全部误差。保持不动的基线用同一套
-标准化，并另报平移和旋转两项。日志里的损失用科学计数法，缩放律按这个精度读。
-拟合是岭回归的闭式解。读 parquet 用 pyarrow 的扁平数组。
+动作的逐维均值和标准差只从全部训练池算一次，所有 ``--max-frames`` 共用，
+并同样作用在验证目标和「保持不动」基线上。这样各档的 ``val_loss`` 单位相同，
+基线也不随数据量变。日志另写 ``val_baseline_ratio``（验证损失 / 基线）。
+平移和旋转分开报告。损失用科学计数法。拟合是岭回归的闭式解。
+读 parquet 用 pyarrow 的扁平数组。特征仍按该档训练集标准化，不改变损失单位。
 
 示例:
     python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \\
@@ -82,7 +83,10 @@ def _chunk_starts(span_start, length, horizon):
 
 
 def _select_indices(episodes, horizon, max_frames, seed, val_fraction):
-    """返回训练样本下标、验证样本下标、训练 episode id、验证 episode id。"""
+    """返回训练下标、验证下标、训练 episode、验证 episode、全训练池下标。
+
+    全训练池不随 ``max_frames`` 变，用来算各档共用的动作标准化统计量。
+    """
     spans = _spans(episodes)
     usable = []
     for episode_id, start, length in spans:
@@ -99,12 +103,14 @@ def _select_indices(episodes, horizon, max_frames, seed, val_fraction):
         if n_val < 1:
             raise ValueError("单条片段太短，无法同时留下训练和验证样本")
         val_index = starts[-n_val:]
-        train_pool = starts[:-n_val]
+        pool = np.asarray(starts[:-n_val], dtype=np.int64)
+        rng = np.random.default_rng(seed)
+        train_pool = _shuffled_copy(pool, rng)
         if max_frames is not None:
             train_pool = train_pool[: int(max_frames)]
         if len(train_pool) < 1:
             raise ValueError("训练样本为空")
-        return train_pool, val_index, [episode_id], [episode_id]
+        return train_pool, val_index, [episode_id], [episode_id], pool
 
     rng = np.random.default_rng(seed)
     order = np.array([episode_id for episode_id, _starts in usable], dtype=np.int64)
@@ -115,22 +121,31 @@ def _select_indices(episodes, horizon, max_frames, seed, val_fraction):
     val_ids = [int(item) for item in order[:n_val]]
     train_order = [int(item) for item in order[n_val:]]
     by_id = {episode_id: starts for episode_id, starts in usable}
-    lists = [by_id[episode_id] for episode_id in train_order]
-    if max_frames is None:
-        train_index = np.concatenate(lists)
-        chosen = list(train_order)
-    else:
-        train_index, chosen = _round_robin(train_order, lists, int(max_frames))
+    # 统计量用时间顺序的全训练池，和打乱后的抽样顺序无关，各档完全相同。
+    pool_index = np.concatenate([by_id[episode_id] for episode_id in train_order])
+    lists = [_shuffled_copy(by_id[episode_id], rng) for episode_id in train_order]
+    budget = int(sum(len(item) for item in lists))
+    if max_frames is not None:
+        budget = int(max_frames)
+    train_index, chosen = _round_robin(train_order, lists, budget)
     if len(train_index) < 1:
         raise ValueError("训练样本为空")
     val_index = np.concatenate([by_id[episode_id] for episode_id in val_ids])
-    return train_index, val_index, chosen, val_ids
+    return train_index, val_index, chosen, val_ids, pool_index
+
+
+def _shuffled_copy(starts, rng):
+    """打乱副本。原数组留给全训练池的统计量，顺序保持时间先后。"""
+    copied = np.asarray(starts, dtype=np.int64).copy()
+    rng.shuffle(copied)
+    return copied
 
 
 def _round_robin(episode_ids, start_lists, budget):
     """按 episode 轮转取动作块，直到 ``budget`` 个或全部取完。
 
-    返回的样本是这条固定序列的前缀，所以更小的预算是更大预算的子集。
+    ``start_lists`` 应已按种子在每条 episode 内打乱，这样小预算不会只抽到
+    片段开头。返回的样本是这条固定序列的前缀，所以更小的预算是更大预算的子集。
     预算为 N 且每条都有块时，会用到 min(N, episode 数) 条。
     """
     cursors = [0] * len(start_lists)
@@ -177,15 +192,18 @@ def _copy_current_vector(step, horizon):
     return np.tile(one, horizon)
 
 
-def _standardize_fit(train_y, val_y, baseline):
-    """用训练集的逐维均值和标准差变换目标和基线。返回变换后的数组。"""
-    mean = train_y.mean(axis=0)
-    std = train_y.std(axis=0)
+def _pool_target_stats(action, indices, horizon):
+    """全训练池的逐维均值和标准差。各档共用这一次的结果。"""
+    pooled = _stack_targets(action, indices, horizon)
+    mean = pooled.mean(axis=0)
+    std = pooled.std(axis=0)
     std = np.where(std < 1e-8, 1.0, std)
-    train_n = (train_y - mean) / std
-    val_n = (val_y - mean) / std
-    base_n = (np.asarray(baseline, dtype=np.float64) - mean) / std
-    return train_n, val_n, base_n
+    del pooled
+    return mean, std
+
+
+def _apply_target_stats(values, mean, std):
+    return (np.asarray(values, dtype=np.float64) - mean) / std
 
 
 def wrist_component_masks(step, horizon):
@@ -247,15 +265,16 @@ def train_bc(
         raise ValueError("horizon 至少为 1")
     if action.shape[1] < WRIST_STEP_DIM:
         raise ValueError("action 宽度至少要有双手手腕增量")
-    train_index, val_index, train_ids, val_ids = _select_indices(
+    train_index, val_index, train_ids, val_ids, pool_index = _select_indices(
         episodes, horizon, max_frames, seed, val_fraction,
     )
     train_x = state[train_index]
     val_x = state[val_index]
-    train_y = _stack_targets(action, train_index, horizon)
-    val_y = _stack_targets(action, val_index, horizon)
+    mean, std = _pool_target_stats(action, pool_index, horizon)
+    train_y = _apply_target_stats(_stack_targets(action, train_index, horizon), mean, std)
+    val_y = _apply_target_stats(_stack_targets(action, val_index, horizon), mean, std)
     baseline = _copy_current_vector(action.shape[1], horizon)
-    train_y, val_y, baseline_n = _standardize_fit(train_y, val_y, baseline)
+    baseline_n = _apply_target_stats(baseline, mean, std)
     train_pred, val_pred = _ridge(train_x, train_y, val_x)
     train_loss = float(np.mean((train_pred - train_y) ** 2))
     val_loss = float(np.mean((val_pred - val_y) ** 2))
@@ -266,6 +285,7 @@ def train_bc(
     rot_mse = _masked_mse(val_pred, val_y, rotation)
     copy_trans = _masked_mse(copy_pred, val_y, translation)
     copy_rot = _masked_mse(copy_pred, val_y, rotation)
+    ratio = float(val_loss / copy_loss) if copy_loss > 0.0 else float("nan")
     lines = [
         "policy=linear_bc learner=ridge device=cpu frames=%d episodes=%d val_episodes=%d val_frames=%d horizon=%d"
         % (len(train_index), len(set(train_ids)), len(set(val_ids)), len(val_index), horizon),
@@ -273,6 +293,7 @@ def train_bc(
         "copy_trans_mse: %.6e" % copy_trans,
         "copy_rot_mse: %.6e" % copy_rot,
         "step=1 train_loss: %.6e val_loss: %.6e" % (train_loss, val_loss),
+        "val_baseline_ratio: %.6e" % ratio,
         "trans_mse: %.6e" % trans_mse,
         "rot_mse: %.6e" % rot_mse,
     ]
@@ -289,6 +310,8 @@ def train_bc(
         "rot_mse": rot_mse,
         "copy_trans_mse": copy_trans,
         "copy_rot_mse": copy_rot,
+        "val_baseline_ratio": ratio,
+        "train_indices": [int(item) for item in train_index],
         "frames": int(len(train_index)),
         "episodes": int(len(set(train_ids))),
         "val_episodes": int(len(set(val_ids))),
@@ -308,7 +331,7 @@ def main(argv=None):
         "--max-frames",
         type=int,
         default=None,
-        help="训练样本上限。在固定 episode 顺序上轮转抽取动作块，取满这个数量",
+        help="训练样本上限。每条 episode 内先打乱动作块，再轮转取满这个数量",
     )
     parser.add_argument("--lr", type=float, default=0.01, help="兼容旧命令，岭回归不使用")
     parser.add_argument("--seed", type=int, default=0)
@@ -327,8 +350,15 @@ def main(argv=None):
         val_fraction=args.val_fraction,
     )
     print(
-        "frames %d episodes %d val_loss %.6e copy_current_wrist %.6e log %s"
-        % (result["frames"], result["episodes"], result["val_loss"], result["copy_current_wrist"], args.log)
+        "frames %d episodes %d val_loss %.6e copy_current_wrist %.6e ratio %.6e log %s"
+        % (
+            result["frames"],
+            result["episodes"],
+            result["val_loss"],
+            result["copy_current_wrist"],
+            result["val_baseline_ratio"],
+            args.log,
+        )
     )
     return 0
 
