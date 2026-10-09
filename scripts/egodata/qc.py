@@ -78,8 +78,8 @@ def _speeds(positions, dt):
     return speeds
 
 
-def qc_episode(episode, **overrides):
-    """对一条统一 episode 打 QC 标记。返回片段级结论。"""
+def frame_qc_flags(episode, **overrides):
+    """每帧的四类 QC 标记。布尔数组，规则与 ``qc_episode`` 相同。"""
     options = dict(DEFAULTS)
     options.update(overrides)
     num_frames = episode["num_frames"]
@@ -89,7 +89,7 @@ def qc_episode(episode, **overrides):
     height = int(episode["image_height"])
     intrinsic = episode["camera_intrinsic"]
     camera_poses = episode["camera_poses"]
-    flags = {name: [False] * num_frames for name in _FLAG_LABELS}
+    flags = {name: np.zeros(num_frames, dtype=bool) for name in _FLAG_LABELS}
 
     positions = {side: _wrist_positions(episode, side) for side in ("left", "right")}
     confidences = {
@@ -168,12 +168,18 @@ def qc_episode(episode, **overrides):
                 for cursor in range(run_start, index):
                     static[cursor] = False
             run_start = None
+    return flags
 
-    counts = {name: sum(1 for item in values if item) for name, values in flags.items()}
-    bad = 0
-    for index in range(num_frames):
-        if any(flags[name][index] for name in flags):
-            bad += 1
+
+def qc_episode(episode, **overrides):
+    """对一条统一 episode 打 QC 标记。返回片段级结论。"""
+    options = dict(DEFAULTS)
+    options.update(overrides)
+    flags = frame_qc_flags(episode, **overrides)
+    num_frames = episode["num_frames"]
+    fps = float(episode["fps"])
+    counts = {name: int(np.sum(values)) for name, values in flags.items()}
+    bad = int(np.sum(np.any(np.stack([flags[name] for name in flags]), axis=0)))
     bad_fraction = bad / float(num_frames)
     accepted = bad_fraction <= options["max_bad_fraction"]
     reasons = []
