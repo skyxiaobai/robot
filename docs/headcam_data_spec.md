@@ -320,11 +320,38 @@ camera_config = {"front": OpenCVCameraConfig(index_or_path=0, width=640, height=
 - §7.1 的关节和手腕位姿是预训练标签，可以离线从视频估计后再写回 parquet；估计失败的帧用 `hand_valid=false`，不要把单目猜测标成世界系米制真值。
 - 语言分段是标注产物，不要求头戴硬件上有麦克风。v8「不加麦克风」仍然成立。
 
+### 7.7 自有头戴会话目录
+
+设备还没有。采集软件按这个目录落盘后，`scripts/convert_headcam.py` 写成和 EgoDex 适配器相同的统一 episode，QC、覆盖、导出、可视化不用改。
+
+```
+session/
+  metadata.json     episode_id、fps、task、instruction、environment、图像宽高、objects、verbs
+  timestamps.csv    frame_index,timestamp_s。没有则用 frame/fps
+  imu.csv           角速度和比力。转换时只记路径和行数，不写入 JSON，也不积分
+  calib.yaml        Kalibr camchain、简单 YAML，或 OpenCV FileStorage（cameraMatrix1/2、R、T）
+  rgb.mp4           单目或彩色参考。没有时用 stereo/left.mp4
+  stereo/left.mp4   左目
+  stereo/right.mp4  右目，只提供 2D
+  slam.tum          可选。TUM：timestamp tx ty tz qx qy qz qw
+  hands.json        可选。后端已经算好的每帧 21 点
+```
+
+几何按 §7.2 合成，实现在 `scripts/headcam/hand_pose.py`：
+
+1. 手部后端给出左相机系 21 点（MediaPipe 顺序）和 2D。主后端是 [HaMeR](https://github.com/geopavlakos/hamer) 或 [WiLoR](https://github.com/rolpotamias/WiLoR)，都要 MANO 右手模型。MANO 是马普所非商业许可，从 https://mano.is.tue.mpg.de 注册下载，**权重不进仓库**。没有权重时用 MediaPipe Hands（CPU，无 MANO），它的三维不是公制相机系。
+2. 左右目 2D 用标定三角化到左相机系，修正单目尺度，并给出每个关节的重投影置信度。点在相机后面或已校正双目视差符号不对时置信度为 0。
+3. `p_world = T_world_cam · p_cam`。`T` 来自 TUM 里时间最近的一帧。没有轨迹时 `T` 是单位阵，`coordinate_frame` 写 `camera`，这还不是 §7.1 的世界系。有轨迹时写 `slam_world`。
+4. 手腕朝向：x 从手腕指向食指 MCP，掌面法向由食指 MCP 与小指 MCP 叉乘得到。缺测帧写空值，不用 0 填充。
+5. 子任务和分手指令留空。语言不在这个转换器里编造。
+
+整机标定和 SLAM 仍在仓库外做。这里只读已经算好的 yaml 和 TUM。
+
 ---
 
 ## 8. 覆盖度、产出率与四级标注（v10）
 
-没有自有头戴设备时，先在开放数据集上按同一套定义做质检和覆盖统计。EgoDex 测试集的位姿已经在 ARKit 世界系里（设备端 SLAM 的结果），所以这一节的工具**消费**世界系轨迹，不在本仓库里重跑 SLAM。
+没有自有头戴设备时，先在开放数据集上按同一套定义做质检和覆盖统计。EgoDex 测试集的位姿已经在 ARKit 世界系里（设备端 SLAM 的结果），所以这一节的工具**消费**世界系轨迹，不在本仓库里重跑 SLAM。自有会话按 §7.7 转成同一份 JSON 之后，也走这些工具。
 
 ### 8.1 四级标注
 
