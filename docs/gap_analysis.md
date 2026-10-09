@@ -13,6 +13,8 @@
 
 第二次全量重跑之后又收紧了三处：`val_loss` 改用科学计数法，小数据量按 episode 轮转抽满预算，损失按训练集逐维标准化并分开报告平移和旋转。覆盖统计逐条累加，并认 `tablecloth:` 和 `lavendar`/`lavender`。
 
+第三次全量重跑说明，按每一档自己的训练子集做标准化会让基线从 2.77 变到 1.09，缩放拟合被抬高。现在均值和标准差只从全部训练池算一次，验证集和基线用同一套。轮转前先在每条 episode 内打乱动作块，小预算不再只看见片段开头，更小预算仍是前缀。缩放律同时读基线、平移、旋转，并对 val/基线比值拟合。
+
 还没接上的是：在这 3,243 条上真正把 ACT 训完，以及给 EgoDex 补上按时间切开的子任务和分手指令。像素模糊、HOT3D、自有设备 SLAM 仍不在这条链路上。笼统动词 `use` 仍然落在 other。
 
 ## 1. 逐段对照
@@ -25,7 +27,7 @@
 | 覆盖统计 | `scripts/egodata/coverage.py`。桌布 `tablecloth:`、坐姿和背景都留在环境名里，`lavendar` 收成 `lavender`。物体类别在出报告时按当前词表重算，脚本逐条累加、不把全部 JSON 留在内存里。动作词表含组装、滚动、推动、涂色等，take/gather、stock/add 收到已有类别 | 词表仍是手写的，笼统的 `use` 仍算 other。没有「该采多少才算补上」的数量目标 | P2：按目标小时数做配额 |
 | 四级标注 | 规格 §8.1，样例 `examples/hierarchy_annotation.json`，校验 `scripts/validate_hierarchy.py`。EgoDex 转换只填 ENVIRONMENT 和 TASK | EgoDex 没有时间分段 SUBTASK，也没有分手 INSTRUCTION。不能把整段描述切成假时间段 | **P1：标注**（人工或模型），不要在转换器里编造 |
 | LeRobot 训练 | pusht ACT 笔记本仍在（image+state[2] → action[2]）。手部数据的动作是下一步手腕增量，线性 BC 回归连续 16 步（`examples/ego_pretrain_bc.yaml`）。ACT 命令在 `examples/ego_act_train.yaml`，Colab 单元在 GPU 上把 `RUN_ACT` 打开即可跑 | 还没有在完整测试集、224 视频上把 ACT 训完。pusht 的 action[2] 没有改 | **P1：用真实导出把 ACT 训出一组可比较的 run** |
-| 缩放律 | `scripts/scaling_law.py`。横轴是 `ln(N)（单位）`。线性 BC 各档共用验证 episode，`val_loss` 用科学计数法（`1.085100e-04` 这种），脚本能把相邻的 1e-4 档分开 | 还没有真实 EgoDex 不同小时数的 ACT run。标准化之后的线性模型仍可能饱和，要用 ACT 的曲线才看得出数据量 | P2：有了多组 ACT run 再拟合，不必改公式 |
+| 缩放律 | `scripts/scaling_law.py`。横轴是 `ln(N)（单位）`。线性 BC 各档共用验证 episode 和同一套动作标准化。日志用科学计数法。报告画出保持不动基线、平移/旋转，并拟合 val/基线比值 | 还没有真实 EgoDex 不同小时数的 ACT run。线性模型在全训练池标准化之后仍可能饱和，要用 ACT 的曲线才看得出数据量 | P2：有了多组 ACT run 再拟合，不必改公式 |
 
 优先级的意思：P1 是下一条数据链路还没通的地方；P2 是数据集种类、配额和自有设备 SLAM，不挡住现在用开放数据做质检。
 
@@ -76,7 +78,7 @@
 
 没有源 mp4 时写 16×16 占位视频。有同名 mp4 时裁到保留帧数，并用 `--video-size`（默认 224，偶数）缩成正方形，避免 1080p 重编码。
 
-`scripts/ego_pretrain_bc.py` 在标准化特征上做岭回归（闭式解）。动作目标再用训练集的逐维均值和标准差标准化，平移和旋转分开记进 `trans_mse` / `rot_mse`；保持不动的基线用同一套标准化，所以能和 `val_loss` 比。验证集默认是 10% 的 episode，种子固定。`--max-frames N` 在训练 episode 上轮转抽动作块，直到 N 个样本：预算会取满，而且只要条数够就会用到 N 条，避免最小一档只剩最长的两条。日志用科学计数法。缩放律只匹配 `val_loss`。
+`scripts/ego_pretrain_bc.py` 在标准化特征上做岭回归（闭式解）。动作的逐维均值和标准差只从全部训练池算一次，所有 `--max-frames` 共用，并同样作用在验证目标和保持不动的基线上，所以各档 `val_loss` 和 `copy_current_wrist` 单位相同。平移和旋转分开记进 `trans_mse` / `rot_mse`，日志还有 `val_baseline_ratio`。验证集默认是 10% 的 episode，种子固定。抽样前先在每条 episode 内打乱动作块，再轮转直到 N 个样本：小预算覆盖片段中后段，更小预算是更大预算的前缀，而且只要条数够就会用到 N 条。日志用科学计数法。`scaling_law.py` 读取 `val_loss`、基线、平移和旋转，并对比值再拟合一条直线。
 
 覆盖报告逐条读取 JSON 后立刻丢掉，全量时不再把数 GB 的 episode 同时留在内存里。环境字段认 `tablecloth:`，并把 `lavendar` 收成 `lavender`。物体粗类别按当前关键词从物体名重算。`use` 这种笼统动词仍然算 other，不另造一个类别。
 

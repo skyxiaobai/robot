@@ -40,6 +40,27 @@ class ExtractBestValLossTest(unittest.TestCase):
         self.assertAlmostEqual(scaling_law.extract_best_val_loss(text), 1.0851e-04)
         self.assertNotAlmostEqual(scaling_law.extract_best_val_loss(text), 1.0886e-04)
 
+    def test_component_metrics_follow_the_best_val_loss(self):
+        text = "\n".join([
+            "copy_current_wrist: 9.000000e-04",
+            "copy_trans_mse: 8.000000e-04",
+            "step=1 train_loss: 1.000000e-03 val_loss: 2.000000e-04",
+            "trans_mse: 9.000000e-05",
+            "rot_mse: 8.000000e-05",
+            "step=2 train_loss: 1.000000e-04 val_loss: 1.085100e-04",
+            "copy_current_wrist: 1.200000e-04",
+            "trans_mse: 3.000000e-06",
+            "rot_mse: 4.000000e-05",
+            "copy_trans_mse: 1.000000e-03",
+        ])
+        metrics = scaling_law.extract_run_metrics(text)
+        self.assertAlmostEqual(metrics["val_loss"], 1.0851e-04)
+        self.assertAlmostEqual(metrics["copy_current_wrist"], 1.2e-04)
+        self.assertAlmostEqual(metrics["trans_mse"], 3.0e-06)
+        self.assertAlmostEqual(metrics["rot_mse"], 4.0e-05)
+        self.assertAlmostEqual(metrics["val_baseline_ratio"], 1.0851e-04 / 1.2e-04)
+        self.assertNotAlmostEqual(metrics["trans_mse"], 1.0e-03)
+
 
 class FitLogLinearTest(unittest.TestCase):
     def test_recovers_slope_against_natural_log_of_data_size(self):
@@ -93,6 +114,43 @@ class AnalyzeAndReportTest(unittest.TestCase):
         self.assertIn("1.480140", html)
         self.assertIn("0.440419", html)
         out.unlink(missing_ok=True)
+
+    def test_baseline_split_and_ratio_fit_appear_in_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sizes = [1000.0, 4000.0, 16000.0]
+            intercept, slope = 1.2, -0.02
+            for size in sizes:
+                ratio = intercept + slope * math.log(size)
+                loss = ratio * 1.1
+                (root / ("n%d.log" % int(size))).write_text(
+                    "\n".join([
+                        "copy_current_wrist: %r" % 1.1,
+                        "step=1 train_loss: 1.0 val_loss: %r" % loss,
+                        "trans_mse: %r" % (loss * 0.4),
+                        "rot_mse: %r" % (loss * 0.6),
+                    ]) + "\n",
+                    encoding="utf-8",
+                )
+            cfg = root / "runs.yaml"
+            lines = ["runs:"]
+            for size in sizes:
+                lines.append("  - name: n%d" % int(size))
+                lines.append("    size: %d" % int(size))
+                lines.append("    log: n%d.log" % int(size))
+            cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            out = root / "report.html"
+            code = scaling_law.main(["--runs", str(cfg), "--out", str(out)])
+            self.assertEqual(code, 0)
+            html = out.read_text(encoding="utf-8")
+            self.assertIn("保持不动基线", html)
+            self.assertIn("平移", html)
+            self.assertIn("旋转", html)
+            self.assertIn("相对基线", html)
+            result = scaling_law.analyze_config(str(cfg))
+            self.assertAlmostEqual(result["ratio_fit"]["intercept"], intercept, places=6)
+            self.assertAlmostEqual(result["ratio_fit"]["slope"], slope, places=6)
+            self.assertGreater(result["ratio_fit"]["r2"], 0.999)
 
     def test_section_html_for_training_report(self):
         section = scaling_law.section_html(str(ROOT / "examples" / "scaling_law_runs.yaml"))
