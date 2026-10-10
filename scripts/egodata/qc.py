@@ -30,16 +30,20 @@ _FLAG_LABELS = {
 }
 
 
-# 双目专用的坏帧原因（scripts/egodata/stereo_qc.py 产生）。写报告时与上面的四类合在一起查名字。
+# 双目丢掉的标注（scripts/egodata/stereo_qc.py）。不计入坏帧，写报告时单独列出。
 STEREO_FLAG_LABELS = {
     "stereo_one_view": "只有一目认到手",
     "stereo_inconsistent": "左右目对不上",
     "stereo_filled": "补出来的帧",
 }
 
+_EXTRA_LABELS = {
+    "low_label_coverage": "标注覆盖不足",
+}
+
 
 def _label(name):
-    return _FLAG_LABELS.get(name) or STEREO_FLAG_LABELS.get(name) or name
+    return _FLAG_LABELS.get(name) or STEREO_FLAG_LABELS.get(name) or _EXTRA_LABELS.get(name) or name
 
 
 def _project(intrinsic, camera_pose, point):
@@ -240,18 +244,25 @@ def write_yield_reports(report, html_path, csv_path):
     csv_path = Path(csv_path)
     html_path.parent.mkdir(parents=True, exist_ok=True)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
+    has_coverage = any("label_coverage" in item for item in report["results"])
     rows = []
     for item in report["results"]:
+        coverage_cell = ""
+        if has_coverage:
+            coverage = item.get("label_coverage")
+            coverage_cell = "<td>%s</td>" % ("—" if coverage is None else "%.1f%%" % (100.0 * coverage))
         rows.append(
-            "<tr><td>%s</td><td>%d</td><td>%s</td><td>%.1f%%</td><td>%s</td></tr>"
+            "<tr><td>%s</td><td>%d</td><td>%s</td><td>%.1f%%</td>%s<td>%s</td></tr>"
             % (
                 html.escape(str(item["episode_id"])),
                 item["num_frames"],
                 "通过" if item["accepted"] else "拒绝",
                 100.0 * item["bad_fraction"],
+                coverage_cell,
                 html.escape(", ".join(_label(name) for name in item["reasons"]) or "—"),
             )
         )
+    coverage_head = "<th>标注覆盖</th>" if has_coverage else ""
     document = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>QC 产出率</title>
 <style>
@@ -263,7 +274,7 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
 <p>产出率 = 通过片段 QC 的帧数 / 原始帧数 = %d / %d = <strong>%.1f%%</strong></p>
 <p>片段 %d 条，拒绝 %d 条。</p>
 <table>
-<tr><th>episode</th><th>帧数</th><th>结论</th><th>坏帧比例</th><th>原因</th></tr>
+<tr><th>episode</th><th>帧数</th><th>结论</th><th>坏帧比例</th>%s<th>原因</th></tr>
 %s
 </table>
 </body></html>
@@ -273,6 +284,7 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
         100.0 * report["yield"],
         report["episodes"],
         report["rejected_episodes"],
+        coverage_head,
         "\n".join(rows),
     )
     html_path.write_text(document, encoding="utf-8")
@@ -282,13 +294,22 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
         for name in item["flags"]:
             if name not in base and name not in extra:
                 extra.append(name)
+    coverage_cols = ["label_coverage", "labeled_frames", "dropped_label_frames"] if has_coverage else []
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow([
             "episode_id", "num_frames", "duration_s", "accepted", "bad_fraction",
             "hands_out_of_frame", "view_drift", "blur", "staged_static", "reasons",
-        ] + extra)
+        ] + extra + coverage_cols)
         for item in report["results"]:
+            coverage_cells = []
+            if has_coverage:
+                coverage = item.get("label_coverage")
+                coverage_cells = [
+                    "" if coverage is None else "%.4f" % coverage,
+                    item.get("labeled_frames", ""),
+                    item.get("dropped_label_frames", ""),
+                ]
             writer.writerow([
                 item["episode_id"],
                 item["num_frames"],
@@ -300,5 +321,5 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
                 item["flags"]["blur"],
                 item["flags"]["staged_static"],
                 "|".join(item["reasons"]),
-            ] + [item["flags"].get(name, 0) for name in extra])
+            ] + [item["flags"].get(name, 0) for name in extra] + coverage_cells)
     return html_path, csv_path

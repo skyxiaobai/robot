@@ -547,7 +547,7 @@ def summarize_eval(rows):
 # ---------------------------------------------------------------- 一条命令
 
 def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="local/headcam_stereo",
-                 export=True, backend=None, log=print, export_python=None):
+                 export=True, backend=None, log=print, export_python=None, min_label_coverage=None):
     """跑完整条管线。返回报告字典，同时写 ``out_dir/report.json``。"""
     from egodata.qc import write_yield_reports, yield_report
     from egodata.stereo_qc import qc_stereo_episode
@@ -571,7 +571,10 @@ def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="
         path = out / "episodes" / ("%s.json" % name)
         save_episode(episode, path)
         t0 = time.time()
-        qc = qc_stereo_episode(episode)
+        qc_overrides = {}
+        if min_label_coverage is not None:
+            qc_overrides["min_label_coverage"] = min_label_coverage
+        qc = qc_stereo_episode(episode, **qc_overrides)
         timing["qc_s"] += time.time() - t0
         results.append({k: v for k, v in qc.items() if k != "good_frame_mask"})
         entry = {"session": str(info["session"]), "episode": str(path), "frames": episode["num_frames"],
@@ -583,8 +586,9 @@ def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="
             all_eval_rows.extend(rows)
             entry["eval"] = summarize_eval(rows)
         per_session.append(entry)
-        log("[%s] 帧 %d，QC %s，坏帧 %.0f%%" % (name, episode["num_frames"],
-                                             "通过" if qc["accepted"] else "拒绝", 100 * qc["bad_fraction"]))
+        log("[%s] 帧 %d，QC %s，坏帧 %.0f%%，标注覆盖 %.0f%%" % (
+            name, episode["num_frames"], "通过" if qc["accepted"] else "拒绝",
+            100 * qc["bad_fraction"], 100 * qc["label_coverage"]))
     report = yield_report(results)
     html_path, csv_path = write_yield_reports(report, out / "qc" / "yield.html", out / "qc" / "yield.csv")
     reasons = {}
@@ -594,6 +598,9 @@ def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="
             reasons[k] = reasons.get(k, 0) + v
         for k, v in r["flags_only_reason"].items():
             only[k] = only.get(k, 0) + v
+    dropped_names = ("stereo_one_view", "stereo_inconsistent", "stereo_filled")
+    labeled_frames = sum(r.get("labeled_frames", r["num_frames"]) for r in results)
+    dropped_frames = sum(r.get("dropped_label_frames", 0) for r in results)
     summary = {
         "params": params.to_dict(),
         "backend": backend_name,
@@ -602,8 +609,14 @@ def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="
         "usable_frames": report["usable_frames"],
         "episodes": report["episodes"],
         "accepted_episodes": report["accepted_episodes"],
-        "bad_frames_by_reason": reasons,
-        "bad_frames_only_this_reason": only,
+        "bad_frames_by_reason": {k: v for k, v in reasons.items() if k not in dropped_names},
+        "bad_frames_only_this_reason": {k: v for k, v in only.items() if k not in dropped_names},
+        "dropped_labels_by_reason": {k: v for k, v in reasons.items() if k in dropped_names},
+        "dropped_labels_only_this_reason": {k: v for k, v in only.items() if k in dropped_names},
+        "labeled_frames": labeled_frames,
+        "dropped_label_frames": dropped_frames,
+        "label_coverage": 0.0 if report["raw_frames"] == 0 else labeled_frames / float(report["raw_frames"]),
+        "min_label_coverage": results[0]["min_label_coverage"] if results else 0.0,
         "sessions": per_session,
         "timing": timing,
     }

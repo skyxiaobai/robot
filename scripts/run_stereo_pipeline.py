@@ -28,7 +28,9 @@ from headcam.stereo_pipeline import StereoParams, run_pipeline  # noqa: E402
 REASON_CN = {
     "hands_out_of_frame": "手出画", "view_drift": "视线飘移", "blur": "运动模糊", "staged_static": "摆拍或静止",
     "stereo_one_view": "只有一目认到手", "stereo_inconsistent": "左右目对不上", "stereo_filled": "补出来的帧",
+    "low_label_coverage": "标注覆盖不足",
 }
+DROPPED_LABEL_REASONS = ("stereo_one_view", "stereo_inconsistent", "stereo_filled")
 STATUS_CN = {"ok": "通过", "one_view": "只有一目认到", "few_joints": "可三角化的关节太少",
              "reproj": "重投影误差大", "depth": "深度不合理", "palm": "手掌尺寸不合理", "none": "两目都没认到",
              "jump": "速度门限剔除的跳点", "strict": "严格门限剔除"}
@@ -44,14 +46,28 @@ def write_markdown(summary, path):
     lines = ["# 双目管线运行报告", "",
              "产出率 %.1f%%（%d / %d 帧），片段 %d 条通过 %d 条。" % (
                  100 * summary["yield"], summary["usable_frames"], summary["raw_frames"],
-                 summary["episodes"], summary["accepted_episodes"]), "",
-             "## QC 坏帧原因（帧数；同一帧可有多个原因）", "", "| 原因 | 帧数 | 只因这一条 |", "|---|---|---|"]
+                 summary["episodes"], summary["accepted_episodes"])]
+    if "label_coverage" in summary:
+        lines.append("标注覆盖 %.1f%%（%d / %d 帧）。丢掉的立体标注不计入坏帧。覆盖率下限 %.0f%%（临时值，等真实设备数据再定；0 表示不因此拒绝）。" % (
+            100 * summary["label_coverage"], summary["labeled_frames"], summary["raw_frames"],
+            100 * summary.get("min_label_coverage", 0.0)))
+    lines += ["", "## QC 坏帧原因（帧数；同一帧可有多个原因。只含手出画、视线、模糊、静止）", "",
+              "| 原因 | 帧数 | 只因这一条 |", "|---|---|---|"]
     for k, v in summary["bad_frames_by_reason"].items():
         lines.append("| %s | %d | %d |" % (REASON_CN.get(k, k), v, summary["bad_frames_only_this_reason"].get(k, 0)))
-    lines += ["", "## 每段", "", "| 片段 | 帧 | 结论 | 坏帧比例 |", "|---|---|---|---|"]
+    dropped = summary.get("dropped_labels_by_reason") or {}
+    if dropped:
+        lines += ["", "## 丢掉的标注（不计入坏帧）", "", "| 原因 | 帧数 | 只因这一条 |", "|---|---|---|"]
+        only_dropped = summary.get("dropped_labels_only_this_reason") or {}
+        for k, v in dropped.items():
+            lines.append("| %s | %d | %d |" % (REASON_CN.get(k, k), v, only_dropped.get(k, 0)))
+    lines += ["", "## 每段", "", "| 片段 | 帧 | 结论 | 坏帧比例 | 标注覆盖 |", "|---|---|---|---|---|"]
     for s in summary["sessions"]:
-        lines.append("| %s | %d | %s | %.1f%% |" % (Path(s["session"]).name, s["frames"],
-                                                    "通过" if s["qc"]["accepted"] else "拒绝", 100 * s["qc"]["bad_fraction"]))
+        coverage = s["qc"].get("label_coverage")
+        coverage_txt = "—" if coverage is None else "%.1f%%" % (100 * coverage)
+        lines.append("| %s | %d | %s | %.1f%% | %s |" % (
+            Path(s["session"]).name, s["frames"],
+            "通过" if s["qc"]["accepted"] else "拒绝", 100 * s["qc"]["bad_fraction"], coverage_txt))
     ev = summary.get("eval_all")
     if ev:
         lines += ["", "## 手腕世界坐标误差（对真值）：中位数 cm / p90 cm / ≤2cm 比例", "",
@@ -91,6 +107,8 @@ def main(argv=None):
     ap.add_argument("--min-cutoff", type=float, default=3.0, help="One Euro 静止截止频率 Hz")
     ap.add_argument("--beta", type=float, default=50.0, help="One Euro 速度系数 1/(m/s)")
     ap.add_argument("--max-gap", type=int, default=5, help="最多补几帧，0 表示不补")
+    ap.add_argument("--min-label-coverage", type=float, default=0.0,
+                    help="标注覆盖率下限。默认 0：只报告，不因此拒绝片段。临时值，等真实设备数据再定")
     ap.add_argument("--fixed-shape", action="store_true", help="固定手型（默认关）")
     ap.add_argument("--max-reproj-px", type=float, default=10.0)
     ap.add_argument("--no-export", action="store_true")
@@ -122,7 +140,7 @@ def main(argv=None):
                           max_offaxis_deg=a.strict_offaxis_deg, smooth=a.smooth, min_cutoff=a.min_cutoff, beta=a.beta, gap_fill=a.max_gap > 0,
                           max_gap=max(a.max_gap, 0), fixed_shape=a.fixed_shape, consistency=not a.no_consistency)
     summary = run_pipeline(sessions, out, params, backend_name=a.backend, repo_id=a.repo_id, export=not a.no_export,
-                           export_python=a.export_python)
+                           export_python=a.export_python, min_label_coverage=a.min_label_coverage)
     summary["timing"]["adapter_s"] = sum(i.get("seconds", 0.0) for i in adapter or [])
     summary["timing"]["total_s"] = time.time() - t0
     if adapter:
