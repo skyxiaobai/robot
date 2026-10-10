@@ -44,7 +44,7 @@ flowchart TD
 | ⑨ | 世界系 episode | ⑧ + `slam.tum` | 统一 episode JSON（世界系 21 点、手腕 xyz+四元数、置信度、`stereo` 诊断字段） | `headcam/stereo_pipeline.py`、`egodata/schema.py` | 🟢 |
 | ⑩ | QC | episode | `qc/yield.csv`、`qc/yield.html`；坏帧原因 7 类（手出画、视线飘移、运动模糊、静止、只有一目认到、左右对不上、补出来的帧）。另报有效动作比例，以及 16/50/100 步窗口里两只手每一步都有效的比例（片段比窗口短时为空，不写成 0）。统计含被拒绝的片段 | `egodata/qc.py`、`egodata/stereo_qc.py`、`egodata/action_valid.py` | 🟢；阈值是事先定的，等自采数据再校准 |
 | ⑪ | 语言标注 | episode + 视频 | episode 里 `annotation`（四级） | `egodata/labels.py`、`validate_hierarchy.py` | 🟡 结构和校验有；自采数据的标注流程（人工 / VLM）还没定 |
-| ⑫ | LeRobot 导出 | 通过 QC 的 episode | LeRobot v3.0 目录（parquet + mp4 + meta）。每行多一列 `action_valid`，形状 `(2,)`（左、右）。当前帧和下一帧该手手腕都是实测才为 1：有限、不是 `filled`、逐帧状态为空 / `none` / `ok`、数字置信度不低于 0.5。存了 `good_frame_mask` 时，false 的帧两只手都为 0。缺测仍写下「保持不动」的占位。`meta/egodata_export.json` 写通过片段上的有效动作比例和 16/50/100 整段窗口比例 | `egodata/lerobot_export.py`、`egodata/action_valid.py`、`ego_to_lerobot.py` | 🟢 EgoDex 与 HOT3D 的导出路径都在；全量上的有效动作比例 **待补** |
+| ⑫ | LeRobot 导出 | 通过 QC 的 episode | LeRobot v3.0 目录（parquet + mp4 + meta）。每行多一列 `action_valid`，形状 `(2,)`（左、右）。当前帧和下一帧该手手腕都是实测才为 1：有限、不是 `filled`、逐帧状态为空 / `none` / `ok`、数字置信度不低于 0.5。存了 `good_frame_mask` 时，false 的帧两只手都为 0。缺测仍写下「保持不动」的占位。`meta/egodata_export.json` 写通过片段上的有效动作比例和 16/50/100 整段窗口比例 | `egodata/lerobot_export.py`、`egodata/action_valid.py`、`ego_to_lerobot.py` | 🟢 EgoDex、HOT3D 与 iPhone 的导出路径都在；全量上的有效动作比例 **待补** |
 | ⑬ | 训练 | LeRobot 数据集 | 策略权重。损失只加在 `action_valid=1` 的手上。线性模型见 `ego_pretrain_bc.py`（`--min-valid-fraction`，默认 0，不够的窗口不抽）。ACT 见 `ego_act_train.py` 和 `notebooks/egodex_act_scaling_colab.ipynb`：两只手都无效并进 `action_is_pad`，单手无效按维屏蔽；`EGO_MIN_VALID_FRACTION` 把不够的窗口清成填充（仍会被抽到，损失为 0）。没有该列的旧导出全部当成有效，并打印警告 | `ego_pretrain_bc.py`、`ego_act_scaling.py`、`ego_act_train.py` | 🟡 EgoDex 上线性预训练跑过；ACT 掩码要本机装有 LeRobot 才生效；自采微调要等数据 |
 
 缺测、补帧、立体或逐帧标注丢掉的手腕，导出时仍写成「保持不动」，但 `action_valid` 为 0，损失不加在这一手上。质检报告按全部片段（含被拒绝的）汇总；导出摘要只统计质检通过、已经丢掉最后一帧的那些行。窗口长度 16 / 50 / 100 里，片段短于窗口时比例是空，不写成 0。合成两条各 30 帧的 EgoDex 样本上，质检（含被拒绝的一条）有效动作比例 0.500000、16 步整段 0.500000、50 和 100 为 n/a；导出只留通过的一条时，有效动作比例 1.0、16 步窗口 1.0、50 和 100 为 null。命令和逐条数字在 [`docs/PROGRESS.md`](PROGRESS.md) 的风险清单。全量 EgoDex 的比例 **待补**。
@@ -75,6 +75,17 @@ sequenceDiagram
     管线->>管线: QC（产出率、拒绝原因、有效动作比例）
     管线->>训练: lerobot/（只含通过 QC 的片段；action_valid 标出缺测步）
 ```
+
+### 3.1 iPhone Pro 临时采集（双目到货前）
+
+```bash
+python scripts/run_stereo_pipeline.py --iphone capture.r3d --out outputs/iphone
+```
+
+Record3D 导出 → `scripts/iphone/record3d_adapter.py` 转成 iPhone 会话（rgb.mp4 + depth.npz + ARKit slam.tum）→
+`headcam/rgbd_pipeline.py` 用激光雷达深度代替“三角化”这一步，其余（世界系、速度门限、RTS、QC、LeRobot）与双目共用。
+LeRobot 每行同样有 `action_valid`（左、右）：当前帧和下一帧该手都是实测手腕才为 1。逐手状态同时写在 `stereo.per_frame`、`iphone.per_frame` 和 `hands[side].label_status`，`lowconf` / `fit` / `tracking` 等非 `ok` 状态标成无效；缺测仍留下「保持不动」的占位增量。
+`validate_session.py` 自动识别 iPhone 会话。用法和精度见 `docs/iphone_capture.md`、`docs/iphone_capture_eval.md`。
 
 ## 4. 真正需要硬件才能做的事（剩余缺口）
 

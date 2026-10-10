@@ -87,7 +87,7 @@ flowchart LR
 - 全量 EgoDex（约 16GB）上的有效动作比例没有重跑，记为 **待补**。
 - `--include-hand` 时，手腕是实测但手指没测到，关节增量仍是 0，并且会进损失。默认导出不含关节。
 - 本环境没有安装 LeRobot。ACT 的按手掩码在导入失败时退回原来的 `lerobot-train`，那时没有这层屏蔽。笔记本 `notebooks/egodex_act_scaling_colab.ipynb` 已写成走 `ego_act_train.py`。
-- iPhone 采集已暂停。`hands[side].label_status` 和 `iphone.per_frame` 仍会参与判定，仓库里没有 iPhone 管线去填它们。
+- iPhone 临时采集会填写 `hands[side].label_status` 和 `iphone.per_frame`（与 `stereo.per_frame` 同一套逐手状态）。`lowconf` / `fit` / `tracking` 等丢掉的帧，导出的 `action_valid` 为 0，规则与双目相同。真实 `.r3d` 还没录过。
 
 合成 EgoDex 小样本（2026-10-10，`python3 scripts/demo_open_dataset_pipeline.py --out /tmp/ego_valid_demo`，再跑 `egodata_qc.py` 和 `ego_to_lerobot.py`）。两条各 30 帧：`egodex/basic_pick_place/0` 置信度 0.99；`egodex/pour/0` 置信度 0.2，手在画面外。质检含被拒绝的那条：产出率 0.500（30/60 帧，拒绝 1/2），`valid_action_ratio` 0.500000，16 步整段有效比例 0.500000，50 步和 100 步为 n/a（动作行只有 29，凑不满窗口，不写成 0）。逐条 CSV：通过的那条有效动作比例 1.000000、16 步窗口 1.000000；被拒绝的那条原因是 `hands_out_of_frame|staged_static`，有效动作比例 0.000000、16 步窗口 0.000000（置信度 0.2，低于 0.5）。导出只保留通过的 1 条、29 帧动作（`/tmp/ego_valid_lerobot/meta/egodata_export.json`）：`valid_action_ratio` 1.0，16 步窗口 1.0，50 和 100 为 null。
 
@@ -95,7 +95,7 @@ flowchart LR
 
 ## 3. 时间线
 
-更早的底子不在下面的 PR 里：2026-08-02 放进了训练日志、头戴规格 v8、单目采购表和两段式方案初稿。下面按时间列出已合并的 PR，以及还在审的 #25。已合并条目的时间是合并时间（UTC）的日期；未合并的用开出当天的日期。#2 比 #3 晚几分钟合并，所以表按时间排，不按号码排。
+更早的底子不在下面的 PR 里：2026-08-02 放进了训练日志、头戴规格 v8、单目采购表和两段式方案初稿。下面按时间列出已合并的 PR，以及还在审的 #26。已合并条目的时间是合并时间（UTC）的日期；未合并的用开出当天的日期。#2 比 #3 晚几分钟合并，所以表按时间排，不按号码排。
 
 | 日期 | PR | 一句话 |
 |---|---|---|
@@ -124,6 +124,7 @@ flowchart LR
 | 2026-10-10 | [#23](https://github.com/skyxiaobai/robot/pull/23) | 刚体对齐手腕、2 cm 速度门限和 RTS 平滑写入管线；立体门限丢掉的帧改记标注覆盖，不再用 20% 坏帧把整段拒绝掉。 |
 | 2026-10-10 | [#24](https://github.com/skyxiaobai/robot/pull/24) | 双目手部关联：翻转 TTA（左右两种假设）+ 时序/双目关联 + 去重 + 另一目重裁，HOT3D 标注覆盖 53% → 71%，手腕误差不变。 |
 | 2026-10-10 | [#25](https://github.com/skyxiaobai/robot/pull/25) | 没测到的手腕不再当成「保持不动」来学：导出 `action_valid`，训练损失按手屏蔽，质检和导出摘要报告有效动作比例。 |
+| 2026-10-10 | [#26](https://github.com/skyxiaobai/robot/pull/26) | iPhone Pro 采集：Record3D（.r3d / EXR+JPG）转会话目录，激光雷达深度代替三角化，`run_stereo_pipeline.py --iphone` 一条命令；DexYCB 实测手腕中位 1.41 cm（单目同批 2.75 cm），iPhone 仿真 1.51 cm。导出同样带 `action_valid`。 |
 
 ---
 
@@ -271,11 +272,22 @@ EgoDex 测试集核对结果（`docs/gap_analysis.md`，2026-10-09）：约 16.1
 
 ---
 
+### 4.7 iPhone 激光雷达手部求解（DexYCB，519 只手）
+
+| 条件 | 来源 | 覆盖 | 手腕 中位 / p90 / ≤2 cm |
+|---|---|---|---|
+| RealSense 真实深度 | 实测 | 61% | 1.41 / 3.03 cm / 76% |
+| iPhone 仿真（256x192，1 px 模糊，1 cm @ 1 m 噪声） | 仿真 | 50% | 1.51 / 2.61 cm / 72% |
+| 同一批手 WiLoR 单目（RealSense 条件那 319 只） | 实测 | — | 2.75 / 7.88 cm / 39% |
+
+DexYCB 是第三视角桌面相机、手距约 0.8 m，只测相机系（没有 ARKit 位姿误差）。iPhone 实录精度待测。详见 `docs/iphone_capture_eval.md`。
+
 ## 5. 决策记录
 
 | 日期 | 决定 | 依据 |
 |---|---|---|
 | 2026-10-09 | **iPhone 采集管线暂停。** 当前不把手机当采集设备。 | 规格 v8 删掉了「Ego 头显 / iPhone」外部产品规格，以及「未来 Pipeline 接入检查」。这段正文随 2026-08-02 的文档进入仓库，规格页眉日期是 2026-10-09。仓库里没有另一份标题就叫「暂停公告」的文件。10 月 9 日之后的 PR 都在做头戴和 EgoDex，没有再接 iPhone 录制。 |
+| 2026-10-10 | **恢复 iPhone 采集，作为双目设备到货前的临时采集手段。** 只支持带激光雷达的 Pro 机型，用 Record3D 导出。 | 用户目前只有 iPhone。DexYCB 实测：激光雷达深度把手腕中位误差从单目 2.75 cm 降到 1.41 cm（同一批手）；iPhone 仿真 1.51 cm。视角和头戴不同，数据先用来跑通采集和质检。 |
 | 2026-10-09 | **还没有设备，预训练用 EgoDex。** | `docs/gap_analysis.md`：位姿是录制时的世界系，测试包可以公开下载。HOT3D 要另下 MANO；夹爪遥操作数据没有人手 21 点。 |
 | 2026-10-10 | **手部后端用 WiLoR。** MediaPipe 只做 CPU 兜底。 | README 核心结论；Colab 笔记本默认优先 WiLoR。HaMeR 仍可换，但要额外编译检测器，不作为默认。 |
 | 2026-10-10 | **双目是核心，不是可选项。** 两个摄像头算手离相机多远；IMU 和 SLAM/VIO 一起算相机在世界里的位置，不只抵消头的晃动。 | PR #17 和规格 2026-10-10 对 §0 / §3 的修订。旧单目表里「双目 ≥1500–3000 元、可选」那一行保留作对照，不再代表现行方案。 |
@@ -302,6 +314,8 @@ Square / pusht 只验证训练框架。本体、视角和动作都跟头戴人�
 - [x] 会话校验脚本和假录制器（HOT3D → 设备格式，含故障注入）
 - [x] 整体架构文档和到货第一天检查清单
 - [x] 缺测手腕不再当成「保持不动」来监督：导出 `action_valid`，线性模型和 ACT 损失按手屏蔽；全量 EgoDex 上的有效动作比例仍待补
+- [x] iPhone Pro 采集适配（Record3D → 会话目录 → 激光雷达深度求手 → QC → LeRobot，导出含 `action_valid`），合成样例测试 + DexYCB 实测/仿真评测（`docs/iphone_capture.md`）
+- [ ] 用 iPhone 录第一批真实数据：先跑 `validate_session.py`，看 `lowconf` / `fit` 比例，再定 iPhone 的检查阈值（真实 `.r3d` 还没验证过）
 - [ ] 设备端录制程序（按 §7.7 落盘，并写 `stereo/timestamps_lr.csv`）
 - [ ] 用第一批自采数据重新定 QC 阈值。手出画、视线飘移、运动模糊、摆拍或静止仍用 EgoDex 的 20% 坏帧。双目丢掉的标注另报覆盖率，`--min-label-coverage` 默认 0（只报告、不拒绝），这个数是临时的，等自采数据再定。
 - [ ] 买齐并装好双目头戴（方案 A）。下单前向卖家要 8–10 cm 基线，镜头选约 100°
