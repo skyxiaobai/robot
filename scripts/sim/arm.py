@@ -224,17 +224,24 @@ class PickPlaceEnv:
             for adr in self.grip_adr:
                 self.data.qpos[adr] = grip
 
-    def reset(self, cube_xy, settle_s=0.25):
-        """方块放在桌面上，手臂停在复位姿态，夹爪张开。"""
+    def reset(self, cube_xy, settle_s=0.25, rest_z=None):
+        """方块放在桌面上，手臂停在复位姿态，夹爪张开。
+
+        ``rest_z`` 是物体中心的初始高度。不传时用方块那一档。
+        场景若设了 ``self.rest_z``（不同包围盒），复位会用那个高度。
+        """
         mj = require_mujoco()
         mj.mj_resetData(self.model, self.data)
         self._write_arm(self.home_q, GRIP_OPEN)
         self.data.ctrl[:6] = self.home_q
         self.data.ctrl[6:] = GRIP_OPEN
+        if rest_z is None:
+            rest_z = getattr(self, "rest_z", None)
+        z = (Z_REST + 0.004) if rest_z is None else float(rest_z)
         self.data.qpos[self.cube_adr:self.cube_adr + 3] = [
             float(cube_xy[0]),
             float(cube_xy[1]),
-            Z_REST + 0.004,
+            z,
         ]
         self.data.qpos[self.cube_adr + 3] = 1.0
         mj.mj_forward(self.model, self.data)

@@ -32,14 +32,19 @@ def min_jerk(alpha):
     return 10 * a ** 3 - 15 * a ** 4 + 6 * a ** 5
 
 
-def scripted_segments(cube_xy, goal_xy, arc_m=0.0):
-    """返回按时间排列的末端线段。``arc_m`` 是搬运段的侧向最大偏移（米）。"""
+def scripted_segments(cube_xy, goal_xy, arc_m=0.0, z_grasp=None):
+    """返回按时间排列的末端线段。``arc_m`` 是搬运段的侧向最大偏移（米）。
+
+    ``z_grasp`` 是下降去夹的高度。默认是方块调过的 0.242 m。
+    更高的物体要抬一点，否则指垫会从物体下方擦过。
+    """
     cube = np.asarray(cube_xy, dtype=float)
     goal = np.asarray(goal_xy, dtype=float)
+    z = Z_GRASP if z_grasp is None else float(z_grasp)
     hover_c = np.array([cube[0], cube[1], Z_HOVER])
     hover_g = np.array([goal[0], goal[1], Z_HOVER])
-    grasp = np.array([cube[0], cube[1], Z_GRASP])
-    place = np.array([goal[0], goal[1], Z_GRASP])
+    grasp = np.array([cube[0], cube[1], z])
+    place = np.array([goal[0], goal[1], z])
     home = np.array(HOME_EE, dtype=float)
     return [
         Segment(home, hover_c, GRIP_OPEN, GRIP_OPEN, 0.8, 0.0),
@@ -61,7 +66,7 @@ def _split_duration(duration, weights):
     return parts
 
 
-def event_segments(cube_xy, goal_xy, grasp_t, release_t, total_t):
+def event_segments(cube_xy, goal_xy, grasp_t, release_t, total_t, z_grasp=None):
     """按抓住、松开的时刻把同一条抓放路点拉开，时长正好等于 ``total_t``。
 
     路点仍是脚本路径上的那些点（悬停、抓住、搬运、放下）。变的是每一段占多少秒，
@@ -80,10 +85,11 @@ def event_segments(cube_xy, goal_xy, grasp_t, release_t, total_t):
     approach, down = _split_duration(pre, [0.45, 0.55])
     close, lift, carry, lower = _split_duration(mid, [0.20, 0.30, 0.30, 0.20])
     open_s, retreat = _split_duration(post, [0.45, 0.55])
+    z = Z_GRASP if z_grasp is None else float(z_grasp)
     hover_c = np.array([cube[0], cube[1], Z_HOVER])
     hover_g = np.array([goal[0], goal[1], Z_HOVER])
-    grasp = np.array([cube[0], cube[1], Z_GRASP])
-    place = np.array([goal[0], goal[1], Z_GRASP])
+    grasp = np.array([cube[0], cube[1], z])
+    place = np.array([goal[0], goal[1], z])
     home = np.array(HOME_EE, dtype=float)
     durations = (approach, down, close, lift, carry, lower, open_s, retreat)
     return [
