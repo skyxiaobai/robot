@@ -1,0 +1,104 @@
+{
+ "wilor": {
+  "gated": {
+   "gt_visible": 992,
+   "matched": 968,
+   "detection_rate": 0.9758064516129032,
+   "swap_rate": 0.0,
+   "px_error_median": 56.172438251220804,
+   "px_error_mean": 60.46818141181987,
+   "root_relative_m_median": 0.0395669570054352,
+   "root_relative_m_mean": 0.04137527889600569,
+   "wrist_error_m_median": 0.22364714529826832,
+   "wrist_error_m_mean": 0.22426501822629066,
+   "wrist_error_scaled_m_median": 0.04006169924421925,
+   "wrist_error_scaled_m_mean": 0.04442030069932586,
+   "scale_median": 0.6143219819526466,
+   "exclude_joints": [
+    0,
+    1
+   ]
+  },
+  "side": {
+   "gt_visible": 992,
+   "paired": 976,
+   "coverage": 0.9838709677419355,
+   "mpjpe_rel_cm_mean": 4.148836463546246,
+   "mpjpe_rel_cm_median": 3.966413104311014,
+   "wrist_cm_median": 22.26010484367159,
+   "wrist_cm_p90": 29.462326184425457,
+   "wrist_le2cm": 0.0,
+   "wrist_scaled_cm_median": 4.034016491984403,
+   "wrist_scaled_cm_p90": 6.555920951565078,
+   "wrist_scaled_le2cm": 0.00819672131147541
+  }
+ },
+ "reviv": {
+  "gated": {
+   "gt_visible": 992,
+   "matched": 210,
+   "detection_rate": 0.21169354838709678,
+   "swap_rate": 0.2714285714285714,
+   "px_error_median": 109.60596880434014,
+   "px_error_mean": 137.97678761827518,
+   "root_relative_m_median": 0.08088093324249232,
+   "root_relative_m_mean": 0.07834126131241471,
+   "wrist_error_m_median": 0.06893488905638068,
+   "wrist_error_m_mean": 0.07652303882354726,
+   "wrist_error_scaled_m_median": 0.06089605401346013,
+   "wrist_error_scaled_m_mean": 0.06557637809383986,
+   "scale_median": 0.9161947794151613,
+   "exclude_joints": [
+    0,
+    1
+   ]
+  },
+  "side": {
+   "gt_visible": 992,
+   "paired": 992,
+   "coverage": 1.0,
+   "mpjpe_rel_cm_mean": 10.50799464729091,
+   "mpjpe_rel_cm_median": 11.007827383265328,
+   "wrist_cm_median": 44.73617560410309,
+   "wrist_cm_p90": 90.13575037557743,
+   "wrist_le2cm": 0.0030241935483870967,
+   "wrist_scaled_cm_median": 32.71229065183905,
+   "wrist_scaled_cm_p90": 38.66424759341415,
+   "wrist_scaled_le2cm": 0.0010080645161290322
+  }
+ },
+ "reviv_zvalid": {
+  "gated": {
+   "gt_visible": 992,
+   "matched": 210,
+   "detection_rate": 0.21169354838709678,
+   "swap_rate": 0.2714285714285714,
+   "px_error_median": 109.60596880434014,
+   "px_error_mean": 137.97678761827518,
+   "root_relative_m_median": 0.08088093324249232,
+   "root_relative_m_mean": 0.07834126131241471,
+   "wrist_error_m_median": 0.06893488905638068,
+   "wrist_error_m_mean": 0.07652303882354726,
+   "wrist_error_scaled_m_median": 0.06089605401346013,
+   "wrist_error_scaled_m_mean": 0.06557637809383986,
+   "scale_median": 0.9161947794151613,
+   "exclude_joints": [
+    0,
+    1
+   ]
+  },
+  "side": {
+   "gt_visible": 992,
+   "paired": 426,
+   "coverage": 0.42943548387096775,
+   "mpjpe_rel_cm_mean": 7.756162418353377,
+   "mpjpe_rel_cm_median": 7.727496314410659,
+   "wrist_cm_median": 12.034459626773318,
+   "wrist_cm_p90": 31.58298598225391,
+   "wrist_le2cm": 0.007042253521126761,
+   "wrist_scaled_cm_median": 10.691338970205416,
+   "wrist_scaled_cm_p90": 29.602424197849864,
+   "wrist_scaled_le2cm": 0.002347417840375587
+  }
+ }
+}
