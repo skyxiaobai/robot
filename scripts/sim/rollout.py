@@ -2,7 +2,7 @@
 """开环回放和闭环滚动。数字只来自这里真正步进仿真的结果。"""
 import numpy as np
 
-from retarget.frames import CONTROL_DT, HOME_EE, goal_xyz
+from retarget.frames import CONTROL_DT, GRIP_OPEN, HOME_EE, goal_xyz
 from retarget.paths import path_duration, query_path, scripted_segments
 from sim.bc import decode_action, encode_waypoint, relative_features
 
@@ -52,9 +52,10 @@ def follow_reference(env, cube_xy, goal_xy, segments, control_dt=CONTROL_DT, rec
 def replay_joints(env, cube_xy, goal_xy, times, q_traj, grip_traj):
     """把已经求好的关节轨迹开环放进仿真。"""
     env.reset(cube_xy)
-    # 先在 0.3 秒内从复位姿态走到轨迹第一帧，避免开局猛地一甩。
+    # 先在 0.3 秒内从复位姿态走到轨迹第一帧，夹爪保持张开。
+    # 轨迹若从「已经夹紧」开始，合着爪冲过去会把方块推走。
     env.data.ctrl[:6] = q_traj[0]
-    env.data.ctrl[6:] = float(grip_traj[0])
+    env.data.ctrl[6:] = GRIP_OPEN
     warmup = max(1, int(round(0.3 / env.dt)))
     import mujoco
 

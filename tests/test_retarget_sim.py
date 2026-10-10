@@ -17,6 +17,7 @@ from retarget.frames import (  # noqa: E402
     GRIP_OPEN,
     HOME_EE,
     R_DOWN,
+    SUCCESS_XY_M,
     identity_wrist_quat,
     matrix_from_quat_xyzw,
     sample_task,
@@ -24,7 +25,20 @@ from retarget.frames import (  # noqa: E402
 )
 from retarget.human_demo import hand_joints, make_basic_pick_place  # noqa: E402
 from retarget.ik import damped_least_squares, orientation_error  # noqa: E402
-from retarget.paths import path_duration, query_path, sample_path, scripted_segments  # noqa: E402
+from retarget.arkit import (  # noqa: E402
+    episode_center,
+    fit_shared_calibration,
+    map_centered,
+    permute_arkit_xyz,
+)
+from retarget.events import (  # noqa: E402
+    MIN_ROBOT_SEPARATION_M,
+    choose_grasp_release,
+    grasp_release_pairs,
+    longest_true_run,
+    pickup_index,
+)
+from retarget.paths import event_segments, path_duration, query_path, sample_path, scripted_segments  # noqa: E402
 from retarget.retarget import infer_scene_xy, retarget_episode  # noqa: E402
 from sim.bc import BCPolicy, decode_action, encode_waypoint, featurize  # noqa: E402
 
@@ -237,6 +251,86 @@ class SimTest(unittest.TestCase):
         self.assertLess(float(np.linalg.norm(inferred[1] - goal)), 0.02)
         played = replay_joints(self.env, cube, goal, retargeted.times, retargeted.q, retargeted.grip)
         self.assertTrue(played["success"], msg="xy_error=%s cube=%s" % (played["xy_error"], played["cube"]))
+
+
+class RealEpisodeEventsTest(unittest.TestCase):
+    def test_longest_run_skips_the_gap(self):
+        start, end = longest_true_run([False, True, True, False, True, True, True])
+        self.assertEqual((start, end), (4, 7))
+
+    def test_close_then_open_is_one_pair(self):
+        aperture = np.concatenate([
+            np.linspace(0.09, 0.08, 12),
+            np.linspace(0.08, 0.02, 8),
+            np.full(12, 0.02),
+            np.linspace(0.02, 0.09, 8),
+        ])
+        pairs = grasp_release_pairs(aperture)
+        self.assertEqual(len(pairs), 1)
+        grasp, release = pairs[0]
+        self.assertLess(grasp, release)
+
+    def test_flat_aperture_has_no_pair(self):
+        self.assertEqual(grasp_release_pairs(np.full(40, 0.05)), [])
+
+    def test_larger_travel_wins(self):
+        aperture = np.concatenate([
+            np.full(8, 0.09),
+            np.full(8, 0.02),
+            np.full(8, 0.09),
+            np.full(8, 0.02),
+            np.full(8, 0.09),
+        ])
+        wrist = np.zeros((aperture.shape[0], 3))
+        wrist[24:32, 0] = np.linspace(0.0, 0.30, 8)
+        wrist[32:, 0] = 0.30
+        chosen = choose_grasp_release(aperture, wrist)
+        self.assertIsNotNone(chosen)
+        self.assertGreater(chosen[2], 0.2)
+        self.assertGreater(chosen[0], 10)
+
+    def test_pickup_is_the_lowest_closed_frame(self):
+        xyz = np.zeros((6, 3))
+        xyz[:, 1] = [0.4, 0.2, 0.5, 0.15, 0.3, 0.1]
+        grip = np.array([0.02, 0.0, 0.0, 0.0, 0.02, 0.0])
+        # 闭合区间是 0..4。最低且夹紧的是第 3 帧，不是阈值起点，也不是更低但已经松开的第 5 帧。
+        self.assertEqual(pickup_index(xyz, grip, 0, 4), 3)
+
+    def test_separation_exceeds_success_radius(self):
+        self.assertGreater(MIN_ROBOT_SEPARATION_M, SUCCESS_XY_M)
+
+    def test_origin_shift_keeps_the_mapped_path(self):
+        human = np.zeros((30, 3))
+        human[:, 0] = np.linspace(-0.10, 0.15, 30)
+        human[:, 1] = 0.90 + 0.08 * np.sin(np.linspace(0.0, np.pi, 30))
+        human[:, 2] = np.linspace(0.20, -0.05, 30)
+        shifted = human + np.array([8.0, -2.0, 5.0])
+
+        def centered(points):
+            permuted = permute_arkit_xyz(points)
+            center = episode_center(permuted)
+            return permuted - center, center
+
+        first, center_first = centered(human)
+        second, center_second = centered(shifted)
+        np.testing.assert_allclose(first, second, atol=1e-8)
+        calibration, _info = fit_shared_calibration(
+            np.vstack([first, second]),
+            [first[4, 2], second[4, 2]],
+            [float(first[:, 2].max()), float(second[:, 2].max())],
+        )
+        mapped_first = map_centered(calibration, human, center_first)
+        mapped_second = map_centered(calibration, shifted, center_second)
+        np.testing.assert_allclose(mapped_first, mapped_second, atol=1e-6)
+        # 换轴之后，人手的 Y 升高要变成机器人的 Z 升高。
+        self.assertGreater(mapped_first[15, 2], mapped_first[0, 2])
+
+    def test_event_segments_cover_the_requested_duration(self):
+        segments = event_segments(np.array([0.45, 0.0]), np.array([0.55, 0.08]), 1.2, 3.4, 5.0)
+        self.assertAlmostEqual(path_duration(segments), 5.0, places=6)
+        position, grip = query_path(segments, 0.0)
+        np.testing.assert_allclose(position, [0.48, 0.0, 0.36], atol=1e-6)
+        self.assertAlmostEqual(grip, 0.024)
 
 
 if __name__ == "__main__":

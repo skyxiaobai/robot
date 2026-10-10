@@ -7,7 +7,7 @@
 """
 import numpy as np
 
-from egodata.schema import SCHEMA_VERSION, make_quaternions_continuous, rotmat_to_quat_xyzw
+from egodata.schema import SCHEMA_VERSION, empty_interaction, make_quaternions_continuous, rotmat_to_quat_xyzw
 from retarget.frames import GRIP_OPEN, HUMAN_FPS, identity_wrist_quat
 from retarget.paths import sample_path
 
@@ -97,6 +97,8 @@ def make_basic_pick_place(cube_xy, goal_xy, calibration, arc_m=0.03, fps=HUMAN_F
             },
             "left": _static_hand(num_frames, np.array([-0.25, 0.2, 0.9])),
         },
+        # 合成片段同样没有物体 6DoF。空通道表示「没测到」，不能写成全 0。
+        **empty_interaction(num_frames),
         "annotation": {
             "environment": {"name": "table", "detail": "table:wood", "source": "synthetic"},
             "task": {

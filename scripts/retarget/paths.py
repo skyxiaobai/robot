@@ -53,6 +53,51 @@ def scripted_segments(cube_xy, goal_xy, arc_m=0.0):
     ]
 
 
+def _split_duration(duration, weights):
+    weights = np.asarray(weights, dtype=float)
+    weights = weights / float(weights.sum())
+    parts = weights * float(duration)
+    parts[-1] = float(duration) - float(parts[:-1].sum())
+    return parts
+
+
+def event_segments(cube_xy, goal_xy, grasp_t, release_t, total_t):
+    """按抓住、松开的时刻把同一条抓放路点拉开，时长正好等于 ``total_t``。
+
+    路点仍是脚本路径上的那些点（悬停、抓住、搬运、放下）。变的是每一段占多少秒，
+    用来给真实手腕轨迹打标签，而不是把人的轨迹改成折线。
+    """
+    cube = np.asarray(cube_xy, dtype=float)
+    goal = np.asarray(goal_xy, dtype=float)
+    total = float(total_t)
+    if total <= 0.0:
+        raise ValueError("总时长要为正")
+    grasp_t = float(np.clip(grasp_t, 0.15 * total, 0.70 * total))
+    release_t = float(np.clip(release_t, grasp_t + 0.15 * total, 0.92 * total))
+    pre = grasp_t
+    mid = release_t - grasp_t
+    post = total - release_t
+    approach, down = _split_duration(pre, [0.45, 0.55])
+    close, lift, carry, lower = _split_duration(mid, [0.20, 0.30, 0.30, 0.20])
+    open_s, retreat = _split_duration(post, [0.45, 0.55])
+    hover_c = np.array([cube[0], cube[1], Z_HOVER])
+    hover_g = np.array([goal[0], goal[1], Z_HOVER])
+    grasp = np.array([cube[0], cube[1], Z_GRASP])
+    place = np.array([goal[0], goal[1], Z_GRASP])
+    home = np.array(HOME_EE, dtype=float)
+    durations = (approach, down, close, lift, carry, lower, open_s, retreat)
+    return [
+        Segment(home, hover_c, GRIP_OPEN, GRIP_OPEN, durations[0], 0.0),
+        Segment(hover_c, grasp, GRIP_OPEN, GRIP_OPEN, durations[1], 0.0),
+        Segment(grasp, grasp, GRIP_OPEN, GRIP_CLOSE, durations[2], 0.0),
+        Segment(grasp, hover_c, GRIP_CLOSE, GRIP_CLOSE, durations[3], 0.0),
+        Segment(hover_c, hover_g, GRIP_CLOSE, GRIP_CLOSE, durations[4], 0.0),
+        Segment(hover_g, place, GRIP_CLOSE, GRIP_CLOSE, durations[5], 0.0),
+        Segment(place, place, GRIP_CLOSE, GRIP_OPEN, durations[6], 0.0),
+        Segment(place, hover_g, GRIP_OPEN, GRIP_OPEN, durations[7], 0.0),
+    ]
+
+
 def path_duration(segments):
     return float(sum(segment.duration for segment in segments))
 

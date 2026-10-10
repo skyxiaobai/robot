@@ -37,23 +37,30 @@ def _as_array(frames):
     return array
 
 
-def retarget_episode(episode, env, calibration=None, side="right"):
+def retarget_episode(episode, env, calibration=None, side="right", grip=None, target_rotation=None, tool=None):
     """右手（默认）手腕 6DoF + 指尖开合 → 关节轨迹。
 
-    位置用标定做缩放和平移。朝向用固定工具旋转。夹爪开合来自拇指尖到食指尖的距离。
+    位置用标定做缩放和平移。朝向默认用固定工具旋转。夹爪开合来自拇指尖到食指尖的距离。
+    ``grip`` 给定时不再读关节（真实片段按自己的开合范围归一化之后传进来）。
+    ``target_rotation`` 给定时每一帧都用这个 site 朝向，不再乘手腕四元数。
     每一帧做阻尼最小二乘 IK，关节角夹在限位里；连杆撞桌子时把目标抬高再解一次。
     """
     if calibration is None:
         calibration = default_calibration()
     hand = episode["hands"][side]
     wrist = _as_array(hand["wrist_pose"])
-    joints = _as_array(hand["joints"])
     if wrist.ndim != 2 or wrist.shape[1] != 7:
         raise ValueError("wrist_pose 必须是 (T, 7)")
     human_xyz = wrist[:, :3]
     robot_xyz = np.asarray(calibration.map_points(human_xyz), dtype=float)
-    aperture = apertures_from_joints(joints)
-    grip = np.asarray(grip_command(aperture), dtype=float)
+    if grip is None:
+        joints = _as_array(hand["joints"])
+        aperture = apertures_from_joints(joints)
+        grip = np.asarray(grip_command(aperture), dtype=float)
+    else:
+        grip = np.asarray(grip, dtype=float).reshape(-1)
+        if grip.shape[0] != robot_xyz.shape[0]:
+            raise ValueError("夹爪轨迹长度 %d 和手腕帧数 %d 不一致" % (grip.shape[0], robot_xyz.shape[0]))
     times = np.asarray(episode["timestamps"], dtype=float)
     q = env.home_q.copy()
     qs = []
@@ -62,7 +69,10 @@ def retarget_episode(episode, env, calibration=None, side="right"):
     n_colliding = 0
     n_lifted = 0
     for index in range(robot_xyz.shape[0]):
-        rotation = site_rotation(wrist[index, 3:])
+        if target_rotation is not None:
+            rotation = np.asarray(target_rotation, dtype=float)
+        else:
+            rotation = site_rotation(wrist[index, 3:], tool=tool)
         # 合成掌心朝下时 rotation 就是 R_DOWN。数值漂移时仍用解出的矩阵。
         if not np.isfinite(rotation).all():
             rotation = R_DOWN
