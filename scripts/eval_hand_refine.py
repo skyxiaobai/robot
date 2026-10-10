@@ -333,7 +333,7 @@ def _parse_hand(hand, joints, confidence, index):
         confidence[index][finite] = array[finite]
 
 
-def predict_episode(mp4, intrinsic, cache_path, wrist_depth_m):
+def predict_episode(mp4, intrinsic, cache_path, wrist_depth_m, backend_name="mediapipe"):
     cache_path = Path(cache_path)
     if cache_path.is_file():
         stored = np.load(cache_path)
@@ -346,9 +346,12 @@ def predict_episode(mp4, intrinsic, cache_path, wrist_depth_m):
             "height": int(stored["height"]),
         }
     import cv2
-    from headcam.hand_pose import MediaPipeHandsBackend
+    from headcam.hand_pose import MediaPipeHandsBackend, get_backend
 
-    backend = MediaPipeHandsBackend(wrist_depth_m=wrist_depth_m)
+    if backend_name == "mediapipe":
+        backend = MediaPipeHandsBackend(wrist_depth_m=wrist_depth_m)
+    else:
+        backend = get_backend(backend_name, wrist_depth_m=wrist_depth_m)
     calib = {"K_left": np.asarray(intrinsic, dtype=np.float64)}
     capture = cv2.VideoCapture(str(mp4))
     if not capture.isOpened():
@@ -652,7 +655,7 @@ def write_report(path, context, tables, rows_by_key):
     return path
 
 
-def run(root, out_path, wrist_depth_m):
+def run(root, out_path, wrist_depth_m, backend_name="mediapipe"):
     root = Path(root)
     downloaded = ensure_episodes(root)
     if downloaded:
@@ -669,7 +672,14 @@ def run(root, out_path, wrist_depth_m):
             % ("；".join(missing), len(cache_hits) + len(repo_hits))
         )
     else:
-        backend_note = "WiLoR 可用。这次脚本仍按 MediaPipe 路径写缓存；若要换后端需要另跑。"
+        backend_note = "WiLoR 可用。"
+    if backend_name == "wilor":
+        if missing:
+            raise RuntimeError("要求 --backend wilor，但缺少：%s" % "；".join(missing))
+        backend_note = (
+            "下面的数是 **WiLoR**（官方 wilor_final.ckpt + detector.pt，经 `headcam.hand_pose.get_backend(\"wilor\")`，CPU）"
+            "对这 4 条视频逐帧检测，再做时序精修。单目 WiLoR 的手腕深度来自它自己的相机平移估计，不是双目测出来的米。"
+        )
     predictions = []
     episode_rows = []
     for relative in EVAL_EPISODES:
@@ -678,8 +688,8 @@ def run(root, out_path, wrist_depth_m):
         if not hdf5.is_file() or not mp4.is_file():
             raise FileNotFoundError("缺少 %s 或同名 mp4。放到 %s 后再跑。" % (relative, root))
         episode = load_episode_hdf5(hdf5)
-        cache = root / "cache" / (relative.replace("/", "__") + "_mediapipe_d%03d.npz" % int(round(wrist_depth_m * 100)))
-        prediction = predict_episode(mp4, episode["camera_intrinsic"], cache, wrist_depth_m)
+        cache = root / "cache" / (relative.replace("/", "__") + "_%s_d%03d.npz" % (backend_name, int(round(wrist_depth_m * 100))))
+        prediction = predict_episode(mp4, episode["camera_intrinsic"], cache, wrist_depth_m, backend_name)
         count = min(int(episode["num_frames"]), int(prediction["left"].shape[0]))
         episode_rows.append((relative, count))
         predictions.append((episode, prediction, count))
@@ -747,7 +757,7 @@ def run(root, out_path, wrist_depth_m):
         write_report(out_path, context, tables, rows_by_key)
         sidecar = Path(out_path).with_suffix(".json")
         sidecar.write_text(json.dumps({
-            "backend": "mediapipe" if missing else "wilor_available_but_script_uses_mediapipe_cache",
+            "backend": backend_name,
             "wilor_missing": missing,
             "episodes": [{"path": name, "frames": frames} for name, frames in episode_rows],
             "metrics": serializable,
@@ -761,8 +771,9 @@ def main(argv=None):
     parser.add_argument("--root", default="data/egodex_hand_eval")
     parser.add_argument("--out", default="docs/hand_refine_egodex.md")
     parser.add_argument("--wrist-depth-m", type=float, default=0.55)
+    parser.add_argument("--backend", choices=("mediapipe", "wilor"), default="mediapipe")
     args = parser.parse_args(argv)
-    run(args.root, args.out, args.wrist_depth_m)
+    run(args.root, args.out, args.wrist_depth_m, args.backend)
     return 0
 
 
