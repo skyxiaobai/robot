@@ -30,7 +30,8 @@ REASON_CN = {
     "stereo_one_view": "只有一目认到手", "stereo_inconsistent": "左右目对不上", "stereo_filled": "补出来的帧",
 }
 STATUS_CN = {"ok": "通过", "one_view": "只有一目认到", "few_joints": "可三角化的关节太少",
-             "reproj": "重投影误差大", "depth": "深度不合理", "palm": "手掌尺寸不合理", "none": "两目都没认到"}
+             "reproj": "重投影误差大", "depth": "深度不合理", "palm": "手掌尺寸不合理", "none": "两目都没认到",
+             "jump": "速度门限剔除的跳点", "strict": "严格门限剔除"}
 
 
 def _fmt(s):
@@ -80,7 +81,13 @@ def main(argv=None):
     ap.add_argument("--max-frames", type=int, default=None, help="HOT3D：每段最多转多少帧（调试用）")
     ap.add_argument("--no-gt", action="store_true", help="HOT3D：不生成真值（不需要 MANO / smplx）")
     ap.add_argument("--no-consistency", action="store_true", help="关闭左右一致性检查（对比用）")
-    ap.add_argument("--smooth", default="one_euro", choices=["none", "one_euro", "kalman"])
+    ap.add_argument("--smooth", default="rts", choices=["none", "rts", "one_euro", "kalman"],
+                    help="rts：世界系手腕离线 RTS 平滑（默认）；one_euro 为 PR #22 行为")
+    ap.add_argument("--wrist-mode", default="rigid_fit", choices=["rigid_fit", "tri"],
+                    help="rigid_fit：单目手型稳健对齐三角化关节后取手腕（默认）；tri：直接用三角化手腕")
+    ap.add_argument("--velocity-gate-m", type=float, default=0.02, help="世界系手腕跳点门限（米），0 关闭")
+    ap.add_argument("--strict-reproj-px", type=float, default=None, help="可选严格门限：中位重投影误差上限（像素）")
+    ap.add_argument("--strict-offaxis-deg", type=float, default=None, help="可选严格门限：手腕偏离光轴角度上限（度）")
     ap.add_argument("--min-cutoff", type=float, default=3.0, help="One Euro 静止截止频率 Hz")
     ap.add_argument("--beta", type=float, default=50.0, help="One Euro 速度系数 1/(m/s)")
     ap.add_argument("--max-gap", type=int, default=5, help="最多补几帧，0 表示不补")
@@ -110,7 +117,9 @@ def main(argv=None):
                 adapter.append(info)
                 print("HOT3D → 会话 %s（%d 帧，基线 %.1f cm）" % (target, info["frames"], 100 * info["baseline_m"]))
             sessions.append(str(target))
-    params = StereoParams(max_reproj_px=a.max_reproj_px, smooth=a.smooth, min_cutoff=a.min_cutoff, beta=a.beta, gap_fill=a.max_gap > 0,
+    params = StereoParams(max_reproj_px=a.max_reproj_px, wrist_mode=a.wrist_mode,
+                          velocity_gate_m=a.velocity_gate_m, max_median_reproj_px=a.strict_reproj_px,
+                          max_offaxis_deg=a.strict_offaxis_deg, smooth=a.smooth, min_cutoff=a.min_cutoff, beta=a.beta, gap_fill=a.max_gap > 0,
                           max_gap=max(a.max_gap, 0), fixed_shape=a.fixed_shape, consistency=not a.no_consistency)
     summary = run_pipeline(sessions, out, params, backend_name=a.backend, repo_id=a.repo_id, export=not a.no_export,
                            export_python=a.export_python)
