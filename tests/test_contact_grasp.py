@@ -240,7 +240,8 @@ class DistanceAndHeuristicTest(unittest.TestCase):
         }
         # 第一帧在远处。第二帧需要有前一帧才能算靠近速度；这里第二帧已经贴在表面上，应判抓取。
         # 第三帧离开，前一帧是抓取，应判放开。
-        result = estimate_interaction(hands, objects, timestamps, surfaces)
+        # 这三帧测的是当帧阈值，不经过默认的时间滤波。
+        result = estimate_interaction(hands, objects, timestamps, surfaces, temporal_filter=False)
         right = result["grasp"]["right"]["state"]
         contact = result["contact"]["right"]["object_id"]
         self.assertEqual(right[0], "open")
@@ -283,6 +284,7 @@ class DistanceAndHeuristicTest(unittest.TestCase):
             camera_poses=camera,
             pose_hook=pose_hook,
             contact_hook=contact_hook,
+            temporal_filter=False,
         )
         self.assertEqual(hooked["objects"][0]["source"], "foundationpose")
         self.assertEqual(hooked["contact"]["right"]["object_id"][0], "cup")
@@ -479,6 +481,161 @@ class ExportAndQcTest(unittest.TestCase):
         self.assertNotIn("grasp_without_contact", result["reasons"])
         self.assertEqual(result["interaction"]["object_pose_valid_fraction"], None)
         self.assertEqual(result["interaction"]["grasp_valid_fraction"], 0.5)
+
+
+def _hand_at_distance(distance, n_near=5, radius=0.02):
+    """指尖放在球面外 distance 米。n_near=1 时只有拇指贴着，张合大于 8 cm，不算抓住。"""
+    joints = [[0.3, 0.2, 0.2] for _ in range(21)]
+    near = [radius + float(distance), 0.0, 0.0]
+    far = [0.30, 0.0, 0.0]
+    if n_near <= 1:
+        joints[4] = list(near)
+        for index in FINGERTIPS:
+            if index != 4:
+                joints[index] = list(far)
+        return joints
+    for index in list(FINGERTIPS)[:n_near]:
+        joints[index] = list(near)
+    return joints
+
+
+def _sphere_inputs(distances, timestamps, n_near=5, radius=0.02):
+    n = len(timestamps)
+    joints = [None if item is None else _hand_at_distance(item, n_near=n_near, radius=radius) for item in distances]
+    objects = [{
+        "id": "ball",
+        "category": "toy",
+        "source": "test",
+        "pose": [[0, 0, 0, 0, 0, 0, 1]] * n,
+        "confidence": [1] * n,
+        "valid": [True] * n,
+    }]
+    surfaces = {"ball": {"radius_m": radius, "center_local": [0, 0, 0]}}
+    hands = {
+        "left": {"joints": [None] * n, "confidence": [None] * n},
+        "right": {"joints": joints, "confidence": [0.9] * n},
+    }
+    return hands, objects, surfaces
+
+
+def _run_sphere(distances, timestamps, n_near=5, temporal_filter="default", params=None):
+    hands, objects, surfaces = _sphere_inputs(distances, timestamps, n_near=n_near)
+    kwargs = {}
+    if temporal_filter != "default":
+        kwargs["temporal_filter"] = temporal_filter
+    return estimate_interaction(hands, objects, timestamps, surfaces, params=params, **kwargs)
+
+
+class TemporalFilterTest(unittest.TestCase):
+    def test_defaults_are_on_with_hysteresis_band_and_dwell(self):
+        self.assertGreater(HEURISTIC_DEFAULTS["dwell_s"], 0.0)
+        self.assertGreater(HEURISTIC_DEFAULTS["contact_off_margin_m"], 0.0)
+        self.assertAlmostEqual(HEURISTIC_DEFAULTS["contact_m"], 0.01)
+
+    def test_default_drops_a_single_frame_blip(self):
+        # 30 fps 量级的一帧贴上又离开，短于默认停留时间，不能记成接触。
+        timestamps = [0.0, 1.0 / 30.0, 2.0 / 30.0]
+        blip = _run_sphere([0.05, 0.005, 0.05], timestamps)
+        self.assertEqual(blip["contact"]["right"]["object_id"], [None, None, None])
+        self.assertNotIn("grasp", blip["grasp"]["right"]["state"])
+
+    def test_flag_off_keeps_the_same_blip(self):
+        timestamps = [0.0, 1.0 / 30.0, 2.0 / 30.0]
+        raw = _run_sphere([0.05, 0.005, 0.05], timestamps, temporal_filter=False)
+        self.assertEqual(raw["contact"]["right"]["object_id"], [None, "ball", None])
+        self.assertEqual(raw["grasp"]["right"]["state"][1], "grasp")
+
+    def test_hysteresis_uses_separate_on_and_off_distances(self):
+        params = {"contact_on_m": 0.01, "contact_off_m": 0.02, "dwell_s": 0.0, "grasp_speed_m_s": 10.0}
+        # 0.015 落在两档之间：没进去过就不算接触；进去之后离开到 off 之外才松开。
+        result = _run_sphere([0.05, 0.015, 0.008, 0.015, 0.03], [0.0, 0.1, 0.2, 0.3, 0.4], params=params)
+        self.assertEqual(result["contact"]["right"]["object_id"], [None, None, "ball", "ball", None])
+        self.assertEqual(result["grasp"]["right"]["state"][2], "grasp")
+        self.assertEqual(result["grasp"]["right"]["state"][3], "grasp")
+        self.assertEqual(result["grasp"]["right"]["state"][4], "release")
+
+    def test_contact_m_sets_the_on_threshold_when_on_is_omitted(self):
+        params = {"contact_m": 0.004, "dwell_s": 0.0, "grasp_speed_m_s": 10.0}
+        held = _run_sphere([0.003, 0.008], [0.0, 0.1], params=params)
+        self.assertEqual(held["contact"]["right"]["object_id"], ["ball", "ball"])
+        raw = _run_sphere([0.003, 0.008], [0.0, 0.1], temporal_filter=False, params={"contact_m": 0.004})
+        self.assertEqual(raw["contact"]["right"]["object_id"], ["ball", None])
+
+    def test_dwell_is_seconds_and_matches_across_frame_rates(self):
+        dwell = 0.2
+
+        def first_contact(step):
+            count = int(round(1.0 / step)) + 1
+            timestamps = [index * step for index in range(count)]
+            distances = [0.005] * count
+            result = _run_sphere(distances, timestamps, params={"dwell_s": dwell, "contact_on_m": 0.01, "contact_off_m": 0.02})
+            for stamp, object_id in zip(timestamps, result["contact"]["right"]["object_id"]):
+                if object_id is not None:
+                    return stamp
+            return None
+
+        slow = first_contact(0.1)
+        fast = first_contact(0.02)
+        self.assertAlmostEqual(slow, 0.2)
+        self.assertAlmostEqual(fast, 0.2)
+
+    def test_spike_shorter_than_dwell_is_ignored_at_both_rates(self):
+        def any_contact(step):
+            count = int(round(0.5 / step)) + 1
+            timestamps = [index * step for index in range(count)]
+            distances = [0.005 if 0.20 <= stamp < 0.24 else 0.05 for stamp in timestamps]
+            result = _run_sphere(distances, timestamps, params={"dwell_s": 0.1})
+            return any(item is not None for item in result["contact"]["right"]["object_id"])
+
+        self.assertFalse(any_contact(0.01))
+        self.assertFalse(any_contact(0.04))
+
+    def test_dropout_shorter_than_dwell_does_not_release(self):
+        params = {"dwell_s": 0.1, "contact_on_m": 0.01, "contact_off_m": 0.02, "grasp_speed_m_s": 10.0}
+        timestamps = [0.0, 0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7]
+        distances = [0.005, 0.005, 0.005, 0.05, 0.005, 0.005, 0.05, 0.05, 0.05]
+        result = _run_sphere(distances, timestamps, params=params)
+        ids = result["contact"]["right"]["object_id"]
+        states = result["grasp"]["right"]["state"]
+        self.assertEqual(ids[:6], [None, "ball", "ball", "ball", "ball", "ball"])
+        self.assertEqual(states[1], "grasp")
+        self.assertEqual(states[3], "grasp")
+        self.assertEqual(ids[6], "ball")
+        self.assertIsNone(ids[7])
+        self.assertEqual(states[7], "release")
+        self.assertEqual(states[8], "open")
+        starts = [item["timestamp"] for item in result["events"] if item["type"] == "contact_start"]
+        self.assertEqual(starts, [0.1])
+
+    def test_contact_without_grasp_also_waits_for_dwell(self):
+        params = {"dwell_s": 0.1, "contact_on_m": 0.01, "contact_off_m": 0.02}
+        result = _run_sphere([0.005, 0.005, 0.005], [0.0, 0.05, 0.1], n_near=1, params=params)
+        self.assertEqual(result["contact"]["right"]["object_id"], [None, None, "ball"])
+        self.assertEqual(result["grasp"]["right"]["state"], ["open", "open", "pre_grasp"])
+
+    def test_irregular_timestamps_use_elapsed_seconds(self):
+        params = {"dwell_s": 0.1, "contact_on_m": 0.01, "contact_off_m": 0.02}
+        result = _run_sphere([0.005, 0.005, 0.005], [0.0, 0.05, 0.5], params=params)
+        self.assertEqual(result["contact"]["right"]["object_id"], [None, None, "ball"])
+
+    def test_missing_joint_resets_the_latch(self):
+        params = {"dwell_s": 0.1, "contact_on_m": 0.01, "contact_off_m": 0.02}
+        result = _run_sphere([0.005, 0.005, None, 0.005], [0.0, 0.1, 0.2, 0.3], params=params)
+        self.assertEqual(result["contact"]["right"]["object_id"][1], "ball")
+        self.assertFalse(result["contact"]["right"]["valid"][2])
+        self.assertIsNone(result["contact"]["right"]["object_id"][3])
+
+    def test_eval_script_filter_defaults_on(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "eval_hot3d_contact", ROOT / "scripts" / "eval_hot3d_contact.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        base = ["--clips-dir", "c", "--models", "m", "--mano", "mano", "--tune", "clip", "--out", "o"]
+        self.assertFalse(module.build_parser().parse_args(base).no_temporal_filter)
+        flagged = module.build_parser().parse_args(base + ["--no-temporal-filter"])
+        self.assertTrue(flagged.no_temporal_filter)
 
 
 if __name__ == "__main__":

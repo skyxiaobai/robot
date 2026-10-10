@@ -75,7 +75,7 @@
 - `contact` / `grasp`：左右手每帧的接触物体和四态（张开、预备、抓住、放开），以及有效位。没有标注时有效位是 false
 - `events`：接触开始/结束、抓住、放开，带时间戳
 
-LeRobot 导出在原来的手腕增量之外，增加 `observation.object_pose`、`observation.contact`、`action.grasp` 和同名的 `*_valid` 掩码。掩码为 0 时数值是占位。HOT3D 适配器能读 `objects.json` 的位姿；给了表面才用网格距离写接触真值。启发式和合成夹具见 `docs/contact_grasp.md`。HOT3D 真实片段上的精确率、召回率、事件时间差 **待补**。
+LeRobot 导出在原来的手腕增量之外，增加 `observation.object_pose`、`observation.contact`、`action.grasp` 和同名的 `*_valid` 掩码。掩码为 0 时数值是占位。HOT3D 适配器能读 `objects.json` 的位姿；给了表面才用网格距离写接触真值。启发式和合成夹具见 `docs/contact_grasp.md`。HOT3D 真实片段上的精确率、召回率、事件时间差也在那里，是没开时间滤波的；开了滤波再跑 **待补**。
 
 21 点对照写在 `scripts/egodata/egodex.py`：手腕用 `leftHand`/`rightHand`，食指尖用 `*IndexFingerTip`，拇指用 Knuckle → IntermediateBase → IntermediateTip → Tip。这是 ARKit 名字到 MediaPipe 的近似，不是逐点解剖注册。`Hand` 在前臂上，比 MediaPipe 腕点更靠肘；`ThumbKnuckle` 也不是拇指 CMC。比较误差时用 `EGODEX_NONCORRESPONDING_JOINTS`（0 和 1）把这两点排除。
 
