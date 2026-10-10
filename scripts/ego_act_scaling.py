@@ -398,8 +398,14 @@ def _attach_action_valid_item(dataset, item):
     if minimum > 0.0 and chunk_valid_fraction(window, 0, horizon) + 1e-12 < minimum:
         window[:] = 0.0
     item["action_valid"] = torch.as_tensor(window)
+    # lerobot 0.6.1 的预处理只保留名字里带 "_is_pad" 的附加键，action_valid 会被丢掉。
+    # 另存一份按手的 pad（1 = 无效），这样能穿过预处理到达 ACT 的 forward。
+    item[HAND_PAD_KEY] = torch.as_tensor(window < 0.5)
     item["action_is_pad"] = torch.as_tensor(action_is_pad_from_valid(window, pad))
     return item
+
+
+HAND_PAD_KEY = "action_hand_is_pad"
 
 
 def _torch_hand_mask(valid, action_dim):
@@ -445,7 +451,10 @@ def _act_forward_masked(policy, batch):
     image_features = getattr(policy.config, "image_features", None)
     if image_features and images_key is not None:
         batch[images_key] = [batch[key] for key in image_features]
-    valid = batch["action_valid"]
+    if "action_valid" in batch:
+        valid = batch["action_valid"]
+    else:
+        valid = (~torch.as_tensor(batch[HAND_PAD_KEY]).bool()).to(dtype=torch.float32)
     if not torch.is_tensor(valid):
         valid = torch.as_tensor(valid, device=batch[action_key].device)
     if valid.ndim == 2:
@@ -522,9 +531,11 @@ def install_act_hand_mask():
     if policy_cls is not None and not getattr(policy_cls, "_egodata_action_valid", False):
         original_forward = policy_cls.forward
 
-        def forward(self, batch):
-            if not isinstance(batch, dict) or "action_valid" not in batch:
-                return original_forward(self, batch)
+        def forward(self, batch, *args, **kwargs):
+            if args or kwargs or not isinstance(batch, dict) or not (
+                "action_valid" in batch or HAND_PAD_KEY in batch
+            ):
+                return original_forward(self, batch, *args, **kwargs)
             try:
                 return _act_forward_masked(self, batch)
             except Exception as exc:
