@@ -27,7 +27,12 @@ def _lerobot_main():
 
 
 def main():
-    installed = ego_act_scaling.install_act_hand_mask()
+    # EGO_ACT_NO_MASK=1：不装掩码，只用于对照实验（缺测步按原样当成「保持不动」监督）。
+    if __import__("os").environ.get("EGO_ACT_NO_MASK") == "1":
+        sys.stderr.write("EGO_ACT_NO_MASK=1：不按 action_valid 屏蔽损失\n")
+        installed = False
+    else:
+        installed = ego_act_scaling.install_act_hand_mask()
     train_main = _lerobot_main()
     if train_main is None:
         command = ego_act_scaling._lerobot_train_command()
