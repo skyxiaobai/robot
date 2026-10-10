@@ -8,7 +8,9 @@
 估计：scripts/egodata/interaction.estimate_interaction，物体位姿和网格用 HOT3D 真值，
   手用 (a) MANO 真值 21 关节，或 (b) 双目管线写出的 episode 关节。
 时间滤波默认开。docs/contact_eval/hot3d_report.json 里的数字是没开滤波跑的，
-复现时加 --no-temporal-filter。开着滤波的重跑还没有。
+复现时加 --no-temporal-filter。开着滤波的重跑在
+docs/contact_eval/hot3d_report_filtered.json。停留时长扫参（不改默认）见
+scripts/dwell.py 和 docs/contact_grasp.md。
 
     python scripts/eval_hot3d_contact.py --clips-dir .../train_quest3 --models models/ \
         --mano /workspace/mano --stereo-episodes run_final/episodes --tune clip-000000 --out out/ \
