@@ -18,6 +18,10 @@
   片段最后一帧没有下一步，直接丢掉。多步目标不摊进这一列：
   线性 BC 把连续 ``horizon`` 帧的 action 拼成一块，ACT 用同样的
   ``chunk_size`` 向后看。保持不动的标签是 dxyz=0、相对四元数 0,0,0,1。
+- ``action_valid`` 形状 (2,)，左手、右手各一个。当前帧和下一帧的手腕
+  都是实测（有限、不是补帧、不是丢掉的标注、置信度不是低于 0.5 的数字）
+  才为 1。缺测仍写入上面的占位增量，但这一位是 0，训练损失不算它。
+  显式的 ``good_frame_mask`` 为 false 时，这一帧两只手都无效。
 - 语言写在 ``task_index``。该帧时刻落在某条 SUBTASK 里就用子任务句子，
   否则用 TASK.instruction。
 
@@ -36,6 +40,12 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from egodata.action_valid import (
+    action_dim_mask,
+    action_valid_flags,
+    chunk_ratio_map,
+    validity_summary,
+)
 from egodata.schema import iter_episode_paths, load_episode
 
 CODEBASE_VERSION = "v3.0"
@@ -246,6 +256,41 @@ def _stats_json(array):
     return {key: np.asarray(value).reshape(-1).tolist() for key, value in raw.items()}
 
 
+def _stats_where(array, mask):
+    """按维只用 mask>=0.5 的行。某一维完全没有有效行时，退回这一维的全部存储值。"""
+    values = np.asarray(array, dtype=np.float64)
+    if values.ndim == 1:
+        values = values.reshape(-1, 1)
+    weights = np.asarray(mask, dtype=np.float64)
+    if weights.shape != values.shape or float(np.min(weights)) >= 1.0 - 1e-8:
+        return _stats(values)
+    width = values.shape[1]
+    mins = np.empty(width)
+    maxs = np.empty(width)
+    means = np.empty(width)
+    stds = np.empty(width)
+    for dim in range(width):
+        chosen = values[weights[:, dim] >= 0.5, dim]
+        if chosen.size == 0:
+            chosen = values[:, dim]
+        mins[dim] = chosen.min()
+        maxs[dim] = chosen.max()
+        means[dim] = chosen.mean()
+        stds[dim] = chosen.std()
+    return {
+        "min": mins,
+        "max": maxs,
+        "mean": means,
+        "std": stds,
+        "count": np.array([int(values.shape[0])]),
+    }
+
+
+def _stats_json_where(array, mask):
+    raw = _stats_where(array, mask)
+    return {key: np.asarray(value).reshape(-1).tolist() for key, value in raw.items()}
+
+
 def _image_stats_json():
     """图像统计量。lerobot 0.6.1 默认用 ImageNet 的 mean/std 覆盖这两项，但键必须先存在。"""
     return {
@@ -341,6 +386,7 @@ def _pack_episode(episode, include_hand):
     states = np.empty((kept, STATE_DIM), dtype=np.float32)
     actions = np.empty((kept, step), dtype=np.float32)
     valids = np.empty((kept, 2), dtype=np.float32)
+    action_valid = np.empty((kept, 2), dtype=np.float32)
     timestamps = np.empty(kept, dtype=np.float32)
     texts = []
     for frame_index in range(kept):
@@ -349,6 +395,7 @@ def _pack_episode(episode, include_hand):
         states[frame_index] = pack_state(episode, frame_index)
         actions[frame_index] = pack_action(episode, frame_index, include_hand=include_hand)
         valids[frame_index] = hand_valid_flags(episode, frame_index)
+        action_valid[frame_index] = action_valid_flags(episode, frame_index)
         timestamps[frame_index] = timestamp
     return {
         "episode_id": episode["episode_id"],
@@ -357,6 +404,7 @@ def _pack_episode(episode, include_hand):
         "state": states,
         "action": actions,
         "valid": valids,
+        "action_valid": action_valid,
         "timestamp": timestamps,
         "text": texts,
     }
@@ -405,6 +453,7 @@ def export_lerobot(
     state_blocks = []
     action_blocks = []
     valid_blocks = []
+    action_valid_blocks = []
     timestamp_blocks = []
     frame_indices = []
     episode_indices = []
@@ -425,6 +474,7 @@ def export_lerobot(
         state_blocks.append(item["state"])
         action_blocks.append(item["action"])
         valid_blocks.append(item["valid"])
+        action_valid_blocks.append(item["action_valid"])
         timestamp_blocks.append(item["timestamp"])
         frame_indices.extend(range(kept))
         episode_indices.extend([episode_index] * kept)
@@ -466,7 +516,9 @@ def export_lerobot(
     states = np.concatenate(state_blocks, axis=0)
     actions = np.concatenate(action_blocks, axis=0)
     valids = np.concatenate(valid_blocks, axis=0)
+    action_valids = np.concatenate(action_valid_blocks, axis=0)
     timestamps = np.concatenate(timestamp_blocks, axis=0)
+    validity = validity_summary(action_valids)
 
     data_path = out_dir / "data" / "chunk-000" / "file-000.parquet"
     data_path.parent.mkdir(parents=True, exist_ok=True)
@@ -474,6 +526,7 @@ def export_lerobot(
         "observation.state": _fixed_list(states, STATE_DIM),
         "observation.hand_valid": _fixed_list(valids, 2),
         "action": _fixed_list(actions, step),
+        "action_valid": _fixed_list(action_valids, 2),
         "timestamp": pa.array(timestamps.astype(np.float32)),
         "frame_index": pa.array(frame_indices, type=pa.int64()),
         "episode_index": pa.array(episode_indices, type=pa.int64()),
@@ -502,7 +555,8 @@ def export_lerobot(
         IMAGE_KEY: _image_stats_json(),
         "observation.state": _stats_json(states),
         "observation.hand_valid": _stats_json(valids),
-        "action": _stats_json(actions),
+        "action": _stats_json_where(actions, action_dim_mask(action_valids, step)),
+        "action_valid": _stats_json(action_valids),
         "timestamp": _stats_json(timestamps),
     }
     (out_dir / "meta" / "stats.json").write_text(
@@ -526,6 +580,7 @@ def export_lerobot(
         "observation.state": _feature("float32", (STATE_DIM,), fps=fps),
         "observation.hand_valid": _feature("float32", (2,), fps=fps),
         "action": _feature("float32", (step,), fps=fps),
+        "action_valid": _feature("float32", (2,), names=["left", "right"], fps=fps),
         "timestamp": _feature("float32", (1,), fps=fps),
         "frame_index": _feature("int64", (1,), fps=fps),
         "episode_index": _feature("int64", (1,), fps=fps),
@@ -569,6 +624,17 @@ def export_lerobot(
         "image_source": image_source,
         "video_size": None if image_source != "source_mp4" else video_size,
         "confidence": "缺失的手腕置信度视为未知，不把关节置 0",
+        "action_valid_doc": (
+            "action_valid[左, 右] 为 1 时，这一步该手的增量来自实测手腕："
+            "当前帧和下一帧都有限、不是 filled、逐帧标注不是丢掉的状态、"
+            "置信度不是低于 0.5 的数字。episode 上若有 good_frame_mask，"
+            "false 的帧两只手都为 0。占位的保持不动仍然写在 action 里。"
+        ),
+        "valid_action_ratio": validity["valid_action_ratio"],
+        "valid_full_chunk_ratio": {
+            str(length): validity["valid_full_chunk_ratio_%d" % length]
+            for length in (16, 50, 100)
+        },
     }
     (out_dir / "meta" / "egodata_export.json").write_text(
         json.dumps(note, ensure_ascii=False, indent=2), encoding="utf-8",
@@ -580,4 +646,8 @@ def export_lerobot(
         "out": str(out_dir),
         "horizon": horizon,
         "action_step_dim": step,
+        "valid_action_ratio": validity["valid_action_ratio"],
+        "valid_action_count": validity["valid_action_count"],
+        "action_count": validity["action_count"],
+        "valid_full_chunk_ratio": chunk_ratio_map(validity),
     }
