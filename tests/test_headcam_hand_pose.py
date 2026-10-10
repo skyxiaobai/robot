@@ -27,6 +27,13 @@ from headcam.hand_pose import (  # noqa: E402
     HaMeRBackend,
     MediaPipeHandsBackend,
     WiLoRBackend,
+    allow_official_torch_load,
+    apply_mano_model_dir,
+    cam_crop_to_full,
+    install_pyrender_stub,
+    intrinsics_for_crop,
+    link_mano_data,
+    load_checkpoint_without_renderer,
     apply_scale,
     associate_camera_poses,
     choose_mediapipe_api,
@@ -1018,6 +1025,250 @@ class ColabEgoDexEvalNotebookTest(unittest.TestCase):
         self.assertIn("双目", prose)
         self.assertIn("Hand", prose)
         self.assertIn("libGLESv2", prose)
+
+
+def _upstream_cam_crop(cam_bbox, box_center, box_size, img_size, focal_length):
+    """HaMeR / WiLoR renderer.cam_crop_to_full 的 numpy 对照，主点固定在图像中心。"""
+    image = np.asarray(img_size, dtype=np.float64)
+    cam = np.asarray(cam_bbox, dtype=np.float64)
+    center = np.asarray(box_center, dtype=np.float64)
+    size = np.asarray(box_size, dtype=np.float64).reshape(-1)
+    img_w, img_h = image[:, 0], image[:, 1]
+    cx, cy = center[:, 0], center[:, 1]
+    w_2, h_2 = img_w / 2.0, img_h / 2.0
+    bs = size * cam[:, 0] + 1e-9
+    tz = 2.0 * focal_length / bs
+    tx = (2.0 * (cx - w_2) / bs) + cam[:, 1]
+    ty = (2.0 * (cy - h_2) / bs) + cam[:, 2]
+    return np.stack([tx, ty, tz], axis=-1)
+
+
+class _CfgNode:
+    def __init__(self, **values):
+        self.__dict__.update(values)
+        self._frozen = True
+
+    def defrost(self):
+        self._frozen = False
+
+    def freeze(self):
+        self._frozen = True
+
+
+class CropCameraIntrinsicsTest(unittest.TestCase):
+    def test_centered_single_focal_matches_upstream(self):
+        cam = np.array([[1.2, 0.1, -0.2], [0.8, -0.3, 0.4]], dtype=np.float64)
+        center = np.array([[400.0, 300.0], [1000.0, 700.0]], dtype=np.float64)
+        box = np.array([200.0, 180.0], dtype=np.float64)
+        image = np.array([[1920.0, 1080.0], [1920.0, 1080.0]], dtype=np.float64)
+        got = cam_crop_to_full(cam, center, box, image, focal_length=5000.0)
+        expected = _upstream_cam_crop(cam, center, box, image, 5000.0)
+        np.testing.assert_allclose(got, expected, rtol=0, atol=0)
+
+    def test_real_focal_scales_wrist_depth_against_virtual_37500(self):
+        # scale=15、框宽 200 时 bs≈3000，虚拟焦距 37500 的 tz 正好约 25 m。
+        cam = np.array([[15.0, 0.1, -0.2]], dtype=np.float64)
+        center = np.array([[400.0, 300.0]], dtype=np.float64)
+        box = np.array([200.0], dtype=np.float64)
+        image = np.array([[1920.0, 1080.0]], dtype=np.float64)
+        virtual_focal = 5000.0 / 256.0 * 1920.0
+        self.assertAlmostEqual(virtual_focal, 37500.0)
+        virtual = cam_crop_to_full(cam, center, box, image, focal_length=virtual_focal)
+        real = cam_crop_to_full(
+            cam, center, box, image, focal_length=736.6, principal_point=(960.0, 540.0), focal_y=736.6,
+        )
+        self.assertAlmostEqual(virtual[0, 2] / real[0, 2], virtual_focal / 736.6)
+        np.testing.assert_allclose(virtual[0, :2], real[0, :2], rtol=0, atol=1e-9)
+        self.assertAlmostEqual(virtual[0, 2], 25.0, places=3)
+        self.assertLess(real[0, 2], 1.0)
+
+    def test_principal_point_shifts_translation_but_not_depth(self):
+        cam = np.array([[1.2, 0.1, -0.2]], dtype=np.float64)
+        center = np.array([[40.0, 30.0]], dtype=np.float64)
+        box = np.array([200.0], dtype=np.float64)
+        image = np.array([[100.0, 80.0]], dtype=np.float64)
+        centered = cam_crop_to_full(cam, center, box, image, focal_length=736.6)
+        shifted = cam_crop_to_full(
+            cam, center, box, image, focal_length=736.6, principal_point=(60.0, 30.0), focal_y=700.0,
+        )
+        bs = 200.0 * 1.2 + 1e-9
+        # 图像中心是 (50, 40)。主点改到 (60, 30) 后 tx/ty 变，tz 仍只由 fx 决定。
+        self.assertAlmostEqual(shifted[0, 0] - centered[0, 0], 2.0 * (50.0 - 60.0) / bs)
+        self.assertAlmostEqual(centered[0, 1], (2.0 * (30.0 - 40.0) / bs) + cam[0, 2])
+        self.assertAlmostEqual(shifted[0, 1], (2.0 * (736.6 / 700.0) * (30.0 - 30.0) / bs) + cam[0, 2])
+        self.assertAlmostEqual(shifted[0, 0], (2.0 * (40.0 - 60.0) / bs) + cam[0, 1])
+        self.assertAlmostEqual(shifted[0, 2], centered[0, 2])
+        self.assertNotAlmostEqual(shifted[0, 0], centered[0, 0], places=3)
+        self.assertNotAlmostEqual(shifted[0, 1], centered[0, 1], places=3)
+
+    def test_camera_joints_read_principal_point_from_k(self):
+        backend = WiLoRBackend()
+        joints = np.zeros((21, 3), dtype=np.float64)
+        translation = np.array([0.1, -0.05, 0.5], dtype=np.float64)
+        _, keypoints = backend._camera_joints(
+            joints, 1.0, translation, 736.6, (1080, 1920), principal_point=(900.0, 400.0), focal_y=700.0,
+        )
+        self.assertAlmostEqual(keypoints[0, 0], 736.6 * (0.1 / 0.5) + 900.0)
+        self.assertAlmostEqual(keypoints[0, 1], 700.0 * (-0.05 / 0.5) + 400.0)
+        _, centered = backend._camera_joints(joints, 1.0, translation, 736.6, (1080, 1920))
+        self.assertAlmostEqual(centered[0, 0], 736.6 * (0.1 / 0.5) + 960.0)
+        self.assertAlmostEqual(centered[0, 1], 736.6 * (-0.05 / 0.5) + 540.0)
+
+    def test_missing_calibration_keeps_scaled_focal_and_image_center(self):
+        cfg = _CfgNode()
+        cfg.EXTRA = _CfgNode(FOCAL_LENGTH=5000.0)
+        cfg.MODEL = _CfgNode(IMAGE_SIZE=256.0)
+        image = np.array([[1920.0, 1080.0]])
+        fx, fy, principal = intrinsics_for_crop(None, image, cfg)
+        self.assertAlmostEqual(fx, 37500.0)
+        self.assertAlmostEqual(fy, 37500.0)
+        self.assertIsNone(principal)
+        matrix = np.array([[736.6, 0.0, 900.0], [0.0, 700.0, 400.0], [0.0, 0.0, 1.0]])
+        fx, fy, principal = intrinsics_for_crop({"K_left": matrix}, image, cfg)
+        self.assertAlmostEqual(fx, 736.6)
+        self.assertAlmostEqual(fy, 700.0)
+        self.assertEqual(principal, (900.0, 400.0))
+
+    def test_source_does_not_import_the_renderer_module(self):
+        source = Path(hand_pose.__file__).read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"(from|import)\s+[A-Za-z0-9_\.]+\.renderer\b", source))
+        self.assertIsNone(re.search(r"^\s*(import pyrender|from pyrender)\b", source, re.MULTILINE))
+
+
+class OfficialWeightsAndManoPathTest(unittest.TestCase):
+    def test_weights_only_false_is_limited_to_official_files(self):
+        class FakeTorch:
+            def __init__(self):
+                self.calls = []
+
+            def load(self, source, *args, **kwargs):
+                self.calls.append(kwargs.get("weights_only", "UNSET"))
+                return {"ok": True}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            official = root / "wilor_final.ckpt"
+            other = root / "elsewhere.ckpt"
+            official.write_bytes(b"ckpt")
+            other.write_bytes(b"other")
+            torch_mod = FakeTorch()
+            with allow_official_torch_load([official], torch_module=torch_mod):
+                torch_mod.load(str(official), map_location="cpu")
+                torch_mod.load(os.fspath(other))
+                with official.open("rb") as handle:
+                    torch_mod.load(handle)
+            torch_mod.load(str(official))
+        self.assertEqual(torch_mod.calls, [False, "UNSET", False, "UNSET"])
+
+    def test_mano_model_dir_overrides_config_and_links_without_clobber(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mano = root / "mano"
+            mano.mkdir()
+            (mano / "MANO_RIGHT.pkl").write_bytes(b"not a real model")
+            (mano / "mano_mean_params.npz").write_bytes(b"mean")
+            work = root / "work"
+            work.mkdir()
+            previous = os.environ.get("MANO_MODEL_DIR")
+            cwd = os.getcwd()
+            os.environ["MANO_MODEL_DIR"] = str(mano)
+            try:
+                os.chdir(work)
+                link = link_mano_data()
+                self.assertTrue(link.is_symlink())
+                self.assertEqual(link.resolve(), mano.resolve())
+                again = link_mano_data()
+                self.assertEqual(os.path.realpath(again), str(mano.resolve()))
+                cfg = _CfgNode()
+                cfg.MANO = _CfgNode(
+                    DATA_DIR="./mano_data/",
+                    MODEL_PATH="./mano_data/",
+                    MEAN_PARAMS="./mano_data/mano_mean_params.npz",
+                )
+                apply_mano_model_dir(cfg)
+                self.assertEqual(cfg.MANO.DATA_DIR, str(mano.resolve()))
+                self.assertEqual(cfg.MANO.MODEL_PATH, str(mano.resolve()))
+                self.assertEqual(cfg.MANO.MEAN_PARAMS, str((mano / "mano_mean_params.npz").resolve()))
+                self.assertTrue(cfg._frozen)
+                seen = {}
+
+                def fake_load(*args, **kwargs):
+                    seen["args"] = args
+                    seen["kwargs"] = kwargs
+                    return "model"
+
+                loaded = load_checkpoint_without_renderer(
+                    fake_load, "ckpt", strict=False, cfg=cfg, init_renderer=True,
+                )
+                self.assertEqual(loaded, "model")
+                self.assertFalse(seen["kwargs"]["init_renderer"])
+                self.assertIs(seen["kwargs"]["cfg"], cfg)
+            finally:
+                os.chdir(cwd)
+                if previous is None:
+                    os.environ.pop("MANO_MODEL_DIR", None)
+                else:
+                    os.environ["MANO_MODEL_DIR"] = previous
+            occupied = root / "occupied"
+            occupied.mkdir()
+            (occupied / "mano_data").mkdir()
+            (occupied / "mano_data" / "keep.txt").write_text("keep", encoding="utf-8")
+            os.environ["MANO_MODEL_DIR"] = str(mano)
+            cwd = os.getcwd()
+            try:
+                os.chdir(occupied)
+                kept = link_mano_data()
+                self.assertFalse(kept.is_symlink())
+                self.assertEqual((kept / "keep.txt").read_text(encoding="utf-8"), "keep")
+            finally:
+                os.chdir(cwd)
+                os.environ.pop("MANO_MODEL_DIR", None)
+
+    def test_pyrender_stub_covers_renderer_import_surface(self):
+        import sys
+        saved = sys.modules.pop("pyrender", None)
+        try:
+            install_pyrender_stub()
+            import pyrender
+            flags = pyrender.RenderFlags.RGBA
+            node = pyrender.Node(light=pyrender.DirectionalLight(color=np.ones(3), intensity=1.0), matrix=np.eye(4))
+            self.assertEqual(flags, 1)
+            self.assertIsNotNone(node)
+            self.assertTrue(callable(pyrender.OffscreenRenderer))
+        finally:
+            sys.modules.pop("pyrender", None)
+            if saved is not None:
+                sys.modules["pyrender"] = saved
+
+    def test_install_notes_name_packages_and_wilor_on_colab_gpu(self):
+        license_text = hand_pose.MANO_LICENSE
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        spec = (ROOT / "docs" / "headcam_data_spec.md").read_text(encoding="utf-8")
+        notebook = json.loads((ROOT / "notebooks" / "headcam_hand_pose_colab.ipynb").read_text(encoding="utf-8"))
+        gpu_markdown = ""
+        for cell in notebook["cells"]:
+            source = "".join(cell["source"])
+            if cell["cell_type"] == "markdown" and "37500" in source:
+                gpu_markdown = source
+                break
+        gpu_code = ""
+        for cell in notebook["cells"]:
+            source = "".join(cell["source"])
+            if "INSTALL_WILOR" in source:
+                gpu_code = source
+                break
+        combined = "\n".join([license_text, readme, spec, gpu_markdown, gpu_code])
+        self.assertIn("ultralytics==8.1.34", combined)
+        self.assertIn("chumpy", combined)
+        self.assertTrue("no-build-isolation" in combined or "--no-build-isolation" in combined)
+        self.assertIn("pyrender", combined)
+        self.assertIn("detectron2", combined)
+        self.assertIn("mmcv", combined)
+        self.assertIn("Colab", license_text)
+        self.assertIn("WiLoR", gpu_markdown)
+        self.assertIn("37500", gpu_markdown)
+        self.assertIn("wilor", gpu_code)
+        self.assertNotIn('HEADCAM_BACKEND", "hamer"', gpu_code)
 
 
 if __name__ == "__main__":

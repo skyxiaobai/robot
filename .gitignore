@@ -38,4 +38,6 @@ __pycache__/
 /models/wilor/
 MANO_RIGHT.pkl
 MANO_LEFT.pkl
+# WiLoR 加载时可能在当前目录留下指向 MANO_MODEL_DIR 的链接
+mano_data
 /outputs/headcam_demo/

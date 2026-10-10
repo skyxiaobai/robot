@@ -55,7 +55,7 @@ python scripts/ego_visualize.py traj3d \
     --out outputs/open_data_demo/viz/traj3d.png
 ```
 
-自有头戴会话（设备还没有，目录见规格 §7.7）收成同一份 JSON。有 `hands.json` 和标定时会做双目尺度校正；`--backend mediapipe` 在 CPU 上跑，HaMeR / WiLoR 需要仓库外的 MANO 权重。MediaPipe 单目手腕深度只是先验（默认 0.55 m），公制深度要靠双目。`mediapipe>=0.10.30` 用 Tasks `HandLandmarker`；无头环境若缺 `libEGL` / `libGLESv2`，先装系统库，推理再用 CPU delegate。和 EgoDex 比的时候，`Hand` / `ThumbKnuckle` 不是 MediaPipe 的腕点和拇指 CMC，可以用 `EGODEX_NONCORRESPONDING_JOINTS` 排除。
+自有头戴会话（设备还没有，目录见规格 §7.7）收成同一份 JSON。有 `hands.json` 和标定时会做双目尺度校正；`--backend mediapipe` 在 CPU 上跑，HaMeR / WiLoR 需要仓库外的 MANO 权重。MediaPipe 单目手腕深度只是先验（默认 0.55 m），公制深度要靠双目。`mediapipe>=0.10.30` 用 Tasks `HandLandmarker`；无头环境若缺 `libEGL` / `libGLESv2`，先装系统库，推理再用 CPU delegate。和 EgoDex 比的时候，`Hand` / `ThumbKnuckle` 不是 MediaPipe 的腕点和拇指 CMC，可以用 `EGODEX_NONCORRESPONDING_JOINTS` 排除。WiLoR / HaMeR 的 `predict` 要传入 `calib['K_left']` 的 fx、fy 和主点；不传时虚拟焦距约 37500 px（1920 宽），手腕深度不是米。Colab GPU 上优先用 WiLoR。安装见 `hand_pose.MANO_LICENSE`：`ultralytics==8.1.34`、`pip install --no-build-isolation chumpy`；pyrender 只用于可视化。HaMeR 还要编译 detectron2 和 mmcv。
 
 ```bash
 python scripts/convert_headcam.py --session /path/to/session --out outputs/headcam/episode.json

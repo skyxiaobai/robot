@@ -8,6 +8,14 @@ MANO 是马普所的非商业学术许可，权重不能放进这个仓库。拿
 能跑，不需要 MANO。单目三维不是公制相机系，默认只把手腕放在 0.55 m 的
 深度先验上；公制尺度要靠双目三角化。
 
+HaMeR / WiLoR 把 crop 相机变到全图时要用 ``calib['K_left']`` 的 fx、fy 和主点。
+不传内参时仍用虚拟焦距 ``EXTRA.FOCAL_LENGTH / MODEL.IMAGE_SIZE * max(宽, 高)``
+（1920 宽时约 37500 px），手腕会落到几十米，不是米制深度。``cam_crop_to_full``
+在本文件实现。不要导入 ``hamer.utils.renderer`` / ``wilor.utils.renderer``：
+它们会 ``import pyrender`` 并设置 EGL。模型默认 ``init_renderer=True``
+（``wilor/models/wilor.py``、``hamer/models/hamer.py``）会构造
+``MeshRenderer``，无头环境在这里失败；加载时传 ``init_renderer=False``。
+
 mediapipe>=0.10.30 去掉了 ``mp.solutions``。后端改用 Tasks ``HandLandmarker``
 （下载 ``hand_landmarker.task``）。无头环境可能缺 libEGL / libGLESv2：原生库
 在导入时就会加载它们，CPU delegate 只决定推理不走 GPU。旧的
@@ -41,6 +49,26 @@ export WILOR_CHECKPOINT=/绝对路径/wilor_final.ckpt
 export WILOR_DETECTOR=/绝对路径/detector.pt
 export WILOR_CONFIG=/绝对路径/model_config.yaml
 安装可以是官方仓库，或较轻的 pip install "git+https://github.com/warmshao/WiLoR-mini"。
+WiLoR 还要：
+    pip install ultralytics==8.1.34
+    pip install --no-build-isolation chumpy
+pyrender 只用于网格可视化，推理不需要。无头环境不要导入 renderer（本模块已本地实现
+cam_crop_to_full，并传 init_renderer=False）。没有 pyrender 时会放一个空模块，避免导入失败。
+请在 Colab GPU 上跑 WiLoR。CPU 大约一秒一帧。
+
+HaMeR 还要编译 detectron2，以及 ViTPose 用的 mmcv（常见是 mmcv==1.3.9）。这两步需要 C++ 编译器，
+CPU 上更慢，不作为默认。
+
+WiLoR 的 load_wilor 会把 MANO 路径改成相对当前目录的 ./mano_data/。本模块再用 MANO_MODEL_DIR
+的绝对路径覆盖 DATA_DIR、MODEL_PATH，以及同目录下的 mano_mean_params.npz（WiLoR 自带，不在 MANO
+压缩包里）。当前目录还没有 mano_data 时会做符号链接，已有目录或链接不覆盖。不要把这个链接提交进仓库。
+
+PyTorch>=2.6 的 torch.load 默认 weights_only=True，官方 checkpoint 和 YOLO detector 会加载失败。
+本模块只对 WILOR_CHECKPOINT、WILOR_DETECTOR、HAMER_CHECKPOINT 这三个环境变量指向的官方文件
+使用 weights_only=False，不放宽其他路径。
+
+传入 predict(..., calib={"K_left": K}) 时，crop 相机用 K 的 fx、fy 和主点 (cx, cy)。
+不传 K 时虚拟焦距约 37500 px（1920 宽），手腕深度不是米。
 官方 demo 跑完后，把每帧 21 点写成 hands.json，交给 scripts/convert_headcam.py，
 同样不需要把权重放进仓库。
 """.strip()
@@ -995,7 +1023,9 @@ class _ManoFamilyBackend(HandPoseBackend):
         self._detector = None
         self._device = None
 
-    def _camera_joints(self, joints, is_right, cam_translation, focal, image_shape):
+    def _camera_joints(
+        self, joints, is_right, cam_translation, focal, image_shape, principal_point=None, focal_y=None,
+    ):
         joints = np.asarray(joints, dtype=np.float64)
         if joints.shape[0] < JOINTS or joints.shape[-1] != 3:
             raise RuntimeError("模型没有给出 21 个三维关节")
@@ -1003,9 +1033,15 @@ class _ManoFamilyBackend(HandPoseBackend):
         joints[:, 0] *= (2.0 * float(is_right) - 1.0)
         joints_cam = joints + np.asarray(cam_translation, dtype=np.float64).reshape(1, 3)
         height, width = image_shape[:2]
+        fx = float(focal)
+        fy = fx if focal_y is None else float(focal_y)
+        if principal_point is None:
+            cx, cy = width / 2.0, height / 2.0
+        else:
+            cx, cy = float(principal_point[0]), float(principal_point[1])
         intrinsic = np.array([
-            [float(focal), 0.0, width / 2.0],
-            [0.0, float(focal), height / 2.0],
+            [fx, 0.0, cx],
+            [0.0, fy, cy],
             [0.0, 0.0, 1.0],
         ])
         keypoints = project_pinhole(joints_cam, intrinsic)
@@ -1018,6 +1054,267 @@ def _scaled_focal(model_cfg, img_size):
     else:
         values = np.asarray(img_size)
     return float(model_cfg.EXTRA.FOCAL_LENGTH) / float(model_cfg.MODEL.IMAGE_SIZE) * float(np.max(values))
+
+
+def _as_numpy(value):
+    if hasattr(value, "detach"):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
+
+
+def cam_crop_to_full(
+    cam_bbox, box_center, box_size, img_size, focal_length=5000.0, principal_point=None, focal_y=None,
+):
+    """crop 相机 ``(scale, tx, ty)`` 变到全图相机平移。
+
+    ``principal_point is None`` 且 ``focal_y is None`` 时与 HaMeR / WiLoR
+    ``utils.renderer.cam_crop_to_full`` 一致：主点在每行图像中心，单一焦距。
+    传入标定时 ``focal_length`` 是 fx，``focal_y`` 是 fy，主点是 K 的 ``(cx, cy)``。
+    ty 按 fx/fy 缩放；两者相等时与上游公式相同。不导入 renderer，避免 pyrender / EGL。
+    """
+    cam = np.asarray(_as_numpy(cam_bbox), dtype=np.float64)
+    center = np.asarray(_as_numpy(box_center), dtype=np.float64)
+    size = np.asarray(_as_numpy(box_size), dtype=np.float64).reshape(-1)
+    image = np.asarray(_as_numpy(img_size), dtype=np.float64)
+    if cam.ndim == 1:
+        cam = cam.reshape(1, -1)
+    if center.ndim == 1:
+        center = center.reshape(1, -1)
+    if image.ndim == 1:
+        image = image.reshape(1, -1)
+    img_w, img_h = image[:, 0], image[:, 1]
+    cx, cy = center[:, 0], center[:, 1]
+    if principal_point is None:
+        px = img_w / 2.0
+        py = img_h / 2.0
+    else:
+        principal = np.asarray(_as_numpy(principal_point), dtype=np.float64).reshape(-1)
+        px = np.full(cam.shape[0], float(principal[0]))
+        py = np.full(cam.shape[0], float(principal[1]))
+    fx = float(focal_length)
+    fy = fx if focal_y is None else float(focal_y)
+    bs = size * cam[:, 0] + 1e-9
+    tz = 2.0 * fx / bs
+    tx = (2.0 * (cx - px) / bs) + cam[:, 1]
+    ty = (2.0 * (fx / fy) * (cy - py) / bs) + cam[:, 2]
+    return np.stack([tx, ty, tz], axis=-1)
+
+
+def intrinsics_for_crop(calib, img_size, model_cfg):
+    """有 ``K_left`` 时返回 fx、fy 和主点；否则用虚拟焦距，主点留给图像中心。"""
+    if calib is not None and calib.get("K_left") is not None:
+        matrix = np.asarray(calib["K_left"], dtype=np.float64)
+        return float(matrix[0, 0]), float(matrix[1, 1]), (float(matrix[0, 2]), float(matrix[1, 2]))
+    focal = _scaled_focal(model_cfg, img_size)
+    return focal, focal, None
+
+
+def _full_camera_from_batch(pred_cam, batch, model_cfg, calib):
+    img_size = batch["img_size"].float() if hasattr(batch["img_size"], "float") else batch["img_size"]
+    box_center = batch["box_center"].float() if hasattr(batch["box_center"], "float") else batch["box_center"]
+    box_size = batch["box_size"].float() if hasattr(batch["box_size"], "float") else batch["box_size"]
+    fx, fy, principal = intrinsics_for_crop(calib, img_size, model_cfg)
+    cam_full = cam_crop_to_full(
+        pred_cam, box_center, box_size, img_size, focal_length=fx, principal_point=principal, focal_y=fy,
+    )
+    return cam_full, fx, fy, principal
+
+
+def recursive_to(value, target):
+    """把 batch 里的张量送到设备。不从 ``wilor.utils`` / ``hamer.utils`` 导入，以免带上 renderer。"""
+    if isinstance(value, dict):
+        return {key: recursive_to(item, target) for key, item in value.items()}
+    if isinstance(value, list):
+        return [recursive_to(item, target) for item in value]
+    if hasattr(value, "to") and hasattr(value, "detach"):
+        return value.to(target)
+    return value
+
+
+_OFFICIAL_WEIGHT_ENVS = ("WILOR_CHECKPOINT", "WILOR_DETECTOR", "HAMER_CHECKPOINT")
+
+
+def official_weight_paths():
+    found = set()
+    for name in _OFFICIAL_WEIGHT_ENVS:
+        value = os.environ.get(name)
+        if value:
+            found.add(os.path.realpath(value))
+    return found
+
+
+def _torch_load_path(source):
+    if isinstance(source, (str, os.PathLike)):
+        return os.fspath(source)
+    name = getattr(source, "name", None)
+    if isinstance(name, str) and name and not name.startswith("<"):
+        return name
+    return None
+
+
+class _OfficialTorchLoad:
+    def __init__(self, torch_module, allowed):
+        self._torch = torch_module
+        self._allowed = allowed
+        self._original = torch_module.load
+
+    def __enter__(self):
+        allowed = self._allowed
+        original = self._original
+
+        def load(source, *args, **kwargs):
+            path = _torch_load_path(source)
+            if path is not None and os.path.realpath(path) in allowed:
+                kwargs = dict(kwargs)
+                kwargs["weights_only"] = False
+            return original(source, *args, **kwargs)
+
+        self._torch.load = load
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._torch.load = self._original
+        return False
+
+
+def allow_official_torch_load(paths=None, torch_module=None):
+    """只对官方权重文件调用 ``torch.load(..., weights_only=False)``。
+
+    PyTorch>=2.6 默认 ``weights_only=True``。Lightning 读 checkpoint、ultralytics
+    读 YOLO ``.pt`` 会因此失败。这里不改全局默认，也不放宽名单以外的文件。
+    默认名单是 ``WILOR_CHECKPOINT``、``WILOR_DETECTOR``、``HAMER_CHECKPOINT``
+    的真实路径。这些文件来自 WiLoR / HaMeR 的官方发布。
+    """
+    if torch_module is None:
+        import torch
+        torch_module = torch
+    if paths is None:
+        allowed = official_weight_paths()
+    else:
+        allowed = {os.path.realpath(path) for path in paths}
+    return _OfficialTorchLoad(torch_module, allowed)
+
+
+def apply_mano_model_dir(cfg):
+    """把配置里的 MANO 路径改成 ``MANO_MODEL_DIR`` 的绝对路径。"""
+    mano_dir = os.environ.get("MANO_MODEL_DIR")
+    if not mano_dir or not hasattr(cfg, "MANO"):
+        return cfg
+    root = Path(mano_dir).resolve()
+    defrost = getattr(cfg, "defrost", None)
+    freeze = getattr(cfg, "freeze", None)
+    if defrost is not None:
+        defrost()
+    mano = cfg.MANO
+    mano.DATA_DIR = str(root)
+    mano.MODEL_PATH = str(root)
+    mean = root / "mano_mean_params.npz"
+    if mean.is_file() and hasattr(mano, "MEAN_PARAMS"):
+        mano.MEAN_PARAMS = str(mean)
+    if freeze is not None:
+        freeze()
+    return cfg
+
+
+def link_mano_data():
+    """当前目录没有 ``mano_data`` 时，链到 ``MANO_MODEL_DIR``。已有路径不覆盖。
+
+    WiLoR 的 ``load_wilor`` 会把路径写成 ``./mano_data/``。配置覆盖负责绝对路径；
+    这条链接留给仍按相对路径打开文件的代码。不要把链接提交进仓库。
+    """
+    mano_dir = os.environ.get("MANO_MODEL_DIR")
+    if not mano_dir:
+        return None
+    root = Path(mano_dir).resolve()
+    link = Path.cwd() / "mano_data"
+    if link.exists() or link.is_symlink():
+        return link
+    link.symlink_to(root, target_is_directory=True)
+    return link
+
+
+def load_checkpoint_without_renderer(load_from_checkpoint, *args, **kwargs):
+    """传 ``init_renderer=False``，并在构造模型前写上 MANO 绝对路径。"""
+    kwargs = dict(kwargs)
+    kwargs["init_renderer"] = False
+    cfg = kwargs.get("cfg")
+    if cfg is not None:
+        apply_mano_model_dir(cfg)
+    return load_from_checkpoint(*args, **kwargs)
+
+
+def _call_without_renderer(model_cls, loader, *args, **kwargs):
+    original = model_cls.load_from_checkpoint
+
+    def wrapped(*w_args, **w_kwargs):
+        return load_checkpoint_without_renderer(original, *w_args, **w_kwargs)
+
+    model_cls.load_from_checkpoint = wrapped
+    try:
+        return loader(*args, **kwargs)
+    finally:
+        model_cls.load_from_checkpoint = original
+
+
+def install_pyrender_stub():
+    """放入最小的 pyrender，让 wilor/hamer 能导入 renderer 模块。
+
+    ``wilor/models/wilor.py`` 和 ``hamer/models/hamer.py`` 在导入时执行
+    ``from ..utils import SkeletonRenderer, MeshRenderer``，``utils/__init__.py``
+    再导入 renderer。推理不实例化它们：``init_renderer=False`` 跳过
+    ``MeshRenderer`` 里的 ``OffscreenRenderer``（那个构造需要 EGL）。
+    本桩不能画网格。需要可视化时再安装真正的 pyrender。
+    """
+    import sys
+    import types
+    stub = types.ModuleType("pyrender")
+
+    class _OffscreenRenderer:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("pyrender 未安装。手部推理不需要渲染器；需要网格可视化时再安装 pyrender。")
+
+        def render(self, *args, **kwargs):
+            raise RuntimeError("pyrender 未安装")
+
+        def delete(self):
+            return None
+
+    class _RenderFlags:
+        RGBA = 1
+        SHADOWS_ALL = 2
+
+    def _factory(*args, **kwargs):
+        return types.SimpleNamespace()
+
+    stub.OffscreenRenderer = _OffscreenRenderer
+    stub.MetallicRoughnessMaterial = _factory
+    stub.Mesh = types.SimpleNamespace(from_trimesh=_factory)
+    stub.Node = _factory
+    stub.Scene = _factory
+    stub.IntrinsicsCamera = _factory
+    stub.DirectionalLight = _factory
+    stub.PointLight = _factory
+    stub.RenderFlags = _RenderFlags
+    stub._hand_pose_stub = True
+    sys.modules["pyrender"] = stub
+    return stub
+
+
+def ensure_pyrender_importable():
+    """pyrender 缺失或无头 EGL 导入失败时安装空模块。已成功导入则不动。"""
+    import sys
+    existing = sys.modules.get("pyrender")
+    if existing is not None and not getattr(existing, "_hand_pose_stub", False):
+        return False
+    try:
+        __import__("pyrender")
+    except Exception:
+        for name in list(sys.modules):
+            if name == "pyrender" or name.startswith("pyrender."):
+                sys.modules.pop(name, None)
+        install_pyrender_stub()
+        return True
+    return False
 
 
 class HaMeRBackend(_ManoFamilyBackend):
@@ -1037,7 +1334,7 @@ class HaMeRBackend(_ManoFamilyBackend):
         if missing:
             raise RuntimeError(MANO_LICENSE + "\n\nHaMeR 现在跑不了，缺少：\n- " + "\n- ".join(missing))
         try:
-            return self._predict(image_rgb)
+            return self._predict(image_rgb, calib)
         except Exception as exc:
             if isinstance(exc, RuntimeError) and str(exc).startswith(MANO_LICENSE[:12]):
                 raise
@@ -1046,13 +1343,11 @@ class HaMeRBackend(_ManoFamilyBackend):
                 "\n%s" % (exc, MANO_LICENSE)
             )
 
-    def _predict(self, image_rgb):
+    def _predict(self, image_rgb, calib=None):
         self._ensure()
         import cv2
         import torch
         from hamer.datasets.vitdet_dataset import ViTDetDataset
-        from hamer.utils import recursive_to
-        from hamer.utils.renderer import cam_crop_to_full
 
         image = np.asarray(image_rgb)
         if image.dtype != np.uint8:
@@ -1074,13 +1369,12 @@ class HaMeRBackend(_ManoFamilyBackend):
             multiplier = (2 * batch["right"] - 1)
             pred_cam = out["pred_cam"]
             pred_cam[:, 1] = multiplier * pred_cam[:, 1]
-            img_size = batch["img_size"].float()
-            focal = _scaled_focal(self._cfg, img_size)
-            cam_full = cam_crop_to_full(
-                pred_cam, batch["box_center"].float(), batch["box_size"].float(), img_size, focal,
-            ).detach().cpu().numpy()
+            cam_full, focal, focal_y, principal = _full_camera_from_batch(pred_cam, batch, self._cfg, calib)
             count = cam_full.shape[0]
-            _fill_prediction(prediction, self, out, batch, cam_full, focal, scores[cursor:cursor + count])
+            _fill_prediction(
+                prediction, self, out, batch, cam_full, focal, scores[cursor:cursor + count],
+                focal_y=focal_y, principal_point=principal,
+            )
             cursor += count
         return prediction
 
@@ -1088,12 +1382,16 @@ class HaMeRBackend(_ManoFamilyBackend):
         if self._model is not None:
             return
         import torch
-        from hamer.models import load_hamer
+        ensure_pyrender_importable()
+        link_mano_data()
         from hamer.utils.utils_detectron2 import DefaultPredictor_Lazy
         from vitpose_model import ViTPoseModel
+        from hamer.models import load_hamer
+        from hamer.models.hamer import HAMER
 
         checkpoint = os.environ["HAMER_CHECKPOINT"]
-        self._model, self._cfg = load_hamer(checkpoint)
+        with allow_official_torch_load(torch_module=torch):
+            self._model, self._cfg = _call_without_renderer(HAMER, load_hamer, checkpoint)
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._model = self._model.to(self._device)
         self._model.eval()
@@ -1135,16 +1433,18 @@ def _hamer_detector(predictor_cls):
     return predictor_cls(detectron_cfg)
 
 
-def _fill_prediction(prediction, backend, out, batch, cam_full, focal, scores):
+def _fill_prediction(prediction, backend, out, batch, cam_full, focal, scores, focal_y=None, principal_point=None):
     joints_batch = out["pred_keypoints_3d"].detach().cpu().numpy()
     rights = batch["right"].detach().cpu().numpy()
     width_height = batch["img_size"].detach().cpu().numpy()
     detections = []
     for index in range(joints_batch.shape[0]):
         image_shape = (int(width_height[index][1]), int(width_height[index][0]))
+        focal_here = focal if np.ndim(focal) == 0 else focal[index]
+        fy_here = None if focal_y is None else (focal_y if np.ndim(focal_y) == 0 else focal_y[index])
         joints_cam, keypoints = backend._camera_joints(
-            joints_batch[index], rights[index], cam_full[index], focal if np.ndim(focal) == 0 else focal[index],
-            image_shape,
+            joints_batch[index], rights[index], cam_full[index], focal_here, image_shape,
+            principal_point=principal_point, focal_y=fy_here,
         )
         side = "right" if float(rights[index]) >= 0.5 else "left"
         score = 1.0 if scores is None or len(scores) <= index else float(scores[index])
@@ -1172,7 +1472,7 @@ class WiLoRBackend(_ManoFamilyBackend):
         if missing:
             raise RuntimeError(MANO_LICENSE + "\n\nWiLoR 现在跑不了，缺少：\n- " + "\n- ".join(missing))
         try:
-            return self._predict(image_rgb)
+            return self._predict(image_rgb, calib)
         except Exception as exc:
             if isinstance(exc, RuntimeError) and "MANO" in str(exc) and "缺少" in str(exc):
                 raise
@@ -1181,13 +1481,11 @@ class WiLoRBackend(_ManoFamilyBackend):
                 "\n%s" % (exc, MANO_LICENSE)
             )
 
-    def _predict(self, image_rgb):
+    def _predict(self, image_rgb, calib=None):
         self._ensure()
         import cv2
         import torch
         from wilor.datasets.vitdet_dataset import ViTDetDataset
-        from wilor.utils import recursive_to
-        from wilor.utils.renderer import cam_crop_to_full
 
         image = np.asarray(image_rgb)
         if image.dtype != np.uint8:
@@ -1215,13 +1513,12 @@ class WiLoRBackend(_ManoFamilyBackend):
             multiplier = (2 * batch["right"] - 1)
             pred_cam = out["pred_cam"]
             pred_cam[:, 1] = multiplier * pred_cam[:, 1]
-            img_size = batch["img_size"].float()
-            focal = _scaled_focal(self._cfg, img_size)
-            cam_full = cam_crop_to_full(
-                pred_cam, batch["box_center"].float(), batch["box_size"].float(), img_size, focal,
-            ).detach().cpu().numpy()
+            cam_full, focal, focal_y, principal = _full_camera_from_batch(pred_cam, batch, self._cfg, calib)
             count = cam_full.shape[0]
-            _fill_prediction(prediction, self, out, batch, cam_full, focal, scores[cursor:cursor + count])
+            _fill_prediction(
+                prediction, self, out, batch, cam_full, focal, scores[cursor:cursor + count],
+                focal_y=focal_y, principal_point=principal,
+            )
             cursor += count
         return prediction
 
@@ -1229,16 +1526,22 @@ class WiLoRBackend(_ManoFamilyBackend):
         if self._model is not None:
             return
         import torch
+        ensure_pyrender_importable()
+        link_mano_data()
         from ultralytics import YOLO
         from wilor.models import load_wilor
-        self._model, self._cfg = load_wilor(
-            checkpoint_path=os.environ["WILOR_CHECKPOINT"],
-            cfg_path=os.environ["WILOR_CONFIG"],
-        )
+        from wilor.models.wilor import WiLoR
+
+        with allow_official_torch_load(torch_module=torch):
+            self._model, self._cfg = _call_without_renderer(
+                WiLoR, load_wilor,
+                checkpoint_path=os.environ["WILOR_CHECKPOINT"],
+                cfg_path=os.environ["WILOR_CONFIG"],
+            )
+            self._detector = YOLO(os.environ["WILOR_DETECTOR"])
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self._model = self._model.to(self._device)
         self._model.eval()
-        self._detector = YOLO(os.environ["WILOR_DETECTOR"])
         self._detector.to(self._device)
 
 
