@@ -255,7 +255,8 @@ def refine_params_from_args(args):
     """命令行没有打开任何精修开关时返回 None，输出与原来一致。"""
     if args is None:
         return None
-    requested = bool(args.refine or args.smooth or args.gap_fill is not None or args.fixed_shape)
+    requested = bool(args.refine or args.smooth or args.gap_fill is not None or args.fixed_shape
+                     or getattr(args, "gap_fill_s", None) is not None)
     if not requested:
         return None
     params = RefineParams()
@@ -263,15 +264,26 @@ def refine_params_from_args(args):
         params.smooth = "one_euro"
         params.gap_fill = True
         params.max_gap = 5
+        params.max_gap_s = 5.0 / 30.0
+        params.gap_unit = "seconds"
         params.fixed_shape = True
         params.lr_consistency = True
     if args.smooth:
         params.smooth = args.smooth
     if args.gap_fill is not None:
         params.max_gap = int(args.gap_fill)
+        params.gap_unit = "frames"
         params.gap_fill = params.max_gap > 0
         if params.gap_fill:
             params.lr_consistency = True
+    if getattr(args, "gap_fill_s", None) is not None:
+        params.max_gap_s = float(args.gap_fill_s)
+        params.gap_unit = "seconds"
+        params.gap_fill = params.max_gap_s > 0
+        if params.gap_fill:
+            params.lr_consistency = True
+    if getattr(args, "legacy_frames", False):
+        params.gap_unit = "frames"
     if args.fixed_shape:
         params.fixed_shape = True
     if args.no_lr_consistency:
@@ -295,6 +307,9 @@ def refine_params_from_args(args):
         kalman_meas_std=params.kalman_meas_std,
         gap_fill=params.gap_fill,
         max_gap=params.max_gap,
+        max_gap_s=params.max_gap_s,
+        gap_unit=params.gap_unit,
+        track_memory_s=params.track_memory_s,
         fixed_shape=params.fixed_shape,
         lr_consistency=params.lr_consistency,
     )
@@ -481,14 +496,17 @@ def main(argv=None):
     parser.add_argument("--out", required=True, help="输出的 episode JSON")
     parser.add_argument("--backend", default=None, choices=["mediapipe", "hamer", "wilor"], help="从视频重算手部。省略时优先用 hands.json")
     parser.add_argument("--hands", default=None, help="预计算的 hands.json。默认用会话目录里的 hands.json")
-    parser.add_argument("--refine", action="store_true", help="打开 One Euro、最多补 5 帧、固定骨长和左右轨迹一致性")
+    parser.add_argument("--refine", action="store_true",
+                        help="打开 One Euro、最多补 5/30 秒、固定骨长和左右轨迹一致性")
     parser.add_argument("--smooth", default=None, choices=["none", "one_euro", "kalman"], help="时序平滑。one_euro 或常速度 kalman")
     parser.add_argument("--min-cutoff", type=float, default=None, help="One Euro 静止时的截止频率，单位 Hz")
     parser.add_argument("--beta", type=float, default=None, help="One Euro 速度系数，单位 1/(米/秒)")
     parser.add_argument("--d-cutoff", type=float, default=None, help="One Euro 导数截止频率，单位 Hz")
     parser.add_argument("--kalman-accel-std", type=float, default=None, help="卡尔曼加速度噪声，单位 米/秒²")
     parser.add_argument("--kalman-meas-std", type=float, default=None, help="卡尔曼测量噪声，单位米")
-    parser.add_argument("--gap-fill", type=int, default=None, help="最多插值多少帧缺测。0 表示不补")
+    parser.add_argument("--gap-fill", type=int, default=None, help="旧行为：最多插值多少帧缺测。0 表示不补")
+    parser.add_argument("--gap-fill-s", type=float, default=None, help="最多插值多少秒的缺测。默认按 5/30 秒")
+    parser.add_argument("--legacy-frames", action="store_true", help="补洞和左右手记忆按帧数，不按秒")
     parser.add_argument("--fixed-shape", action="store_true", help="用这一段的骨长中位数重摆关节")
     parser.add_argument("--no-lr-consistency", action="store_true", help="不要按轨迹修正左右手标签")
     args = parser.parse_args(argv)

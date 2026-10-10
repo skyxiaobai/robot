@@ -44,8 +44,12 @@ class StereoParams(object):
     def __init__(self, max_reproj_px=10.0, joint_reproj_px=15.0, min_joints=15,
                  depth_range_m=(0.10, 1.20), palm_range_m=(0.05, 0.15),
                  smooth="rts", min_cutoff=3.0, beta=50.0, gap_fill=True, max_gap=5, fixed_shape=False,
-                 consistency=True, wrist_mode="rigid_fit", velocity_gate_m=0.02, rts_q=0.3, rts_r=4e-4,
-                 max_median_reproj_px=None, max_offaxis_deg=None, assoc=True, recrop=True, assoc_params=None):
+                 consistency=True, wrist_mode="rigid_fit", velocity_gate_m=0.02, rts_q=None, rts_r=4e-4,
+                 max_median_reproj_px=None, max_offaxis_deg=None, assoc=True, recrop=True, assoc_params=None,
+                 velocity_mode="predicted", max_speed_mps=8.0, max_accel_mps2=80.0,
+                 gate_window_s=0.10, gate_max_gap_s=0.20, gate_degree=2,
+                 gate_window_frames=3, gate_max_frame_gap=6,
+                 gap_unit="seconds", max_gap_s=None, track_memory_frames=15, track_memory_s=None):
         self.max_reproj_px = float(max_reproj_px)
         self.joint_reproj_px = float(joint_reproj_px)
         self.min_joints = int(min_joints)
@@ -61,13 +65,34 @@ class StereoParams(object):
         self.max_gap = int(max_gap)
         self.fixed_shape = bool(fixed_shape)
         self.consistency = bool(consistency)
-        # 尾部误差（docs/hot3d_stereo/tail.md）：手腕不用单点三角化，而是把 WiLoR 单目 21 点（带尺度）稳健刚体
-        # 对齐到三角化关节后取对齐后的手腕；世界系手腕先做 2 cm 速度门限剔跳点，再做离线 RTS 平滑。
-        # 这些值在 HOT3D 上按“一段调参、其余三段测试”选出，4 种轮换选到的组合基本一致。
+        # 尾部误差（docs/hot3d_stereo/tail.md）用的是旧默认：邻居中位数超过 2 cm/帧 就剔，RTS q=0.3。
+        # 快动作（docs/hot3d_stereo/fast_motion.md）把这套换成按时间的匀加速预测：残差超过 velocity_gate_m
+        # （仍是 2 cm，但是米，不是米/帧），或者速度 / 加速度超过物理上限，才剔。RTS 的 q 默认按速度在 30–300
+        # 之间取（rts_q=None）。旧行为：velocity_mode="median"、rts_q=0.3、gap_unit="frames"。
         # smooth="rts" 时用 RTS 代替 One Euro；wrist_mode="tri" 恢复 PR #22 行为。
         self.wrist_mode = wrist_mode
         self.velocity_gate_m = float(velocity_gate_m or 0.0)
-        self.rts_q = float(rts_q)
+        self.velocity_mode = str(velocity_mode or "predicted")
+        if self.velocity_mode not in ("predicted", "median"):
+            raise ValueError("velocity_mode 只能是 predicted 或 median")
+        self.max_speed_mps = float(max_speed_mps)
+        self.max_accel_mps2 = float(max_accel_mps2)
+        self.gate_window_s = float(gate_window_s)
+        self.gate_max_gap_s = float(gate_max_gap_s)
+        self.gate_degree = int(gate_degree)
+        self.gate_window_frames = int(gate_window_frames)
+        self.gate_max_frame_gap = int(gate_max_frame_gap)
+        self.gap_unit = str(gap_unit or "seconds")
+        if self.gap_unit not in ("seconds", "frames"):
+            raise ValueError("gap_unit 只能是 seconds 或 frames")
+        # max_gap=5 是 30 fps 下的旧帧数。按秒用时换成 5/30 s，换帧率不再把“5 帧”当成更短的时间。
+        self.max_gap_s = (float(max_gap) / 30.0) if max_gap_s is None else float(max_gap_s)
+        self.track_memory_frames = int(track_memory_frames)
+        self.track_memory_s = (float(track_memory_frames) / 30.0) if track_memory_s is None else float(track_memory_s)
+        if rts_q is None or rts_q == "auto":
+            self.rts_q = None
+        else:
+            self.rts_q = float(rts_q)
         self.rts_r = float(rts_r)
         # 可选的严格门限（默认关）：换更低产出换更小 p90，曲线见 docs/hot3d_stereo/tail.md
         self.max_median_reproj_px = max_median_reproj_px
@@ -81,13 +106,18 @@ class StereoParams(object):
     def to_dict(self):
         return dict(self.__dict__)
 
-    def refine(self):
+    def refine(self, fps=30.0):
         smooth = "none" if self.smooth == "rts" else self.smooth
         if smooth in (None, "none") and not self.gap_fill and not self.fixed_shape:
             return None
-        return RefineParams(smooth=smooth or "none", min_cutoff=self.min_cutoff, beta=self.beta,
-                            gap_fill=self.gap_fill, max_gap=self.max_gap,
-                            fixed_shape=self.fixed_shape, lr_consistency=False)
+        common = dict(smooth=smooth or "none", min_cutoff=self.min_cutoff, beta=self.beta,
+                      gap_fill=self.gap_fill, max_gap=self.max_gap, fixed_shape=self.fixed_shape,
+                      lr_consistency=False, fps=float(fps))
+        if self.gap_unit == "frames":
+            return RefineParams(gap_unit="frames", track_memory_frames=self.track_memory_frames, **common)
+        return RefineParams(gap_unit="seconds", max_gap_s=self.max_gap_s,
+                            track_memory_frames=self.track_memory_frames,
+                            track_memory_s=self.track_memory_s, **common)
 
 
 # ---------------------------------------------------------------- 会话读取
@@ -282,8 +312,9 @@ def rigid_fit_hand(mono, tri, weights, iters=5, huber_m=0.01):
     return fit, float(np.sqrt(np.median(r[ok] ** 2)))
 
 
-def velocity_gate(frames, points, gate_m, window=3, max_frame_gap=6):
-    """离群点：离前后各 ``window`` 个邻居（帧号相差不超过 max_frame_gap）的中位数超过 gate_m 米。返回保留掩码。"""
+def _median_velocity_gate(frames, points, gate_m, window=3, max_frame_gap=6):
+    """旧门限：离前后各 ``window`` 帧（帧号相差不超过 max_frame_gap）的中位数超过 gate_m 米就剔。
+    门限是米/帧，换帧率时同一只手会被判成不同的结果。"""
     frames = np.asarray(frames)
     points = np.asarray(points, dtype=float)
     keep = np.ones(len(frames), dtype=bool)
@@ -295,6 +326,99 @@ def velocity_gate(frames, points, gate_m, window=3, max_frame_gap=6):
         if len(nb) >= 2 and np.linalg.norm(points[i] - np.median(points[nb], 0)) > gate_m:
             keep[i] = False
     return keep
+
+
+def _poly_coef(dt, pts, degree):
+    """时间相对量 dt 上的多项式系数，coef[0] 是 dt=0 处的位置（米），coef[1] 是速度（米/秒）。"""
+    if len(dt) < degree + 1:
+        return None
+    design = np.column_stack([np.power(dt, d) for d in range(degree + 1)])
+    coef, *_ = np.linalg.lstsq(design, pts, rcond=None)
+    return coef
+
+
+def velocity_gate(frames, points, gate_m, window=3, max_frame_gap=6, timestamps=None,
+                  mode="predicted", max_speed_mps=8.0, max_accel_mps2=80.0,
+                  window_s=0.10, max_gap_s=0.20, degree=2, fps=30.0):
+    """剔手腕跳点。返回保留掩码。
+
+    ``mode="median"``：旧行为，见 :func:`_median_velocity_gate`。``gate_m`` 是米/帧。
+    ``mode="predicted"``（默认）：用时间窗里的邻居做匀加速预测（``degree=2``）。
+    这一帧离预测超过 ``gate_m`` 米（默认 2 cm，与帧率无关），或者预测速度超过
+    ``max_speed_mps``、预测加速度超过 ``max_accel_mps2``，或者这一帧自己相对预测
+    多出来的速度超过速度上限，就剔。邻居按秒选取（默认 ±0.10 s，相当于 30 fps 的 ±3 帧），
+    所以 30 fps 和 60 fps 对同一条轨迹的判决一致。``timestamps`` 省略时用 ``frames / fps``。
+    """
+    frames = np.asarray(frames)
+    points = np.asarray(points, dtype=float)
+    keep = np.ones(len(frames), dtype=bool)
+    if str(mode) == "median":
+        return _median_velocity_gate(frames, points, gate_m, window=window, max_frame_gap=max_frame_gap)
+    if gate_m <= 0 or len(frames) < 5:
+        return keep
+    if timestamps is None:
+        times = np.asarray(frames, dtype=float) / float(fps)
+    else:
+        times = np.asarray(timestamps, dtype=float)
+        if len(times) != len(frames):
+            raise ValueError("timestamps 长度必须和 frames 一致")
+    degree = int(degree)
+    limit = float(window_s)
+    if max_gap_s is not None:
+        limit = min(limit, float(max_gap_s))
+    speed_cap = float(max_speed_mps)
+    accel_cap = float(max_accel_mps2)
+    for i in range(len(frames)):
+        nb = [j for j in range(len(frames))
+              if j != i and abs(float(times[j] - times[i])) <= limit + 1e-9]
+        if len(nb) < degree + 1:
+            continue
+        dt = times[nb] - times[i]
+        coef = _poly_coef(dt, points[nb], degree)
+        if coef is None:
+            continue
+        design = np.column_stack([np.power(dt, d) for d in range(degree + 1)])
+        neighbor_resid = np.linalg.norm(points[nb] - design @ coef, axis=1)
+        inliers = neighbor_resid <= gate_m
+        if int(inliers.sum()) >= degree + 1 and int(inliers.sum()) < len(nb):
+            coef = _poly_coef(dt[inliers], points[nb][inliers], degree)
+            dt_use = dt[inliers]
+        else:
+            dt_use = dt
+        if coef is None:
+            continue
+        resid = float(np.linalg.norm(points[i] - coef[0]))
+        speed = float(np.linalg.norm(coef[1])) if degree >= 1 else 0.0
+        accel = float(np.linalg.norm(2.0 * coef[2])) if degree >= 2 else 0.0
+        dt_near = float(np.min(np.abs(dt_use))) if len(dt_use) else 1.0
+        excess = resid / max(dt_near, 1e-4)
+        if resid > gate_m or speed > speed_cap or accel > accel_cap or speed + excess > speed_cap:
+            keep[i] = False
+    return keep
+
+
+def adaptive_rts_q(times, points, q_slow=30.0, q_fast=300.0, v_slow=0.15, v_fast=1.0):
+    """按轨迹速度把 RTS 过程噪声从 ``q_slow`` 调到 ``q_fast``（对数插值）。
+
+    慢动作（≤0.15 m/s）用 30，快动作（≥1 m/s）用 300。速度取帧间速度的 75 分位，
+    单帧跳点不会把整段拉满。同一条物理轨迹在不同帧率下得到同一个 q。
+    """
+    times = np.asarray(times, dtype=float)
+    points = np.asarray(points, dtype=float)
+    if len(times) < 2:
+        return float(q_slow)
+    dt = np.diff(times)
+    speed = np.linalg.norm(np.diff(points, axis=0), axis=1) / np.maximum(dt, 1e-6)
+    speed = speed[np.isfinite(speed) & (dt > 1e-6)]
+    if len(speed) == 0:
+        return float(q_slow)
+    v = float(np.percentile(speed, 75))
+    if v <= v_slow:
+        return float(q_slow)
+    if v >= v_fast:
+        return float(q_fast)
+    u = math.log(v / v_slow) / math.log(v_fast / v_slow)
+    return float(math.exp(math.log(q_slow) + u * (math.log(q_fast) - math.log(q_slow))))
 
 
 def rts_smooth(times, points, q=0.3, r=4e-4):
@@ -409,13 +533,22 @@ def stereo_hand(hand_left_view, hand_right_view, calib, params):
 # ---------------------------------------------------------------- episode
 
 def _temporal_wrist(joints, confs, diag, poses, timestamps, params):
-    """世界系手腕：速度门限剔跳点（该手该帧作废，状态记 jump），再 RTS 平滑；整只手按手腕的平滑位移平移。原地修改。"""
+    """世界系手腕：按时间的预测门限剔跳点（该手该帧作废，状态记 jump），再 RTS 平滑。
+
+    整只手按手腕的平滑位移平移。原地修改。返回每只手实际用的 ``rts_q``。
+    """
+    used = {}
     for side in SIDES:
         idx = [i for i in range(len(poses)) if np.isfinite(joints[side][i][0]).all()]
         if not idx:
             continue
         world = np.array([transform_points(joints[side][i][:1], poses[i])[0] for i in idx])
-        keep = velocity_gate(idx, world, params.velocity_gate_m)
+        times = [timestamps[i] for i in idx]
+        keep = velocity_gate(
+            idx, world, params.velocity_gate_m, timestamps=times, mode=params.velocity_mode,
+            max_speed_mps=params.max_speed_mps, max_accel_mps2=params.max_accel_mps2,
+            window_s=params.gate_window_s, max_gap_s=params.gate_max_gap_s, degree=params.gate_degree,
+            window=params.gate_window_frames, max_frame_gap=params.gate_max_frame_gap)
         for i, k in zip(idx, keep):
             if not k:
                 joints[side][i] = np.nan
@@ -424,13 +557,17 @@ def _temporal_wrist(joints, confs, diag, poses, timestamps, params):
                 diag[side][i]["joints_cam"] = None
         idx = [i for i, k in zip(idx, keep) if k]
         world = world[keep]
+        times = [timestamps[i] for i in idx]
         if params.smooth != "rts" or len(idx) < 3:
             continue
-        smoothed = rts_smooth([timestamps[i] for i in idx], world, params.rts_q, params.rts_r)
+        q = params.rts_q if params.rts_q is not None else adaptive_rts_q(times, world)
+        used[side] = float(q)
+        smoothed = rts_smooth(times, world, q, params.rts_r)
         for i, w_new in zip(idx, smoothed):
             pose = np.asarray(poses[i], dtype=float)
             delta_cam = pose[:3, :3].T @ (w_new - (pose[:3, :3] @ joints[side][i][0] + pose[:3, 3]))
             joints[side][i] = joints[side][i] + delta_cam
+    return used
 
 
 def build_stereo_episode(info, views, params, hand_fn=None, source="headcam_stereo", backend_label="wilor_stereo"):
@@ -463,10 +600,11 @@ def build_stereo_episode(info, views, params, hand_fn=None, source="headcam_ster
                 joints[side][index] = result["joints_cam"]
                 confs[side][index] = result["confidence"]
 
+    temporal = {}
     if params.smooth == "rts" or params.velocity_gate_m > 0:
-        _temporal_wrist(joints, confs, diag, poses, timestamps, params)
+        temporal = _temporal_wrist(joints, confs, diag, poses, timestamps, params)
 
-    refine = params.refine()
+    refine = params.refine(fps)
     refine_info = None
     filled = {side: np.zeros(num_frames, dtype=bool) for side in SIDES}
     if refine is not None:
@@ -532,6 +670,7 @@ def build_stereo_episode(info, views, params, hand_fn=None, source="headcam_ster
         },
         "stereo": {
             "params": params.to_dict(),
+            "temporal": temporal,
             "baseline_m": float(np.linalg.norm(np.asarray(calib["T"], dtype=float))) if "T" in calib else None,
             "per_frame": statuses,
             "reproj_px": {side: [d["reproj_px"] for d in diag[side]] for side in SIDES},

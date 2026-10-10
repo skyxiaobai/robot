@@ -11,6 +11,9 @@
 - 左右同步：有 stereo/timestamps_lr.csv 时，逐帧 |左-右|，默认最大 ≤1 ms（HOT3D 仿真：10 ms 时 2 cm 内比例从 67% 掉到 62%）
 - SLAM：slam.tum 覆盖全部帧，最近位姿时间差 ≤ 半帧
 - IMU（可选）：imu.csv 行数与采样率（≥100 Hz 建议）、时间覆盖录像区间
+- 曝光：metadata 里 ``exposure_locked`` / ``auto_exposure`` / ``exposure_time_s``；逐帧
+  ``stereo/exposure.csv``（或会话根目录 ``exposure.csv``）为 ``frame_index,left_exposure_s,right_exposure_s``。
+  锁定值或任一帧超过 5 ms 为 ERROR；超过 2 ms 为 WARN；没写则 WARN（旧会话和 HOT3D 适配没有这项）
 
 iPhone 会话（有 depth.npz，见 scripts/iphone/record3d_adapter.py）改走 ``validate_iphone``：
 rgb.mp4 / depth.npz / timestamps.csv 帧数一致；内参主点在图内；深度有效像素比例、高置信比例、
@@ -31,7 +34,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 DEFAULTS = {"baseline_min_m": 0.04, "baseline_max_m": 0.15, "sync_max_ms": 1.0, "jitter_frac": 0.5,
-            "max_jitter_frames": 0.01, "imu_min_hz": 100.0}
+            "max_jitter_frames": 0.01, "imu_min_hz": 100.0,
+            "exposure_max_s": 0.005, "exposure_warn_s": 0.002}
 
 
 def _video_info(path):
@@ -60,7 +64,49 @@ def _read_numeric_csv(path):
 
 
 IPHONE_DEFAULTS = {"min_valid_frac": 0.5, "min_high_conf_frac": 0.3, "lidar_range_m": (0.25, 5.0),
-                   "max_pose_jump_m": 0.10, "max_pose_jump_deg": 20.0, "max_jump_frames": 0.01}
+                   "max_pose_jump_m": 0.10, "max_pose_jump_deg": 20.0, "max_jump_frames": 0.01,
+                   "max_pose_speed_mps": 3.0, "max_pose_ang_speed_dps": 600.0,
+                   "exposure_max_s": 0.005, "exposure_warn_s": 0.002}
+
+
+def _check_exposure(session, meta, n_frames, errors, warns, facts, exposure_max_s, exposure_warn_s):
+    """曝光必须能手动锁定，并且每一帧的曝光时间落在盘上。缺文件只警告，超限算失败。"""
+    locked = meta.get("exposure_locked")
+    auto = meta.get("auto_exposure")
+    target = meta.get("exposure_time_s")
+    if locked is False or auto is True:
+        errors.append("曝光没有锁定（exposure_locked 应为 true，auto_exposure 应为 false）")
+    elif locked is None and auto is None and target is None:
+        warns.append("metadata 没有曝光锁定（快手要求关掉自动曝光，锁在 ≤2 ms，最多 5 ms）")
+    if target is not None:
+        target = float(target)
+        facts["exposure_time_s"] = target
+        if target > exposure_max_s:
+            errors.append("锁定曝光 %.2f ms 超过 %.0f ms" % (1e3 * target, 1e3 * exposure_max_s))
+        elif target > exposure_warn_s:
+            warns.append("锁定曝光 %.2f ms，快手建议 ≤ %.0f ms" % (1e3 * target, 1e3 * exposure_warn_s))
+    path = None
+    for rel in ("stereo/exposure.csv", "exposure.csv"):
+        if (session / rel).is_file():
+            path = session / rel
+            break
+    if path is None:
+        warns.append("没有逐帧曝光时间（stereo/exposure.csv 或 exposure.csv）")
+        return
+    rows = _read_numeric_csv(path)
+    if rows.size == 0 or rows.shape[1] < 2:
+        errors.append("%s 读不出来" % path.name)
+        return
+    if n_frames is not None and len(rows) != n_frames:
+        errors.append("%s 有 %d 行，视频 %d 帧" % (path.name, len(rows), n_frames))
+    values = rows[:, 1:]
+    facts["exposure_ms"] = {"max": float(np.nanmax(values) * 1e3), "median": float(np.nanmedian(values) * 1e3)}
+    if np.nanmax(values) > exposure_max_s:
+        errors.append("逐帧曝光最长 %.2f ms，超过 %.0f ms" % (1e3 * float(np.nanmax(values)), 1e3 * exposure_max_s))
+    elif np.nanmax(values) > exposure_warn_s:
+        warns.append("逐帧曝光最长 %.2f ms，快手建议 ≤ %.0f ms" % (1e3 * float(np.nanmax(values)), 1e3 * exposure_warn_s))
+    if np.nanmin(values) <= 0:
+        errors.append("逐帧曝光时间必须为正")
 
 
 def validate_iphone(session, **overrides):
@@ -125,12 +171,14 @@ def validate_iphone(session, **overrides):
         facts["pose_max_gap_s"] = float(np.max(gaps))
         if facts["pose_max_gap_s"] > 0.5 / fps:
             errors.append("ARKit 位姿与帧时间最大相差 %.1f ms，超过半帧" % (1e3 * facts["pose_max_gap_s"]))
-        jumps = pose_jumps(poses, opt["max_pose_jump_m"], opt["max_pose_jump_deg"])
+        jumps = pose_jumps(poses, opt["max_pose_speed_mps"], opt["max_pose_ang_speed_dps"], timestamps=list(stamps))
         facts["pose_jump_frames"] = int(jumps.sum())
         if jumps.sum() > opt["max_jump_frames"] * n:
-            warns.append("ARKit 位姿跳变 %d 帧（跟踪丢失/重定位？录制时别遮挡镜头、别对着白墙）" % int(jumps.sum()))
+            warns.append("ARKit 位姿速度超过 %.1f m/s 或 %.0f °/s 的有 %d 帧（跟踪丢失/重定位？录制时别遮挡镜头、别对着白墙）" % (
+                opt["max_pose_speed_mps"], opt["max_pose_ang_speed_dps"], int(jumps.sum())))
     else:
         errors.append("没有 slam.tum（ARKit 位姿）：Record3D 导出里缺 poses？")
+    _check_exposure(s, meta, n, errors, warns, facts, opt["exposure_max_s"], opt["exposure_warn_s"])
     return {"session": str(s), "kind": "iphone", "ok": not errors, "errors": errors, "warnings": warns, "facts": facts}
 
 
@@ -244,6 +292,7 @@ def validate(session, **overrides):
                 warns.append("IMU 时间没有覆盖整段录像")
     else:
         warns.append("没有 imu.csv（HOT3D 适配会话没有 IMU，属正常）")
+    _check_exposure(s, meta, n, errors, warns, facts, opt["exposure_max_s"], opt["exposure_warn_s"])
     return {"session": str(s), "ok": not errors, "errors": errors, "warnings": warns, "facts": facts}
 
 

@@ -84,7 +84,8 @@ WiLoR 环境的 numpy 太老导不了 pyarrow 时，加 `--export-python /path/t
 | 高置信深度 ≥ 30% | WARN（太暗、太远、反光） |
 | 实测帧率与 metadata.fps 一致、时间戳递增 | ERROR |
 | 有 ARKit 位姿（slam.tum）且覆盖每一帧 | ERROR |
-| ARKit 位姿相邻帧跳变（>10 cm 或 >20°）超过 1% 帧 | WARN（Record3D 不导出 ARKit 跟踪状态，用跳变代替） |
+| ARKit 位姿速度超过 3 m/s 或 600 °/s 的帧超过 1% | WARN（Record3D 不导出 ARKit 跟踪状态，用速度代替；3 m/s 和 600 °/s 等于旧的 10 cm/帧、20°/帧 在 30 fps 下的值，换帧率不变） |
+| 曝光锁定和逐帧曝光（有 `exposure.csv` 或 metadata 里的曝光字段时） | 超过 5 ms 为 ERROR；没写只 WARN（Record3D 多数导出没有曝光） |
 
 ### 管线里逐手的检查（被丢的帧会在 report.md 里列出原因）
 
@@ -95,8 +96,8 @@ WiLoR 环境的 numpy 太老导不了 pyarrow 时，加 `--export-python /path/t
 | `depth` | 手腕深度不在 0.25–1.5 m |
 | `fit` | 激光雷达深度点和 WiLoR 手型对不上（对齐残差 > 2 cm 或尺度不在 0.75–1.33） |
 | `palm` | 手掌长度不在 5–15 cm |
-| `tracking` | 这一帧 ARKit 位姿跳变 |
-| `jump` | 世界系手腕一帧跳动 > 2 cm（速度门限） |
+| `tracking` | 这一帧 ARKit 位姿速度超过 3 m/s 或 600 °/s（按时间，不按“每帧多少厘米”） |
+| `jump` | 世界系手腕相对匀加速预测的残差 > 2 cm，或速度 / 加速度超过上限（默认 8 m/s、80 m/s²）。旧的“每帧 2 cm”要用 `--legacy-temporal` |
 
 这些阈值是按传感器常识先定的临时值，**没有在真值上调过**；等你第一批真实录制回来再按 report.md 调整。
 

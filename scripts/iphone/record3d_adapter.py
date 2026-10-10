@@ -23,7 +23,8 @@ ARKit 位姿是 OpenGL 相机约定（x 右、y 上、z 朝后）；这里乘 ``
     calib.yaml         sensor: iphone_lidar；K_rgb、RGB 尺寸、深度尺寸
     slam.tum           ARKit 位姿（OpenCV 相机约定，T_world_cam）
     timestamps.csv     frame,timestamp_s
-    metadata.json      fps、来源、设备信息
+    exposure.csv       可选。frame_index,exposure_s。导出里带 exposureTimes 时才写
+    metadata.json      fps、来源、设备信息；有曝光时带 exposure_time_s
 
 用法::
 
@@ -251,9 +252,34 @@ def convert(path, out_dir, max_frames=None, stride=1, log=print):
     (out / "calib.yaml").write_text(json.dumps(calib, indent=1), encoding="utf-8")  # JSON 是合法 YAML
     md_path = out / "metadata.json"
     md = json.loads(md_path.read_text(encoding="utf-8")) if md_path.is_file() else {}
+    exposure = meta.get("exposureTimes") or meta.get("exposure_s")
+    md_exposure = None
+    if isinstance(exposure, list) and exposure:
+        values = []
+        for i in sel:
+            fid = rec["ids"][i]
+            if fid >= len(exposure) or exposure[fid] is None:
+                values = []
+                break
+            values.append(float(exposure[fid]))
+        if values:
+            with open(out / "exposure.csv", "w", encoding="utf-8") as fh:
+                fh.write("frame_index,exposure_s\n")
+                for k, value in enumerate(values):
+                    fh.write("%d,%.6g\n" % (k, value))
+            md_exposure = float(np.median(values))
+    if md_exposure is None:
+        md_exposure = meta.get("exposureDuration") or meta.get("exposure_time_s")
+        md_exposure = None if md_exposure is None else float(md_exposure)
     md.update({"fps": fps, "device": "iphone_pro_lidar", "capture_app": "Record3D",
                "record3d_export": rec["kind"], "source_path": str(path),
                "record3d_camera_type": meta.get("cameraType"), "frames": len(sel)})
+    if md_exposure is not None:
+        md["exposure_time_s"] = md_exposure
+    if meta.get("exposure_locked") is not None:
+        md["exposure_locked"] = bool(meta.get("exposure_locked"))
+    if meta.get("auto_exposure") is not None:
+        md["auto_exposure"] = bool(meta.get("auto_exposure"))
     md.setdefault("episode_id", "iphone/%s" % out.name)
     md_path.write_text(json.dumps(md, ensure_ascii=False, indent=1), encoding="utf-8")
     return {"session": str(out), "frames": len(sel), "kind": rec["kind"], "rgb": [w, h],

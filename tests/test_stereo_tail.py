@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from headcam.stereo_pipeline import (  # noqa: E402
-    StereoParams, rigid_fit_hand, rts_smooth, stereo_hand, velocity_gate)
+    StereoParams, adaptive_rts_q, rigid_fit_hand, rts_smooth, stereo_hand, velocity_gate)
 from test_stereo_pipeline import hand_joints, make_calib, views_of  # noqa: E402
 
 
@@ -43,10 +43,64 @@ class TemporalTest(unittest.TestCase):
         f = np.arange(20)
         pts = np.stack([f * 0.002, np.zeros(20), np.zeros(20)], 1)
         pts[10] += [0, 0, 0.3]  # 换手 / 认错导致的 30 cm 跳点
-        keep = velocity_gate(f, pts, 0.02)
+        keep = velocity_gate(f, pts, 0.02, mode="median")
         self.assertFalse(keep[10])
         self.assertEqual(int(keep.sum()), 19)
         self.assertTrue(velocity_gate(f, pts, 0.0).all())
+        predicted = velocity_gate(f, pts, 0.02)
+        self.assertFalse(predicted[10])
+        self.assertTrue(predicted[0] and predicted[1] and predicted[-1])
+
+    def _fast_quadratic(self, fps, duration=1.0):
+        # 加速度 4 m/s²，末速约 4 m/s，低于 8 m/s 上限。匀加速，预测残差应接近 0。
+        count = int(round(duration * fps))
+        times = np.arange(count, dtype=float) / float(fps)
+        x = 0.5 * 4.0 * times ** 2
+        points = np.stack([x, np.zeros(count), np.zeros(count)], 1)
+        return times, points
+
+    def test_predicted_gate_is_fps_invariant(self):
+        kept_at = {}
+        for fps in (30.0, 60.0, 120.0):
+            times, points = self._fast_quadratic(fps)
+            keep = velocity_gate(np.arange(len(times)), points, 0.02, timestamps=times)
+            self.assertTrue(keep.all(), "fps=%s 匀加速不该被剔，剔了 %d 帧" % (fps, int((~keep).sum())))
+            spike = points.copy()
+            index = int(round(0.5 * fps))
+            spike[index, 2] += 0.30
+            dropped = ~velocity_gate(np.arange(len(times)), spike, 0.02, timestamps=times)
+            self.assertTrue(dropped[index], fps)
+            far = np.abs(times - 0.5) > 0.15
+            self.assertFalse(dropped[far].any(), "fps=%s 离跳点 0.15 s 以外不该被剔" % fps)
+            kept_at[fps] = times[dropped]
+        for fps, stamps in kept_at.items():
+            self.assertTrue(np.all(np.abs(stamps - 0.5) <= 0.15), (fps, stamps))
+
+    def test_median_gate_changes_with_fps(self):
+        """同一条加速轨迹，旧的 2 cm/帧 门限在 30 fps 比 120 fps 剔得更多。"""
+        fractions = {}
+        for fps in (30.0, 120.0):
+            times, points = self._fast_quadratic(fps, duration=0.9)
+            # 去掉序列两头，避免窗口不对称单独造成的边缘效应；仍从 0.05 s 之后取样。
+            use = (times >= 0.05) & (times <= 0.85)
+            frames = np.arange(int(use.sum()))
+            keep = velocity_gate(frames, points[use], 0.02, timestamps=times[use], mode="median")
+            fractions[fps] = float((~keep).mean())
+        self.assertGreater(fractions[30.0], fractions[120.0])
+
+    def test_adaptive_rts_q_follows_speed_not_fps(self):
+        def sample(speed, fps):
+            times = np.arange(0.0, 2.0, 1.0 / fps)
+            points = np.stack([speed * times, np.zeros_like(times), np.zeros_like(times)], 1)
+            return adaptive_rts_q(times, points)
+        self.assertEqual(sample(0.05, 30), 30.0)
+        self.assertEqual(sample(2.0, 30), 300.0)
+        self.assertEqual(sample(0.05, 30), sample(0.05, 60))
+        self.assertEqual(sample(2.0, 30), sample(2.0, 120))
+        mid30, mid60 = sample(0.4, 30), sample(0.4, 60)
+        self.assertGreater(mid30, 30.0)
+        self.assertLess(mid30, 300.0)
+        self.assertAlmostEqual(mid30, mid60, places=6)
 
     def test_rts_reduces_noise_without_lag(self):
         rng = np.random.default_rng(1)

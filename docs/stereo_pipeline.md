@@ -49,6 +49,8 @@ WiLoR 环境的 numpy 太老、导入不了 pyarrow 时，加 `--export-python /
 
 一致性检查的阈值是**事先按常识定的**，没有用 HOT3D 真值调过：重投影中位数 ≤ 10 px；能三角化的关节（单关节重投影 ≤ 15 px）≥ 15 个；手腕深度 0.1–1.2 m；手腕到中指根 5–15 cm。
 
+> 下面第 3 节的手腕误差是旧默认（One Euro，或后来的 2 cm/帧 + RTS q=0.3）跑出来的。当前默认是按时间的预测门限和速度自适应的 RTS（q 约 30–300）。用新默认重跑 **待补**。见 [hot3d_stereo/fast_motion.md](hot3d_stereo/fast_motion.md)。
+
 ## 3. HOT3D Quest3 实测（4 段 × 150 帧 = 600 帧，全部帧）
 
 片段：clip-000000、000300、000700、001100（和 PR #21 同一批）。Quest3 两个 SLAM 黑白鱼眼相机去畸变成针孔（f≈505 px，1024×1280），基线 6.4 cm。真值是 HOT3D 的 MANO 手（动捕），换算成同样的 21 点。完整报告：[`stereo_pipeline/hot3d_quest3_report.md`](stereo_pipeline/hot3d_quest3_report.md)。

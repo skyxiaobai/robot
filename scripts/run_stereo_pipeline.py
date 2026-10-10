@@ -109,12 +109,25 @@ def main(argv=None):
                     help="rts：世界系手腕离线 RTS 平滑（默认）；one_euro 为 PR #22 行为")
     ap.add_argument("--wrist-mode", default="rigid_fit", choices=["rigid_fit", "tri"],
                     help="rigid_fit：单目手型稳健对齐三角化关节后取手腕（默认）；tri：直接用三角化手腕")
-    ap.add_argument("--velocity-gate-m", type=float, default=0.02, help="世界系手腕跳点门限（米），0 关闭")
+    ap.add_argument("--velocity-gate", default=None, choices=["predicted", "median"],
+                    help="predicted：按时间的匀加速预测 + 速度/加速度上限（默认）；median：旧的每帧固定米数门限")
+    ap.add_argument("--velocity-gate-m", type=float, default=0.02,
+                    help="predicted：预测残差上限（米，默认 2 cm）；median：离邻居中位数的距离（米/帧）。0 关闭")
+    ap.add_argument("--max-speed-mps", type=float, default=8.0, help="手腕速度上限（米/秒），predicted 门限用")
+    ap.add_argument("--max-accel-mps2", type=float, default=80.0, help="手腕加速度上限（米/秒²），predicted 门限用")
+    ap.add_argument("--gate-window-s", type=float, default=0.10, help="预测门限看前后多少秒的邻居（30 fps 下约 ±3 帧）")
+    ap.add_argument("--rts-q", default="auto",
+                    help="RTS 过程噪声。auto=按估计速度在 30–300 之间取值；旧管线是 0.3")
+    ap.add_argument("--legacy-temporal", action="store_true",
+                    help="恢复旧默认：median 门限、rts_q=0.3、补洞和轨迹记忆按帧数")
     ap.add_argument("--strict-reproj-px", type=float, default=None, help="可选严格门限：中位重投影误差上限（像素）")
     ap.add_argument("--strict-offaxis-deg", type=float, default=None, help="可选严格门限：手腕偏离光轴角度上限（度）")
     ap.add_argument("--min-cutoff", type=float, default=3.0, help="One Euro 静止截止频率 Hz")
     ap.add_argument("--beta", type=float, default=50.0, help="One Euro 速度系数 1/(m/s)")
-    ap.add_argument("--max-gap", type=int, default=5, help="最多补几帧，0 表示不补")
+    ap.add_argument("--max-gap-s", type=float, default=None,
+                    help="最多补多少秒的缺测。默认 5/30≈0.167 秒（30 fps 下仍是 5 帧）")
+    ap.add_argument("--max-gap", type=int, default=None,
+                    help="旧行为：最多补几帧。指定后按帧数，不再按秒。0 表示不补")
     ap.add_argument("--min-label-coverage", type=float, default=0.0,
                     help="标注覆盖率下限。默认 0：只报告，不因此拒绝片段。临时值，等真实设备数据再定")
     ap.add_argument("--fixed-shape", action="store_true", help="固定手型（默认关）")
@@ -165,13 +178,33 @@ def main(argv=None):
                 print("Record3D → 会话 %s（%d 帧，RGB %dx%d，深度 %dx%d）" % (
                     target, info["frames"], info["rgb"][0], info["rgb"][1], info["depth"][0], info["depth"][1]))
             sessions.append(str(target))
-        builder = make_session_builder()
         if a.repo_id == "local/headcam_stereo":
             a.repo_id = "local/iphone_lidar"
+    legacy = bool(a.legacy_temporal)
+    if a.iphone:
+        from headcam.rgbd_pipeline import RGBDParams, make_session_builder
+        builder = make_session_builder(RGBDParams(pose_jump_unit="frames" if legacy else "seconds"))
+    velocity_mode = a.velocity_gate or ("median" if legacy else "predicted")
+    if a.rts_q == "auto":
+        rts_q = 0.3 if legacy else None
+    else:
+        rts_q = float(a.rts_q)
+    if a.max_gap is not None and a.max_gap_s is None:
+        gap_unit, max_gap, max_gap_s = "frames", a.max_gap, None
+    elif legacy and a.max_gap_s is None:
+        gap_unit, max_gap, max_gap_s = "frames", 5 if a.max_gap is None else a.max_gap, None
+    else:
+        gap_unit, max_gap = "seconds", 5 if a.max_gap is None else a.max_gap
+        max_gap_s = (5.0 / 30.0) if a.max_gap_s is None else a.max_gap_s
+    gap_fill = (max_gap_s > 0) if gap_unit == "seconds" else (max_gap > 0)
     params = StereoParams(max_reproj_px=a.max_reproj_px, wrist_mode=a.wrist_mode,
-                          velocity_gate_m=a.velocity_gate_m, max_median_reproj_px=a.strict_reproj_px,
-                          max_offaxis_deg=a.strict_offaxis_deg, smooth=a.smooth, min_cutoff=a.min_cutoff, beta=a.beta, gap_fill=a.max_gap > 0,
-                          max_gap=max(a.max_gap, 0), fixed_shape=a.fixed_shape, consistency=not a.no_consistency,
+                          velocity_gate_m=a.velocity_gate_m, velocity_mode=velocity_mode,
+                          max_speed_mps=a.max_speed_mps, max_accel_mps2=a.max_accel_mps2,
+                          gate_window_s=a.gate_window_s, rts_q=rts_q,
+                          max_median_reproj_px=a.strict_reproj_px,
+                          max_offaxis_deg=a.strict_offaxis_deg, smooth=a.smooth, min_cutoff=a.min_cutoff, beta=a.beta,
+                          gap_fill=gap_fill, max_gap=max(max_gap, 0), max_gap_s=max_gap_s, gap_unit=gap_unit,
+                          fixed_shape=a.fixed_shape, consistency=not a.no_consistency,
                           assoc=not a.no_assoc, recrop=not a.no_recrop)
     summary = run_pipeline(sessions, out, params, backend_name=a.backend, repo_id=a.repo_id, export=not a.no_export,
                            export_python=a.export_python, min_label_coverage=a.min_label_coverage,

@@ -92,6 +92,29 @@ def test_pose_convention_and_jumps():
     poses[2] = poses[2].copy()
     poses[2][0, 3] = 0.5
     assert list(pose_jumps(poses, 0.1, 20)) == [False, False, True]
+    # 同一段 2 m/s 的平移：30 fps 每帧 6.7 cm，60 fps 每帧 3.3 cm。按米/秒都不算跳；按 10 cm/帧则只有 30 fps 会报。
+    for fps in (30.0, 60.0):
+        n = int(fps) + 1
+        times = np.arange(n) / fps
+        moving = []
+        for t in times:
+            pose = np.eye(4)
+            pose[0, 3] = 2.0 * float(t)
+            moving.append(pose)
+        assert not pose_jumps(moving, 3.0, 600.0, timestamps=times).any()
+        fast = []
+        for t in times:
+            pose = np.eye(4)
+            pose[0, 3] = 6.0 * float(t)
+            fast.append(pose)
+        jumped = pose_jumps(fast, 3.0, 600.0, timestamps=times)
+        assert jumped[0] == False and jumped[1:].all()
+    legacy = []
+    for i in range(4):
+        pose = np.eye(4)
+        pose[0, 3] = 0.08 * i  # 30 fps 下 2.4 m/s，60 fps 下 4.8 m/s，但每帧只有 8 cm
+        legacy.append(pose)
+    assert not pose_jumps(legacy, 0.1, 20).any()
     assert np.allclose(RA.intrinsics_from_metadata({"K": [300, 0, 0, 0, 301, 0, 96, 128, 1]}),
                        [[300, 0, 96], [0, 301, 128], [0, 0, 1]])
 

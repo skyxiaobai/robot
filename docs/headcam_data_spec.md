@@ -14,6 +14,8 @@
 > **v11 变更**（物体 6DoF、接触、抓取）：保留 v10 全文。统一 episode 增加每条物体轨迹、每只手每帧的接触和抓取状态，以及带时间戳的事件。`schema_version` 仍是 `1.0`（新增的是字段，不是另一套文件）。LeRobot 导出增加 `observation.object_pose`、`observation.contact`、`action.grasp` 和对应的有效掩码。新手说明和合成夹具上的数字见 [`docs/contact_grasp.md`](contact_grasp.md)。HOT3D 真实片段上的精确率、召回率和事件时间差 **待补**。
 >
 > **2026-10-10 修订 §0 / §3**：双目改为头戴设备的核心配置，不再写成可选升级。头戴 IMU 与 SLAM/VIO 一起估计世界系相机位姿，不只做头部运动补偿。现行 `docs/headcam_bom.csv` 仍是单目标价，本文不把那些数字改写成双目报价。1000 元内的双目清单见 `docs/headcam_stereo_bom.md` 与 `docs/headcam_stereo_bom.csv`（推荐方案 A 合计约 727–982 元）。
+>
+> **2026-10-10 修订 §7.7**：录制必须关掉自动曝光，把曝光锁在 ≤2 ms（最多 5 ms），并把每一帧的曝光时间写入 `stereo/exposure.csv`。依据是快速运动评测 `docs/hot3d_stereo/fast_motion.md`（10 ms 曝光在 2 m/s 时认手和三角化都会变差）。
 
 ---
 
@@ -338,16 +340,20 @@ pusht 的 features 没有 depth/stereo 字段；Square 的 `agentview_image` + `
 ```
 session/
   metadata.json     episode_id、fps、task、instruction、environment、图像宽高、objects、verbs
+                    曝光：auto_exposure=false、exposure_locked=true、exposure_time_s（秒，≤0.002，最多 0.005）
   timestamps.csv    frame_index,timestamp_s。没有则用 frame/fps
   imu.csv           角速度和比力。转换时只记路径和行数，不写入 JSON，也不积分
   calib.yaml        Kalibr camchain、简单 YAML，或 OpenCV FileStorage（cameraMatrix1/2、R、T）
   rgb.mp4           单目或彩色参考。没有时用 stereo/left.mp4
   stereo/left.mp4   左目
   stereo/right.mp4  右目，只提供 2D
-  stereo/timestamps_lr.csv  frame_index,left_s,right_s。左右各自的曝光时间，用来核对硬件同步（建议必写）
+  stereo/timestamps_lr.csv  frame_index,left_s,right_s。左右各自的时间戳，用来核对硬件同步（建议必写）
+  stereo/exposure.csv       frame_index,left_exposure_s,right_exposure_s。每一帧的曝光时间（秒）。必须写
   slam.tum          可选。TUM：timestamp tx ty tz qx qy qz qw
   hands.json        可选。后端已经算好的每帧 21 点
 ```
+
+曝光：录制程序用 `v4l2-ctl` 关掉自动曝光并锁定（到货检查见 `docs/hardware_day1_checklist.md`）。`exposure_time_s` 是锁定值；`stereo/exposure.csv` 是每一帧实际读到的曝光，左右各一列。任一帧或锁定值大于 5 ms，`scripts/validate_session.py` 判失败；大于 2 ms 只警告。没有这两项时只警告（HOT3D 适配会话和更早的录像没有曝光字段）。iPhone / Record3D 若导出里带 `exposureTimes`，适配器写成会话根目录的 `exposure.csv`（`frame_index,exposure_s`）并在 metadata 里记中位数。
 
 几何按 §7.2 合成，实现在 `scripts/headcam/hand_pose.py`：
 
