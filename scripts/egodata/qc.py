@@ -109,9 +109,18 @@ def frame_qc_flags(episode, **overrides):
         for side in ("left", "right"):
             point = positions[side][index]
             confidence = confidences[side][index]
+            filled_flags = episode["hands"][side].get("filled")
+            filled = (
+                isinstance(filled_flags, list)
+                and index < len(filled_flags)
+                and bool(filled_flags[index])
+            )
             # 置信度缺失（源 HDF5 没有 confidences）表示未知，不当成 0。
             # 未知时只靠投影判断出画；只有读到了低于阈值的数才算跟踪失败。
-            if confidence is None:
+            # ``filled`` 是时序补洞标出来的帧：即使置信度被写成很高，QC 也不当跟踪成功。
+            if filled:
+                tracked = False
+            elif confidence is None:
                 tracked = point is not None
             else:
                 tracked = point is not None and float(confidence) >= options["confidence_min"]

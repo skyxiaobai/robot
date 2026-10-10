@@ -56,6 +56,7 @@ from headcam.hand_pose import (  # noqa: E402
     wrist_poses_from_joints,
     xyz_to_json,
 )
+from headcam.hand_track_refine import RefineParams, refine_hands  # noqa: E402
 
 
 def _first_file(session, relative_paths):
@@ -199,7 +200,22 @@ def _metric_for_hand(hand, right_uv, calib):
     return mono, _confidence_vector(hand.get("confidence")), None
 
 
-def _pack_side(camera_joints, confidences, camera_poses):
+def _confidence_lists(confidence):
+    """关节置信度变成 JSON 列表。非有限值记为未知（None），不写成 0。"""
+    if confidence is None:
+        return [None] * JOINTS, None
+    vector = []
+    for value in np.asarray(confidence, dtype=float).reshape(-1):
+        if not np.isfinite(value):
+            vector.append(None)
+        else:
+            vector.append(float(value))
+    if len(vector) != JOINTS:
+        raise ValueError("confidence 必须有 21 个数")
+    return vector, vector[0]
+
+
+def _pack_side(camera_joints, confidences, camera_poses, filled=None, swapped=None):
     world_sequence = []
     joint_confidence = []
     scalar = []
@@ -213,21 +229,78 @@ def _pack_side(camera_joints, confidences, camera_poses):
             continue
         world = transform_points(joints, pose)
         world_sequence.append(world)
-        vector = [float(value) if np.isfinite(value) else 0.0 for value in confidence]
+        vector, wrist_confidence = _confidence_lists(confidence)
         joint_confidence.append(vector)
-        wrist_confidence = vector[0]
         scalar.append(wrist_confidence)
-        valid.append(bool(np.isfinite(world[0]).all() and wrist_confidence >= 0.5))
-    return {
+        if wrist_confidence is None:
+            tracked = bool(np.isfinite(world[0]).all())
+        else:
+            tracked = bool(np.isfinite(world[0]).all() and wrist_confidence >= 0.5)
+        valid.append(tracked)
+    packed = {
         "joints": [xyz_to_json(frame) for frame in world_sequence],
         "wrist_pose": wrist_poses_from_joints(world_sequence),
         "confidence": scalar,
         "joint_confidence": joint_confidence,
         "valid": valid,
     }
+    if filled is not None:
+        packed["filled"] = [bool(value) for value in filled]
+    if swapped is not None:
+        packed["label_swapped"] = [bool(value) for value in swapped]
+    return packed
 
 
-def build_episode(session_dir, backend=None, hands_path=None):
+def refine_params_from_args(args):
+    """命令行没有打开任何精修开关时返回 None，输出与原来一致。"""
+    if args is None:
+        return None
+    requested = bool(args.refine or args.smooth or args.gap_fill is not None or args.fixed_shape)
+    if not requested:
+        return None
+    params = RefineParams()
+    if args.refine:
+        params.smooth = "one_euro"
+        params.gap_fill = True
+        params.max_gap = 5
+        params.fixed_shape = True
+        params.lr_consistency = True
+    if args.smooth:
+        params.smooth = args.smooth
+    if args.gap_fill is not None:
+        params.max_gap = int(args.gap_fill)
+        params.gap_fill = params.max_gap > 0
+        if params.gap_fill:
+            params.lr_consistency = True
+    if args.fixed_shape:
+        params.fixed_shape = True
+    if args.no_lr_consistency:
+        params.lr_consistency = False
+    if args.min_cutoff is not None:
+        params.min_cutoff = float(args.min_cutoff)
+    if args.beta is not None:
+        params.beta = float(args.beta)
+    if args.d_cutoff is not None:
+        params.d_cutoff = float(args.d_cutoff)
+    if args.kalman_accel_std is not None:
+        params.kalman_accel_std = float(args.kalman_accel_std)
+    if args.kalman_meas_std is not None:
+        params.kalman_meas_std = float(args.kalman_meas_std)
+    return RefineParams(
+        smooth=params.smooth,
+        min_cutoff=params.min_cutoff,
+        beta=params.beta,
+        d_cutoff=params.d_cutoff,
+        kalman_accel_std=params.kalman_accel_std,
+        kalman_meas_std=params.kalman_meas_std,
+        gap_fill=params.gap_fill,
+        max_gap=params.max_gap,
+        fixed_shape=params.fixed_shape,
+        lr_consistency=params.lr_consistency,
+    )
+
+
+def build_episode(session_dir, backend=None, hands_path=None, refine=None):
     """读会话目录，返回统一 episode 字典。不写文件。"""
     session = Path(session_dir)
     if not session.is_dir():
@@ -286,9 +359,55 @@ def build_episode(session_dir, backend=None, hands_path=None):
             per_side[side]["confidence"].append(confidence if confidence is not None else np.zeros(JOINTS))
             per_side[side]["scale"].append(None if scale is None else float(scale))
 
+    refine_info = None
+    if refine is not None:
+        stacked = {}
+        conf_stack = {}
+        for side in ("left", "right"):
+            joints = np.full((num_frames, JOINTS, 3), np.nan, dtype=np.float64)
+            confidence = np.full((num_frames, JOINTS), np.nan, dtype=np.float64)
+            for index, (frame_joints, frame_conf) in enumerate(
+                zip(per_side[side]["joints"], per_side[side]["confidence"])
+            ):
+                if frame_joints is not None:
+                    joints[index] = np.asarray(frame_joints, dtype=np.float64)
+                if frame_conf is not None:
+                    confidence[index] = np.asarray(frame_conf, dtype=np.float64).reshape(-1)
+            stacked[side] = joints
+            conf_stack[side] = confidence
+        refined = refine_hands(
+            stacked["left"], stacked["right"], conf_stack["left"], conf_stack["right"],
+            timestamps, refine, camera_poses=np.stack(poses),
+        )
+        for side in ("left", "right"):
+            per_side[side]["joints"] = [
+                None if not np.isfinite(frame).any() else frame
+                for frame in refined[side]["joints"]
+            ]
+            per_side[side]["confidence"] = list(refined[side]["confidence"])
+            per_side[side]["filled"] = refined[side]["filled"]
+            per_side[side]["swapped"] = refined[side]["swapped"]
+        refine_info = {
+            "params": refine.to_dict(),
+            "coordinate": refined["coordinate"],
+            "filled_frames": {
+                side: int(np.count_nonzero(refined[side]["filled"])) for side in ("left", "right")
+            },
+            "swapped_frames": {
+                side: int(np.count_nonzero(refined[side]["swapped"])) for side in ("left", "right")
+            },
+            "shape": "bone_lengths" if refine.fixed_shape else None,
+        }
+
     hands = {}
     for side in ("left", "right"):
-        hands[side] = _pack_side(per_side[side]["joints"], per_side[side]["confidence"], poses)
+        hands[side] = _pack_side(
+            per_side[side]["joints"],
+            per_side[side]["confidence"],
+            poses,
+            filled=per_side[side].get("filled"),
+            swapped=per_side[side].get("swapped"),
+        )
 
     environment_raw = metadata.get("environment") or ""
     environment = normalize_environment(environment_raw)
@@ -346,6 +465,7 @@ def build_episode(session_dir, backend=None, hands_path=None):
             "imu_csv": None if imu_path is None else imu_path.name,
             "imu_samples": _count_rows(imu_path),
             "calib": None if calib_path is None else calib_path.name,
+            "refine": refine_info,
         },
     }
     errors = validate_episode(episode)
@@ -360,8 +480,23 @@ def main(argv=None):
     parser.add_argument("--out", required=True, help="输出的 episode JSON")
     parser.add_argument("--backend", default=None, choices=["mediapipe", "hamer", "wilor"], help="从视频重算手部。省略时优先用 hands.json")
     parser.add_argument("--hands", default=None, help="预计算的 hands.json。默认用会话目录里的 hands.json")
+    parser.add_argument("--refine", action="store_true", help="打开 One Euro、最多补 5 帧、固定骨长和左右轨迹一致性")
+    parser.add_argument("--smooth", default=None, choices=["none", "one_euro", "kalman"], help="时序平滑。one_euro 或常速度 kalman")
+    parser.add_argument("--min-cutoff", type=float, default=None, help="One Euro 静止时的截止频率，单位 Hz")
+    parser.add_argument("--beta", type=float, default=None, help="One Euro 速度系数，单位 1/(米/秒)")
+    parser.add_argument("--d-cutoff", type=float, default=None, help="One Euro 导数截止频率，单位 Hz")
+    parser.add_argument("--kalman-accel-std", type=float, default=None, help="卡尔曼加速度噪声，单位 米/秒²")
+    parser.add_argument("--kalman-meas-std", type=float, default=None, help="卡尔曼测量噪声，单位米")
+    parser.add_argument("--gap-fill", type=int, default=None, help="最多插值多少帧缺测。0 表示不补")
+    parser.add_argument("--fixed-shape", action="store_true", help="用这一段的骨长中位数重摆关节")
+    parser.add_argument("--no-lr-consistency", action="store_true", help="不要按轨迹修正左右手标签")
     args = parser.parse_args(argv)
-    episode = build_episode(args.session, backend=args.backend, hands_path=args.hands)
+    episode = build_episode(
+        args.session,
+        backend=args.backend,
+        hands_path=args.hands,
+        refine=refine_params_from_args(args),
+    )
     save_episode(episode, args.out)
     print(
         "wrote %s frames=%d backend=%s stereo=%s frame=%s"

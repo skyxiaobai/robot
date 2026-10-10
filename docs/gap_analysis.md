@@ -21,7 +21,7 @@
 
 `scripts/ego_visualize.py` 可以把统一 episode 画出来：手骨架叠加、通过/拒绝对照、头和手腕的世界系轨迹。投影和 QC 相同。Colab 合成样本单元会写 PNG 和短 MP4。转换现在会进入符号链接的任务目录；以前 `Path.rglob` 会把这些目录整段跳过。
 
-自有头戴会话（规格 §7.7，设备还没有）现在可以收成同一份 JSON。`scripts/headcam/hand_pose.py` 接 HaMeR、WiLoR 和 CPU 上的 MediaPipe；左右目 2D 用标定三角化，修正单目尺度。相机位姿读 TUM 文件，没有文件时是单位阵。`scripts/convert_headcam.py` 写出的 episode 直接进现有的 QC、覆盖、导出和可视化。笔记本是 `notebooks/headcam_hand_pose_colab.ipynb`。
+自有头戴会话（规格 §7.7，设备还没有）现在可以收成同一份 JSON。`scripts/headcam/hand_pose.py` 接 HaMeR、WiLoR 和 CPU 上的 MediaPipe；左右目 2D 用标定三角化，修正单目尺度。相机位姿读 TUM 文件，没有文件时是单位阵。`scripts/convert_headcam.py` 写出的 episode 直接进现有的 QC、覆盖、导出和可视化。笔记本是 `notebooks/headcam_hand_pose_colab.ipynb`。检测之后可以选用 `scripts/headcam/hand_track_refine.py` 做平滑、补洞和固定骨长；不传开关时数字不变。补洞帧带 `filled`，QC 会拒绝。EgoDex 上的消融表在 `docs/hand_refine_egodex.md`。
 
 自有设备仍缺这些：
 
