@@ -80,6 +80,9 @@ class StereoLabelCoverageTest(unittest.TestCase):
         self.assertEqual(qc["reasons"], [])
         self.assertNotIn(False, [qc["good_frame_mask"][i] for i in range(10, n)])
         self.assertTrue(all(not qc["good_frame_mask"][i] for i in range(10)))
+        self.assertIn("valid_action_ratio", qc)
+        self.assertLess(qc["valid_action_ratio"], 1.0)
+        self.assertIn("valid_full_chunk_ratio_16", qc)
 
     def test_long_gate_reject_is_not_staged_static(self):
         """两只手都被门限丢掉超过 1 秒时，缺测不是摆拍，不能据此拒绝片段。"""

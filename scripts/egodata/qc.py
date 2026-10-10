@@ -13,6 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
+from egodata.action_valid import DEFAULT_CHUNK_LENGTHS, validity_fields
+
 DEFAULTS = {
     "confidence_min": 0.5,
     "blur_ang_speed": 1.5,
@@ -299,7 +301,7 @@ def qc_episode(episode, **overrides):
     reasons = []
     if not accepted:
         reasons = [name for name in _FLAG_LABELS if counts[name] > 0]
-    return {
+    result = {
         "episode_id": episode.get("episode_id", ""),
         "num_frames": num_frames,
         "fps": fps,
@@ -311,6 +313,26 @@ def qc_episode(episode, **overrides):
         "reasons": reasons,
         "interaction": interaction_summary(episode),
     }
+    result.update(validity_fields(episode))
+    return result
+
+
+def _aggregate_validity(results):
+    """全部片段的动作步，不只是通过质检的片段。不够长的块长保持 None。"""
+    action_count = 0
+    valid_count = 0
+    chunks = {int(length): [0, 0] for length in DEFAULT_CHUNK_LENGTHS}
+    for item in results:
+        action_count += int(item.get("action_count") or 0)
+        valid_count += int(item.get("valid_action_count") or 0)
+        for length in chunks:
+            chunks[length][0] += int(item.get("chunk_count_%d" % length) or 0)
+            chunks[length][1] += int(item.get("full_chunk_count_%d" % length) or 0)
+    ratio = None if action_count == 0 else valid_count / float(action_count)
+    full = {}
+    for length, (count, full_count) in chunks.items():
+        full[length] = None if count == 0 else full_count / float(count)
+    return ratio, full
 
 
 def yield_report(results):
@@ -318,6 +340,7 @@ def yield_report(results):
     usable_frames = sum(item["num_frames"] for item in results if item["accepted"])
     rejected = sum(1 for item in results if not item["accepted"])
     ratio = 0.0 if raw_frames == 0 else usable_frames / float(raw_frames)
+    valid_ratio, full_chunks = _aggregate_validity(results)
     return {
         "yield": ratio,
         "raw_frames": raw_frames,
@@ -325,6 +348,8 @@ def yield_report(results):
         "episodes": len(results),
         "accepted_episodes": len(results) - rejected,
         "rejected_episodes": rejected,
+        "valid_action_ratio": valid_ratio,
+        "valid_full_chunk_ratio": full_chunks,
         "results": results,
     }
 
@@ -353,6 +378,22 @@ def write_yield_reports(report, html_path, csv_path):
             )
         )
     coverage_head = "<th>标注覆盖</th>" if has_coverage else ""
+
+    def _fmt_ratio(value):
+        if value is None:
+            return "—"
+        return "%.1f%%" % (100.0 * float(value))
+
+    full = report.get("valid_full_chunk_ratio") or {}
+    chunk_text = "，".join(
+        "块长 %d %s" % (length, _fmt_ratio(full.get(length)))
+        for length in DEFAULT_CHUNK_LENGTHS
+    )
+    validity_note = (
+        "<p>有效动作比例（每只手的每一步；全部片段，不只是通过质检的）= <strong>%s</strong>。"
+        "整段都有效的动作块比例：%s。没有够长的块时记为 —。</p>"
+        % (_fmt_ratio(report.get("valid_action_ratio")), chunk_text)
+    )
     document = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>QC 产出率</title>
 <style>
@@ -363,6 +404,7 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
 <h1>训练产出率</h1>
 <p>产出率 = 通过片段 QC 的帧数 / 原始帧数 = %d / %d = <strong>%.1f%%</strong></p>
 <p>片段 %d 条，拒绝 %d 条。</p>
+%s
 <table>
 <tr><th>episode</th><th>帧数</th><th>结论</th><th>坏帧比例</th>%s<th>原因</th></tr>
 %s
@@ -374,6 +416,7 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
         100.0 * report["yield"],
         report["episodes"],
         report["rejected_episodes"],
+        validity_note,
         coverage_head,
         "\n".join(rows),
     )
@@ -385,12 +428,21 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
             if name not in base and name not in extra:
                 extra.append(name)
     coverage_cols = ["label_coverage", "labeled_frames", "dropped_label_frames"] if has_coverage else []
+    validity_cols = ["valid_action_ratio"] + [
+        "valid_full_chunk_ratio_%d" % length for length in DEFAULT_CHUNK_LENGTHS
+    ]
+
+    def _cell(item, key):
+        if key not in item or item[key] is None:
+            return ""
+        return "%.6f" % float(item[key])
+
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow([
             "episode_id", "num_frames", "duration_s", "accepted", "bad_fraction",
             "hands_out_of_frame", "view_drift", "blur", "staged_static", "reasons",
-        ] + extra + coverage_cols)
+        ] + extra + coverage_cols + validity_cols)
         for item in report["results"]:
             coverage_cells = []
             if has_coverage:
@@ -411,5 +463,7 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
                 item["flags"]["blur"],
                 item["flags"]["staged_static"],
                 "|".join(item["reasons"]),
-            ] + [item["flags"].get(name, 0) for name in extra] + coverage_cells)
+            ] + [item["flags"].get(name, 0) for name in extra] + coverage_cells + [
+                _cell(item, key) for key in validity_cols
+            ])
     return html_path, csv_path
