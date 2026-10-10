@@ -36,6 +36,23 @@ def main(argv=None):
         report["rejected_episodes"],
         report["episodes"],
     ))
+
+    def _fmt(value):
+        if value is None:
+            return "n/a"
+        return "%.6f" % float(value)
+
+    chunks = report.get("valid_full_chunk_ratio") or {}
+    print(
+        "valid_action_ratio %s valid_full_chunk_ratio_16 %s "
+        "valid_full_chunk_ratio_50 %s valid_full_chunk_ratio_100 %s"
+        % (
+            _fmt(report.get("valid_action_ratio")),
+            _fmt(chunks.get(16)),
+            _fmt(chunks.get(50)),
+            _fmt(chunks.get(100)),
+        )
+    )
     return 0
 
 

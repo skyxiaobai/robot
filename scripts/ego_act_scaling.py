@@ -6,6 +6,11 @@ ACT 吃 ``observation.image`` 和 ``observation.state``，动作块长度 16。
 lerobot 0.6.1 的 ACT 没有语言编码器。任务句子已经写在数据集的 task 字段里，
 这里不另造一个语言开关。换到带语言编码器的策略时可以直接用这些句子。
 
+``action_valid`` 为 0 的手不进验证 L1，也不进「保持不动」基线。
+两只手都无效的步并进 ``action_is_pad``；只有一只手无效时用按维掩码，
+避免把另一只手的实测增量也丢掉。训练入口是 ``scripts/ego_act_train.py``，
+它在调用 lerobot 之前装上这个掩码。没有 ``action_valid`` 列时按全部有效，并警告。
+
 数据量按整条 episode 计：验证 episode 由种子固定，训练 episode 是打乱后
 顺序的前缀。更小的档是更大档的前缀。lerobot 的 ``eval_split`` 会按任务
 丢掉每个子集末尾的 episode，各档验证集不一样，所以这里不用它。
@@ -23,9 +28,11 @@ T4（16GB）/ L4（24GB）上，224 视频、batch 4、ResNet18，一步大约 0
 """
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +40,13 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from egodata.action_valid import (  # noqa: E402
+    action_is_pad_from_valid,
+    chunk_valid_fraction,
+    element_mask,
+    masked_l1,
+    stack_chunk_mask,
+)
 from ego_pretrain_bc import (  # noqa: E402
     _chunk_starts,
     _copy_current_vector,
@@ -41,6 +55,7 @@ from ego_pretrain_bc import (  # noqa: E402
     _select_indices,
     _spans,
     _stack_targets,
+    load_action_valid,
 )
 
 
@@ -80,10 +95,14 @@ def count_frames(episodes, episode_ids):
     return int(sum(int(episode) in wanted for episode in episodes))
 
 
-def copy_baseline_l1(dataset_dir, val_episode_ids, horizon=None):
-    """验证集上「保持不动」相对真实增量的平均绝对误差，原始动作单位。"""
+def copy_baseline_l1(dataset_dir, val_episode_ids, horizon=None, min_valid_fraction=0.0):
+    """验证集上「保持不动」相对真实增量的平均绝对误差，原始动作单位。
+
+    无效手不计入。``min_valid_fraction`` 大于 0 时，比例不够的块整块跳过。
+    """
     _state, action, episodes = _load_arrays(dataset_dir)
     del _state
+    action_valid = load_action_valid(dataset_dir, len(action))
     horizon = _read_horizon(dataset_dir, horizon)
     wanted = {int(item) for item in val_episode_ids}
     chunks = []
@@ -94,9 +113,19 @@ def copy_baseline_l1(dataset_dir, val_episode_ids, horizon=None):
     if not chunks:
         raise ValueError("验证 episode 里没有足够长的动作块")
     indices = np.concatenate(chunks)
+    if float(min_valid_fraction) > 0.0:
+        kept = [
+            int(start)
+            for start in indices
+            if chunk_valid_fraction(action_valid, int(start), horizon) + 1e-12 >= float(min_valid_fraction)
+        ]
+        if not kept:
+            return 0.0
+        indices = np.asarray(kept, dtype=np.int64)
     targets = _stack_targets(action, indices, horizon)
     baseline = _copy_current_vector(action.shape[1], horizon)
-    return float(np.mean(np.abs(targets - baseline)))
+    mask = stack_chunk_mask(action_valid, indices, horizon, action.shape[1])
+    return masked_l1(targets, baseline, mask)
 
 
 def _lerobot_train_command():
@@ -129,7 +158,8 @@ def lerobot_train_argv(
     log_freq = 1 if int(steps) < 20 else 50
     workers = 0 if device == "cpu" else 2
     return [
-        _lerobot_train_command(),
+        sys.executable,
+        str(Path(__file__).resolve().parent / "ego_act_train.py"),
         "--dataset.repo_id=local/egodex",
         "--dataset.root=%s" % Path(dataset_dir).resolve(),
         "--dataset.episodes=[%s]" % episode_list,
@@ -253,8 +283,13 @@ def _batch_from_item(item, device):
     return batch
 
 
-def evaluate_act_l1(dataset_dir, policy_dir, val_episode_ids, device, horizon, max_batches=4):
-    """验证集上的动作 L1，反归一化之后，和保持不动基线同一单位。需要 lerobot 0.6.1。"""
+def evaluate_act_l1(
+    dataset_dir, policy_dir, val_episode_ids, device, horizon, max_batches=4, min_valid_fraction=0.0,
+):
+    """验证集上的动作 L1，反归一化之后，和保持不动基线同一单位。需要 lerobot 0.6.1。
+
+    只在有效手上平均。比例低于 ``min_valid_fraction`` 的块不参与。
+    """
     import torch
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.policies.act.modeling_act import ACTPolicy
@@ -279,8 +314,9 @@ def evaluate_act_l1(dataset_dir, policy_dir, val_episode_ids, device, horizon, m
         policy_cfg=policy.config,
         pretrained_path=str(policy_path),
     )
+    valid_table = load_action_valid(dataset_dir)
     total = 0.0
-    count = 0
+    weight = 0.0
     limit = min(len(dataset), max(1, int(max_batches) * 2))
     for index in range(limit):
         item = dataset[index]
@@ -295,13 +331,220 @@ def evaluate_act_l1(dataset_dir, policy_dir, val_episode_ids, device, horizon, m
         prediction = prediction.detach().to(dtype=torch.float32, device="cpu")
         if prediction.ndim == 3:
             prediction = prediction[0]
-        width = min(prediction.shape[-1], action.shape[-1])
-        steps = min(prediction.shape[0], action.shape[0])
-        total += torch.mean(torch.abs(prediction[:steps, :width] - action[:steps, :width])).item()
-        count += 1
-    if count < 1:
-        raise ValueError("验证集是空的")
-    return total / count
+        width = min(int(prediction.shape[-1]), int(action.shape[-1]))
+        steps = min(int(prediction.shape[0]), int(action.shape[0]))
+        row = int(np.asarray(item["index"]).reshape(-1)[0]) if "index" in item else None
+        window = np.ones((steps, 2), dtype=np.float64)
+        if row is not None:
+            take = max(0, min(steps, len(valid_table) - row))
+            if take:
+                window[:take] = valid_table[row:row + take]
+            if take < steps:
+                window[take:] = 0.0
+        pad = None
+        if "action_is_pad" in item:
+            pad = np.asarray(item["action_is_pad"]).reshape(-1)[:steps]
+        if float(min_valid_fraction) > 0.0:
+            if chunk_valid_fraction(window, 0, steps) + 1e-12 < float(min_valid_fraction):
+                continue
+        mask = element_mask(pad, window, width)
+        error = torch.abs(prediction[:steps, :width] - action[:steps, :width]).detach().cpu().numpy()
+        total += float(np.sum(error * mask))
+        weight += float(np.sum(mask))
+    if weight <= 0.0:
+        raise ValueError("验证集是空的，或有效动作被掩码滤空了")
+    return total / weight
+
+
+def _cached_action_valid(root):
+    if root is None:
+        return None
+    key = str(root)
+    cache = getattr(_cached_action_valid, "cache", {})
+    if key not in cache:
+        try:
+            cache[key] = load_action_valid(key)
+        except (OSError, ValueError):
+            cache[key] = None
+        _cached_action_valid.cache = cache
+    return cache[key]
+
+
+def _attach_action_valid_item(dataset, item):
+    """把这一块的 action_valid 放进样本，并把两只手都无效的步并进 action_is_pad。"""
+    import torch
+
+    action = item.get("action")
+    if action is None or "index" not in item:
+        return item
+    if not torch.is_tensor(action):
+        action = torch.as_tensor(action)
+    horizon = 1 if action.ndim == 1 else int(action.shape[0])
+    table = _cached_action_valid(getattr(dataset, "root", None))
+    if table is None:
+        return item
+    row = int(np.asarray(item["index"]).reshape(-1)[0])
+    window = np.zeros((horizon, 2), dtype=np.float32)
+    take = max(0, min(horizon, len(table) - row))
+    if take:
+        window[:take] = table[row:row + take]
+    pad = None
+    if "action_is_pad" in item:
+        pad = np.asarray(item["action_is_pad"], dtype=bool).reshape(-1)[:horizon]
+        if pad.shape[0] < horizon:
+            pad = np.pad(pad, (0, horizon - pad.shape[0]), constant_values=True)
+        window[pad] = 0.0
+    minimum = float(os.environ.get("EGO_MIN_VALID_FRACTION", "0") or 0)
+    if minimum > 0.0 and chunk_valid_fraction(window, 0, horizon) + 1e-12 < minimum:
+        window[:] = 0.0
+    item["action_valid"] = torch.as_tensor(window)
+    item["action_is_pad"] = torch.as_tensor(action_is_pad_from_valid(window, pad))
+    return item
+
+
+def _torch_hand_mask(valid, action_dim):
+    import torch
+
+    left = (valid[..., 0] >= 0.5).to(dtype=torch.float32)
+    right = (valid[..., 1] >= 0.5).to(dtype=torch.float32)
+    mask = torch.zeros(*valid.shape[:-1], int(action_dim), dtype=left.dtype, device=valid.device)
+    if action_dim >= 7:
+        mask[..., 0:7] = left.unsqueeze(-1)
+    if action_dim >= 14:
+        mask[..., 7:14] = right.unsqueeze(-1)
+    joint = 63
+    if action_dim >= 14 + joint:
+        mask[..., 14:14 + joint] = left.unsqueeze(-1)
+    if action_dim >= 14 + 2 * joint:
+        mask[..., 14 + joint:14 + 2 * joint] = right.unsqueeze(-1)
+    return mask
+
+
+def _act_constants():
+    import importlib
+
+    for module_name in ("lerobot.utils.constants", "lerobot.common.constants", "lerobot.constants"):
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        action = getattr(module, "ACTION", None)
+        images = getattr(module, "OBS_IMAGES", None)
+        if action is not None:
+            return action, images
+    return "action", None
+
+
+def _act_forward_masked(policy, batch):
+    """复刻 ACT 的 L1，但分母只数有效手的维度。"""
+    import torch
+    import torch.nn.functional as F
+
+    batch = dict(batch)
+    action_key, images_key = _act_constants()
+    image_features = getattr(policy.config, "image_features", None)
+    if image_features and images_key is not None:
+        batch[images_key] = [batch[key] for key in image_features]
+    valid = batch["action_valid"]
+    if not torch.is_tensor(valid):
+        valid = torch.as_tensor(valid, device=batch[action_key].device)
+    if valid.ndim == 2:
+        valid = valid.unsqueeze(0)
+    pad = batch["action_is_pad"]
+    if not torch.is_tensor(pad):
+        pad = torch.as_tensor(pad, device=valid.device)
+    if pad.ndim == 1:
+        pad = pad.unsqueeze(0)
+    both_invalid = valid.sum(dim=-1) < 0.5
+    pad = pad.bool() | both_invalid.to(device=pad.device)
+    batch["action_is_pad"] = pad
+    actions_hat, latent = policy.model(batch)
+    mu_hat, log_sigma = (None, None)
+    if isinstance(latent, tuple) and len(latent) == 2:
+        mu_hat, log_sigma = latent
+    abs_err = F.l1_loss(batch[action_key], actions_hat, reduction="none")
+    element = _torch_hand_mask(valid.to(device=abs_err.device), abs_err.shape[-1])
+    element = element * (~pad).unsqueeze(-1).to(dtype=abs_err.dtype, device=abs_err.device)
+    l1_loss = (abs_err * element).sum() / element.sum().clamp_min(1)
+    loss_dict = {"l1_loss": float(l1_loss.detach().cpu())}
+    use_vae = bool(getattr(policy.config, "use_vae", False))
+    if use_vae and log_sigma is not None and mu_hat is not None:
+        mean_kld = (
+            (-0.5 * (1 + log_sigma - mu_hat.pow(2) - log_sigma.exp())).sum(-1).mean()
+        )
+        loss_dict["kld_loss"] = float(mean_kld.detach().cpu())
+        loss = l1_loss + mean_kld * policy.config.kl_weight
+    else:
+        loss = l1_loss
+    return loss, loss_dict
+
+
+def install_act_hand_mask():
+    """在当前进程里给 lerobot 的数据集和 ACT 损失接上 action_valid。
+
+    找不到对应类时只警告。两只手都无效的步写入 action_is_pad；
+    只有一只手无效时，损失按维屏蔽。
+    """
+    import importlib
+
+    dataset_cls = None
+    for module_name in (
+        "lerobot.datasets.lerobot_dataset",
+        "lerobot.common.datasets.lerobot_dataset",
+    ):
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        dataset_cls = getattr(module, "LeRobotDataset", None)
+        if dataset_cls is not None:
+            break
+    policy_cls = None
+    for module_name in (
+        "lerobot.policies.act.modeling_act",
+        "lerobot.common.policies.act.modeling_act",
+    ):
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        policy_cls = getattr(module, "ACTPolicy", None)
+        if policy_cls is not None:
+            break
+    if dataset_cls is not None and not getattr(dataset_cls, "_egodata_action_valid", False):
+        original_get = dataset_cls.__getitem__
+
+        def getitem(self, idx):
+            return _attach_action_valid_item(self, original_get(self, idx))
+
+        dataset_cls.__getitem__ = getitem
+        dataset_cls._egodata_action_valid = True
+    if policy_cls is not None and not getattr(policy_cls, "_egodata_action_valid", False):
+        original_forward = policy_cls.forward
+
+        def forward(self, batch):
+            if not isinstance(batch, dict) or "action_valid" not in batch:
+                return original_forward(self, batch)
+            try:
+                return _act_forward_masked(self, batch)
+            except Exception as exc:
+                warnings.warn(
+                    "ACT 按手屏蔽失败，退回原损失：%s" % exc,
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return original_forward(self, batch)
+
+        policy_cls.forward = forward
+        policy_cls._egodata_action_valid = True
+    if dataset_cls is None or policy_cls is None:
+        warnings.warn(
+            "没有找到 lerobot 的数据集或 ACT，训练损失不会按 action_valid 按手屏蔽。",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return False
+    return True
 
 
 def main(argv=None):
@@ -314,6 +557,12 @@ def main(argv=None):
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--val-fraction", type=float, default=0.1)
     parser.add_argument("--horizon", type=int, default=None)
+    parser.add_argument(
+        "--min-valid-fraction",
+        type=float,
+        default=0.0,
+        help="动作块里有效手-步比例低于这个值时，验证不算这块；训练进程里整块标成 pad",
+    )
     parser.add_argument("--out-dir", default="outputs/ego_act_scaling")
     parser.add_argument("--dry-run", action="store_true", help="只打印命令，不训练")
     parser.add_argument("--run", action="store_true", help="调用 lerobot-train，再写验证日志和缩放报告")
@@ -336,11 +585,15 @@ def main(argv=None):
     for run in runs:
         if Path(run["output_dir"]).exists():
             raise SystemExit("%s 已存在。lerobot-train 在 resume=false 时不会覆盖它。" % run["output_dir"])
-        subprocess.check_call(run["argv"])
-        copy_loss = copy_baseline_l1(args.dataset, run["val_episode_ids"], run["horizon"])
+        env = os.environ.copy()
+        env["EGO_MIN_VALID_FRACTION"] = str(args.min_valid_fraction)
+        subprocess.check_call(run["argv"], env=env)
+        copy_loss = copy_baseline_l1(
+            args.dataset, run["val_episode_ids"], run["horizon"], args.min_valid_fraction,
+        )
         val_loss = evaluate_act_l1(
             args.dataset, run["output_dir"], run["val_episode_ids"], args.device,
-            run["horizon"], args.max_eval_batches,
+            run["horizon"], args.max_eval_batches, args.min_valid_fraction,
         )
         Path(run["log"]).write_text(
             format_metrics_log(run, val_loss, copy_loss, run["steps"], args.device),

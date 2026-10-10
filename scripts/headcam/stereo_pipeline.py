@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 from egodata.coverage import normalize_environment
-from egodata.schema import SCHEMA_VERSION, save_episode, validate_episode
+from egodata.schema import SCHEMA_VERSION, empty_interaction, save_episode, validate_episode
 from headcam.hand_pose import (
     JOINTS,
     associate_camera_poses,
@@ -433,8 +433,11 @@ def _temporal_wrist(joints, confs, diag, poses, timestamps, params):
             joints[side][i] = joints[side][i] + delta_cam
 
 
-def build_stereo_episode(info, views, params):
-    """返回 (episode, diagnostics)。diagnostics 里有逐帧逐手的检查前/后结果。"""
+def build_stereo_episode(info, views, params, hand_fn=None, source="headcam_stereo", backend_label="wilor_stereo"):
+    """返回 (episode, diagnostics)。diagnostics 里有逐帧逐手的检查前/后结果。
+
+    ``hand_fn(index, side)`` 可替换逐手的三维求解（iPhone 激光雷达用 ``headcam.rgbd_pipeline.depth_hand``），
+    返回和 ``stereo_hand`` 同样的字典；不传时用双目三角化。"""
     import convert_headcam as ch
     from egodata.coverage import coarse_object_class, normalize_action
     metadata = info["metadata"]
@@ -451,7 +454,10 @@ def build_stereo_episode(info, views, params):
     confs = {side: np.full((num_frames, JOINTS), np.nan) for side in SIDES}
     for index in range(num_frames):
         for side in SIDES:
-            result = stereo_hand(views["left"][index][side], views["right"][index][side], calib, params)
+            if hand_fn is not None:
+                result = hand_fn(index, side)
+            else:
+                result = stereo_hand(views["left"][index][side], views["right"][index][side], calib, params)
             diag[side].append(result)
             if result["joints_cam"] is not None:
                 joints[side][index] = result["joints_cam"]
@@ -488,7 +494,7 @@ def build_stereo_episode(info, views, params):
     episode = {
         "schema_version": SCHEMA_VERSION,
         "episode_id": metadata["episode_id"],
-        "source": "headcam_stereo",
+        "source": source,
         "source_path": str(info["rgb_video"] or info["left_video"]),
         "video_path": str(info["rgb_video"] or info["left_video"]),
         "fps": fps,
@@ -500,6 +506,7 @@ def build_stereo_episode(info, views, params):
         "camera_intrinsic": np.asarray(calib["K_left"], dtype=float).tolist(),
         "camera_poses": [p.tolist() for p in poses],
         "hands": hands,
+        **empty_interaction(num_frames),
         "annotation": {
             "environment": {"name": normalize_environment(environment_raw), "detail": environment_raw,
                             "source": "metadata" if environment_raw else "missing"},
@@ -515,17 +522,17 @@ def build_stereo_episode(info, views, params):
             "action_types": sorted(set(normalize_action(v) for v in verbs)),
         },
         "hand_pose": {
-            "backend": "wilor_stereo",
-            "stereo": True,
+            "backend": backend_label,
+            "stereo": hand_fn is None,
             "slam_time_gap_s": gaps,
             "imu_csv": None if info["imu_path"] is None else info["imu_path"].name,
             "imu_samples": ch._count_rows(info["imu_path"]),
-            "calib": info["calib_path"].name,
+            "calib": Path(info["calib_path"]).name,
             "refine": refine_info,
         },
         "stereo": {
             "params": params.to_dict(),
-            "baseline_m": float(np.linalg.norm(np.asarray(calib["T"], dtype=float))),
+            "baseline_m": float(np.linalg.norm(np.asarray(calib["T"], dtype=float))) if "T" in calib else None,
             "per_frame": statuses,
             "reproj_px": {side: [d["reproj_px"] for d in diag[side]] for side in SIDES},
         },
@@ -622,9 +629,28 @@ def summarize_eval(rows):
 
 # ---------------------------------------------------------------- 一条命令
 
+def build_stereo_session(session_dir, out, params, backend_name, backend, log):
+    info = load_session(session_dir)
+    name = info["session"].name
+    log("[%s] 手部模型（%s）" % (name, backend_name))
+    cache = out / "cache" / ("%s.%s.json" % (name, backend_name))
+    if params.assoc and backend_name == "wilor":
+        views, seconds = run_backend_assoc(info, out / "cache", params, backend=backend, log=log)
+    else:
+        views, seconds = run_backend(info, backend_name, cache_path=cache, backend=backend, log=log)
+    t0 = time.time()
+    episode, extra = build_stereo_episode(info, views, params)
+    return info, episode, extra, seconds, time.time() - t0
+
+
 def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="local/headcam_stereo",
-                 export=True, backend=None, log=print, export_python=None, min_label_coverage=None):
-    """跑完整条管线。返回报告字典，同时写 ``out_dir/report.json``。"""
+                 export=True, backend=None, log=print, export_python=None, min_label_coverage=None,
+                 session_builder=None):
+    """跑完整条管线。返回报告字典，同时写 ``out_dir/report.json``。
+
+    ``session_builder(session_dir, out, params, backend_name, backend, log)`` 返回
+    ``(info, episode, extra, backend_seconds, build_seconds)``；默认是双目 ``build_stereo_session``，
+    iPhone 激光雷达会话用 ``headcam.rgbd_pipeline.build_rgbd_session``。"""
     from egodata.qc import write_yield_reports, yield_report
     from egodata.stereo_qc import qc_stereo_episode
 
@@ -635,18 +661,11 @@ def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="
     results, evals, per_session = [], [], []
     all_eval_rows = []
     for session_dir in sessions:
-        info = load_session(session_dir)
+        info, episode, extra, seconds, build_s = (session_builder or build_stereo_session)(
+            session_dir, out, params, backend_name, backend, log)
         name = info["session"].name
-        log("[%s] 手部模型（%s）" % (name, backend_name))
-        cache = out / "cache" / ("%s.%s.json" % (name, backend_name))
-        if params.assoc and backend_name == "wilor":
-            views, seconds = run_backend_assoc(info, out / "cache", params, backend=backend, log=log)
-        else:
-            views, seconds = run_backend(info, backend_name, cache_path=cache, backend=backend, log=log)
         timing["backend_s"] += float(seconds or 0.0)
-        t0 = time.time()
-        episode, extra = build_stereo_episode(info, views, params)
-        timing["stereo_refine_s"] += time.time() - t0
+        timing["stereo_refine_s"] += build_s
         path = out / "episodes" / ("%s.json" % name)
         save_episode(episode, path)
         t0 = time.time()

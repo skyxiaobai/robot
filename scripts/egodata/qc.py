@@ -13,6 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
+from egodata.action_valid import DEFAULT_CHUNK_LENGTHS, validity_fields
+
 DEFAULTS = {
     "confidence_min": 0.5,
     "blur_ang_speed": 1.5,
@@ -41,9 +43,95 @@ _EXTRA_LABELS = {
     "low_label_coverage": "标注覆盖不足",
 }
 
+# 接触和抓取还没有在自采数据上标定过，只写进报告，不算坏帧，也不因此拒绝片段。
+INTERACTION_FLAG_LABELS = {
+    "grasp_without_contact": "抓取但没有接触",
+    "contact_unknown_object": "接触到了不认识的物体",
+}
+
 
 def _label(name):
-    return _FLAG_LABELS.get(name) or STEREO_FLAG_LABELS.get(name) or _EXTRA_LABELS.get(name) or name
+    return (
+        _FLAG_LABELS.get(name)
+        or STEREO_FLAG_LABELS.get(name)
+        or INTERACTION_FLAG_LABELS.get(name)
+        or _EXTRA_LABELS.get(name)
+        or name
+    )
+
+
+def interaction_frame_flags(episode):
+    """抓取和接触对不上的帧。没有这两段标注时返回空，避免给旧 JSON 加一列。"""
+    if "grasp" not in episode and "contact" not in episode:
+        return {}
+    num_frames = int(episode["num_frames"])
+    flags = {name: np.zeros(num_frames, dtype=bool) for name in INTERACTION_FLAG_LABELS}
+    known = {
+        str(obj.get("id"))
+        for obj in (episode.get("objects") or [])
+        if isinstance(obj, dict) and obj.get("id") is not None
+    }
+    grasp = episode.get("grasp") or {}
+    contact = episode.get("contact") or {}
+    for side in ("left", "right"):
+        g_hand = grasp.get(side) or {}
+        c_hand = contact.get(side) or {}
+        states = g_hand.get("state") or []
+        g_valid = g_hand.get("valid") or []
+        object_ids = c_hand.get("object_id") or []
+        c_valid = c_hand.get("valid") or []
+        for index in range(num_frames):
+            grasped = (
+                index < len(g_valid) and bool(g_valid[index])
+                and index < len(states) and states[index] == "grasp"
+            )
+            if grasped:
+                touched = (
+                    index < len(c_valid) and bool(c_valid[index])
+                    and index < len(object_ids) and object_ids[index] is not None
+                )
+                if not touched:
+                    flags["grasp_without_contact"][index] = True
+            if (
+                index < len(c_valid) and bool(c_valid[index])
+                and index < len(object_ids) and isinstance(object_ids[index], str)
+                and object_ids[index] not in known
+            ):
+                flags["contact_unknown_object"][index] = True
+    return flags
+
+
+def interaction_summary(episode):
+    """有效位占比。没有物体轨迹时物体那一项是 None，不是 0。"""
+    num_frames = int(episode.get("num_frames") or 0)
+    objects = episode.get("objects")
+    if not isinstance(objects, list) or not objects or num_frames < 1:
+        pose_fraction = None
+    else:
+        good = 0
+        total = 0
+        for obj in objects:
+            valid = obj.get("valid") or []
+            total += num_frames
+            good += sum(1 for index in range(num_frames) if index < len(valid) and valid[index])
+        pose_fraction = good / float(total)
+
+    def channel_fraction(block):
+        if not isinstance(block, dict) or num_frames < 1:
+            return None
+        good = 0
+        total = 0
+        for side in ("left", "right"):
+            valid = (block.get(side) or {}).get("valid") or []
+            total += num_frames
+            good += sum(1 for index in range(num_frames) if index < len(valid) and valid[index])
+        return None if total == 0 else good / float(total)
+
+    return {
+        "object_pose_valid_fraction": pose_fraction,
+        "contact_valid_fraction": channel_fraction(episode.get("contact")),
+        "grasp_valid_fraction": channel_fraction(episode.get("grasp")),
+    }
 
 
 def _project(intrinsic, camera_pose, point):
@@ -201,16 +289,19 @@ def qc_episode(episode, **overrides):
     options = dict(DEFAULTS)
     options.update(overrides)
     flags = frame_qc_flags(episode, **overrides)
+    extra = interaction_frame_flags(episode)
     num_frames = episode["num_frames"]
     fps = float(episode["fps"])
     counts = {name: int(np.sum(values)) for name, values in flags.items()}
-    bad = int(np.sum(np.any(np.stack([flags[name] for name in flags]), axis=0)))
+    for name, values in extra.items():
+        counts[name] = int(np.sum(values))
+    bad = int(np.sum(np.any(np.stack([flags[name] for name in _FLAG_LABELS]), axis=0)))
     bad_fraction = bad / float(num_frames)
     accepted = bad_fraction <= options["max_bad_fraction"]
     reasons = []
     if not accepted:
         reasons = [name for name in _FLAG_LABELS if counts[name] > 0]
-    return {
+    result = {
         "episode_id": episode.get("episode_id", ""),
         "num_frames": num_frames,
         "fps": fps,
@@ -220,7 +311,28 @@ def qc_episode(episode, **overrides):
         "bad_fraction": bad_fraction,
         "flags": counts,
         "reasons": reasons,
+        "interaction": interaction_summary(episode),
     }
+    result.update(validity_fields(episode))
+    return result
+
+
+def _aggregate_validity(results):
+    """全部片段的动作步，不只是通过质检的片段。不够长的块长保持 None。"""
+    action_count = 0
+    valid_count = 0
+    chunks = {int(length): [0, 0] for length in DEFAULT_CHUNK_LENGTHS}
+    for item in results:
+        action_count += int(item.get("action_count") or 0)
+        valid_count += int(item.get("valid_action_count") or 0)
+        for length in chunks:
+            chunks[length][0] += int(item.get("chunk_count_%d" % length) or 0)
+            chunks[length][1] += int(item.get("full_chunk_count_%d" % length) or 0)
+    ratio = None if action_count == 0 else valid_count / float(action_count)
+    full = {}
+    for length, (count, full_count) in chunks.items():
+        full[length] = None if count == 0 else full_count / float(count)
+    return ratio, full
 
 
 def yield_report(results):
@@ -228,6 +340,7 @@ def yield_report(results):
     usable_frames = sum(item["num_frames"] for item in results if item["accepted"])
     rejected = sum(1 for item in results if not item["accepted"])
     ratio = 0.0 if raw_frames == 0 else usable_frames / float(raw_frames)
+    valid_ratio, full_chunks = _aggregate_validity(results)
     return {
         "yield": ratio,
         "raw_frames": raw_frames,
@@ -235,6 +348,8 @@ def yield_report(results):
         "episodes": len(results),
         "accepted_episodes": len(results) - rejected,
         "rejected_episodes": rejected,
+        "valid_action_ratio": valid_ratio,
+        "valid_full_chunk_ratio": full_chunks,
         "results": results,
     }
 
@@ -263,6 +378,22 @@ def write_yield_reports(report, html_path, csv_path):
             )
         )
     coverage_head = "<th>标注覆盖</th>" if has_coverage else ""
+
+    def _fmt_ratio(value):
+        if value is None:
+            return "—"
+        return "%.1f%%" % (100.0 * float(value))
+
+    full = report.get("valid_full_chunk_ratio") or {}
+    chunk_text = "，".join(
+        "块长 %d %s" % (length, _fmt_ratio(full.get(length)))
+        for length in DEFAULT_CHUNK_LENGTHS
+    )
+    validity_note = (
+        "<p>有效动作比例（每只手的每一步；全部片段，不只是通过质检的）= <strong>%s</strong>。"
+        "整段都有效的动作块比例：%s。没有够长的块时记为 —。</p>"
+        % (_fmt_ratio(report.get("valid_action_ratio")), chunk_text)
+    )
     document = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>QC 产出率</title>
 <style>
@@ -273,6 +404,7 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
 <h1>训练产出率</h1>
 <p>产出率 = 通过片段 QC 的帧数 / 原始帧数 = %d / %d = <strong>%.1f%%</strong></p>
 <p>片段 %d 条，拒绝 %d 条。</p>
+%s
 <table>
 <tr><th>episode</th><th>帧数</th><th>结论</th><th>坏帧比例</th>%s<th>原因</th></tr>
 %s
@@ -284,6 +416,7 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
         100.0 * report["yield"],
         report["episodes"],
         report["rejected_episodes"],
+        validity_note,
         coverage_head,
         "\n".join(rows),
     )
@@ -295,12 +428,21 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
             if name not in base and name not in extra:
                 extra.append(name)
     coverage_cols = ["label_coverage", "labeled_frames", "dropped_label_frames"] if has_coverage else []
+    validity_cols = ["valid_action_ratio"] + [
+        "valid_full_chunk_ratio_%d" % length for length in DEFAULT_CHUNK_LENGTHS
+    ]
+
+    def _cell(item, key):
+        if key not in item or item[key] is None:
+            return ""
+        return "%.6f" % float(item[key])
+
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow([
             "episode_id", "num_frames", "duration_s", "accepted", "bad_fraction",
             "hands_out_of_frame", "view_drift", "blur", "staged_static", "reasons",
-        ] + extra + coverage_cols)
+        ] + extra + coverage_cols + validity_cols)
         for item in report["results"]:
             coverage_cells = []
             if has_coverage:
@@ -321,5 +463,7 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
                 item["flags"]["blur"],
                 item["flags"]["staged_static"],
                 "|".join(item["reasons"]),
-            ] + [item["flags"].get(name, 0) for name in extra] + coverage_cells)
+            ] + [item["flags"].get(name, 0) for name in extra] + coverage_cells + [
+                _cell(item, key) for key in validity_cols
+            ])
     return html_path, csv_path

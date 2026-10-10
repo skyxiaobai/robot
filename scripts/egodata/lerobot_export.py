@@ -18,8 +18,19 @@
   片段最后一帧没有下一步，直接丢掉。多步目标不摊进这一列：
   线性 BC 把连续 ``horizon`` 帧的 action 拼成一块，ACT 用同样的
   ``chunk_size`` 向后看。保持不动的标签是 dxyz=0、相对四元数 0,0,0,1。
+- ``action_valid`` 形状 (2,)，左手、右手各一个。当前帧和下一帧的手腕
+  都是实测（有限、不是补帧、不是丢掉的标注、置信度不是低于 0.5 的数字）
+  才为 1。缺测仍写入上面的占位增量，但这一位是 0，训练损失不算它。
+  显式的 ``good_frame_mask`` 为 false 时，这一帧两只手都无效。
 - 语言写在 ``task_index``。该帧时刻落在某条 SUBTASK 里就用子任务句子，
   否则用 TASK.instruction。
+- ``observation.object_pose`` 长度 28 = 最多 4 个物体 ×（xyz + xyzw）。
+  无效槽位写 0，同时 ``observation.object_pose_valid`` 为 0。0 不是原点上的真物体。
+- ``observation.contact`` 长度 4：左手槽位、左手置信度、右手槽位、右手置信度。
+  没有接触时槽位是 -1。``observation.contact_valid`` 长度 2。
+- ``action.grasp`` 长度 2，是这一帧的抓取状态，不是下一步增量：
+  0 张开、1 预备、2 抓住、3 放开。``action.grasp_valid`` 长度 2。
+  掩码的写法和 ``observation.hand_valid`` 一样：0 表示这一维不要拿去训练。
 
 没有现成 mp4 时写 16×16 的占位视频，并在特征 info 里标
 ``egodata.image_source=placeholder``。旁边若有与 ``source_path`` 同名的
@@ -36,6 +47,12 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from egodata.action_valid import (
+    action_dim_mask,
+    action_valid_flags,
+    chunk_ratio_map,
+    validity_summary,
+)
 from egodata.schema import iter_episode_paths, load_episode
 
 CODEBASE_VERSION = "v3.0"
@@ -47,6 +64,11 @@ HAND_STEP_DIM = 2 * JOINTS * 3
 ACTION_DIM = WRIST_STEP_DIM
 DEFAULT_HORIZON = 16
 DEFAULT_VIDEO_SIZE = 224
+OBJECT_SLOTS = 4
+OBJECT_POSE_DIM = OBJECT_SLOTS * WRIST_DIM
+CONTACT_DIM = 4
+GRASP_DIM = 2
+_GRASP_CODE = {"open": 0.0, "pre_grasp": 1.0, "grasp": 2.0, "release": 3.0}
 IMAGE_KEY = "observation.image"
 PLACEHOLDER_SIZE = 16
 _CONFIDENCE_MIN = 0.5
@@ -199,6 +221,89 @@ def pack_action(episode, frame_index, include_hand=False):
     return np.concatenate(parts).astype(np.float32)
 
 
+def _sorted_objects(episode):
+    objects = episode.get("objects") or []
+    return sorted(objects, key=lambda item: str(item.get("id")))
+
+
+def _series_valid(hand, frame_index):
+    valid = (hand or {}).get("valid") or []
+    if frame_index >= len(valid) or not isinstance(valid[frame_index], (bool, np.bool_, int, float)):
+        return False
+    return bool(valid[frame_index])
+
+
+def pack_object_pose(episode, frame_index):
+    """物体 6DoF。最多 4 个槽位，按 id 排序。无效槽位是 0，掩码也是 0。"""
+    pose = np.zeros(OBJECT_POSE_DIM, dtype=np.float32)
+    valid = np.zeros(OBJECT_SLOTS, dtype=np.float32)
+    for slot, obj in enumerate(_sorted_objects(episode)[:OBJECT_SLOTS]):
+        if not _series_valid(obj, frame_index):
+            continue
+        poses = obj.get("pose") or []
+        if frame_index >= len(poses):
+            continue
+        vec = _finite_vec(poses[frame_index], WRIST_DIM)
+        if vec is None:
+            continue
+        pose[slot * WRIST_DIM:(slot + 1) * WRIST_DIM] = vec
+        valid[slot] = 1.0
+    return pose, valid
+
+
+def pack_contact(episode, frame_index):
+    """左右手各一个物体槽位和置信度。没接触且有效时槽位是 -1。"""
+    vec = np.zeros(CONTACT_DIM, dtype=np.float32)
+    mask = np.zeros(2, dtype=np.float32)
+    slots = {
+        str(obj.get("id")): index
+        for index, obj in enumerate(_sorted_objects(episode)[:OBJECT_SLOTS])
+    }
+    contact = episode.get("contact") or {}
+    for hand_index, side in enumerate(("left", "right")):
+        hand = contact.get(side) or {}
+        if not _series_valid(hand, frame_index):
+            continue
+        ids = hand.get("object_id") or []
+        confs = hand.get("confidence") or []
+        object_id = ids[frame_index] if frame_index < len(ids) else None
+        confidence = confs[frame_index] if frame_index < len(confs) else None
+        if object_id is None:
+            slot = -1.0
+        elif str(object_id) not in slots:
+            continue
+        else:
+            slot = float(slots[str(object_id)])
+        if confidence is None:
+            conf_value = 0.0
+        else:
+            conf_value = float(confidence)
+            if not np.isfinite(conf_value):
+                conf_value = 0.0
+        mask[hand_index] = 1.0
+        vec[hand_index * 2] = slot
+        vec[hand_index * 2 + 1] = conf_value
+    return vec, mask
+
+
+def pack_grasp(episode, frame_index):
+    """当前帧的抓取状态编码。无效手是 0，并且掩码是 0。"""
+    vec = np.zeros(GRASP_DIM, dtype=np.float32)
+    mask = np.zeros(2, dtype=np.float32)
+    grasp = episode.get("grasp") or {}
+    for hand_index, side in enumerate(("left", "right")):
+        hand = grasp.get(side) or {}
+        if not _series_valid(hand, frame_index):
+            continue
+        states = hand.get("state") or []
+        state = states[frame_index] if frame_index < len(states) else None
+        if state not in _GRASP_CODE:
+            continue
+        vec[hand_index] = _GRASP_CODE[state]
+        mask[hand_index] = 1.0
+    return vec, mask
+
+
 def frame_task(episode, timestamp):
     """SUBTASK 半开区间 [t_start, t_end)；对不上时用整段指令。"""
     subtasks = (episode.get("annotation") or {}).get("subtasks") or []
@@ -243,6 +348,41 @@ def _stats(array):
 
 def _stats_json(array):
     raw = _stats(array)
+    return {key: np.asarray(value).reshape(-1).tolist() for key, value in raw.items()}
+
+
+def _stats_where(array, mask):
+    """按维只用 mask>=0.5 的行。某一维完全没有有效行时，退回这一维的全部存储值。"""
+    values = np.asarray(array, dtype=np.float64)
+    if values.ndim == 1:
+        values = values.reshape(-1, 1)
+    weights = np.asarray(mask, dtype=np.float64)
+    if weights.shape != values.shape or float(np.min(weights)) >= 1.0 - 1e-8:
+        return _stats(values)
+    width = values.shape[1]
+    mins = np.empty(width)
+    maxs = np.empty(width)
+    means = np.empty(width)
+    stds = np.empty(width)
+    for dim in range(width):
+        chosen = values[weights[:, dim] >= 0.5, dim]
+        if chosen.size == 0:
+            chosen = values[:, dim]
+        mins[dim] = chosen.min()
+        maxs[dim] = chosen.max()
+        means[dim] = chosen.mean()
+        stds[dim] = chosen.std()
+    return {
+        "min": mins,
+        "max": maxs,
+        "mean": means,
+        "std": stds,
+        "count": np.array([int(values.shape[0])]),
+    }
+
+
+def _stats_json_where(array, mask):
+    raw = _stats_where(array, mask)
     return {key: np.asarray(value).reshape(-1).tolist() for key, value in raw.items()}
 
 
@@ -341,6 +481,13 @@ def _pack_episode(episode, include_hand):
     states = np.empty((kept, STATE_DIM), dtype=np.float32)
     actions = np.empty((kept, step), dtype=np.float32)
     valids = np.empty((kept, 2), dtype=np.float32)
+    object_pose = np.empty((kept, OBJECT_POSE_DIM), dtype=np.float32)
+    object_valid = np.empty((kept, OBJECT_SLOTS), dtype=np.float32)
+    contact = np.empty((kept, CONTACT_DIM), dtype=np.float32)
+    contact_valid = np.empty((kept, 2), dtype=np.float32)
+    grasp = np.empty((kept, GRASP_DIM), dtype=np.float32)
+    grasp_valid = np.empty((kept, 2), dtype=np.float32)
+    action_valid = np.empty((kept, 2), dtype=np.float32)
     timestamps = np.empty(kept, dtype=np.float32)
     texts = []
     for frame_index in range(kept):
@@ -349,6 +496,10 @@ def _pack_episode(episode, include_hand):
         states[frame_index] = pack_state(episode, frame_index)
         actions[frame_index] = pack_action(episode, frame_index, include_hand=include_hand)
         valids[frame_index] = hand_valid_flags(episode, frame_index)
+        object_pose[frame_index], object_valid[frame_index] = pack_object_pose(episode, frame_index)
+        contact[frame_index], contact_valid[frame_index] = pack_contact(episode, frame_index)
+        grasp[frame_index], grasp_valid[frame_index] = pack_grasp(episode, frame_index)
+        action_valid[frame_index] = action_valid_flags(episode, frame_index)
         timestamps[frame_index] = timestamp
     return {
         "episode_id": episode["episode_id"],
@@ -357,6 +508,15 @@ def _pack_episode(episode, include_hand):
         "state": states,
         "action": actions,
         "valid": valids,
+        "object_pose": object_pose,
+        "object_valid": object_valid,
+        "contact": contact,
+        "contact_valid": contact_valid,
+        "grasp": grasp,
+        "grasp_valid": grasp_valid,
+        "events": list(episode.get("events") or []),
+        "object_truncated": max(0, len(episode.get("objects") or []) - OBJECT_SLOTS),
+        "action_valid": action_valid,
         "timestamp": timestamps,
         "text": texts,
     }
@@ -405,7 +565,16 @@ def export_lerobot(
     state_blocks = []
     action_blocks = []
     valid_blocks = []
+    object_blocks = []
+    object_valid_blocks = []
+    contact_blocks = []
+    contact_valid_blocks = []
+    grasp_blocks = []
+    grasp_valid_blocks = []
+    action_valid_blocks = []
     timestamp_blocks = []
+    event_rows = []
+    truncated = 0
     frame_indices = []
     episode_indices = []
     global_indices = []
@@ -425,7 +594,20 @@ def export_lerobot(
         state_blocks.append(item["state"])
         action_blocks.append(item["action"])
         valid_blocks.append(item["valid"])
+        object_blocks.append(item["object_pose"])
+        object_valid_blocks.append(item["object_valid"])
+        contact_blocks.append(item["contact"])
+        contact_valid_blocks.append(item["contact_valid"])
+        grasp_blocks.append(item["grasp"])
+        grasp_valid_blocks.append(item["grasp_valid"])
+        action_valid_blocks.append(item["action_valid"])
         timestamp_blocks.append(item["timestamp"])
+        truncated += int(item["object_truncated"])
+        event_rows.append({
+            "episode_index": episode_index,
+            "episode_id": item["episode_id"],
+            "events": item["events"],
+        })
         frame_indices.extend(range(kept))
         episode_indices.extend([episode_index] * kept)
         global_indices.extend(range(cursor, cursor + kept))
@@ -466,14 +648,29 @@ def export_lerobot(
     states = np.concatenate(state_blocks, axis=0)
     actions = np.concatenate(action_blocks, axis=0)
     valids = np.concatenate(valid_blocks, axis=0)
+    object_pose = np.concatenate(object_blocks, axis=0)
+    object_valid = np.concatenate(object_valid_blocks, axis=0)
+    contact = np.concatenate(contact_blocks, axis=0)
+    contact_valid = np.concatenate(contact_valid_blocks, axis=0)
+    grasp = np.concatenate(grasp_blocks, axis=0)
+    grasp_valid = np.concatenate(grasp_valid_blocks, axis=0)
+    action_valids = np.concatenate(action_valid_blocks, axis=0)
     timestamps = np.concatenate(timestamp_blocks, axis=0)
+    validity = validity_summary(action_valids)
 
     data_path = out_dir / "data" / "chunk-000" / "file-000.parquet"
     data_path.parent.mkdir(parents=True, exist_ok=True)
     table = pa.table({
         "observation.state": _fixed_list(states, STATE_DIM),
         "observation.hand_valid": _fixed_list(valids, 2),
+        "observation.object_pose": _fixed_list(object_pose, OBJECT_POSE_DIM),
+        "observation.object_pose_valid": _fixed_list(object_valid, OBJECT_SLOTS),
+        "observation.contact": _fixed_list(contact, CONTACT_DIM),
+        "observation.contact_valid": _fixed_list(contact_valid, 2),
         "action": _fixed_list(actions, step),
+        "action.grasp": _fixed_list(grasp, GRASP_DIM),
+        "action.grasp_valid": _fixed_list(grasp_valid, 2),
+        "action_valid": _fixed_list(action_valids, 2),
         "timestamp": pa.array(timestamps.astype(np.float32)),
         "frame_index": pa.array(frame_indices, type=pa.int64()),
         "episode_index": pa.array(episode_indices, type=pa.int64()),
@@ -502,7 +699,14 @@ def export_lerobot(
         IMAGE_KEY: _image_stats_json(),
         "observation.state": _stats_json(states),
         "observation.hand_valid": _stats_json(valids),
-        "action": _stats_json(actions),
+        "observation.object_pose": _stats_json(object_pose),
+        "observation.object_pose_valid": _stats_json(object_valid),
+        "observation.contact": _stats_json(contact),
+        "observation.contact_valid": _stats_json(contact_valid),
+        "action": _stats_json_where(actions, action_dim_mask(action_valids, step)),
+        "action.grasp": _stats_json(grasp),
+        "action.grasp_valid": _stats_json(grasp_valid),
+        "action_valid": _stats_json(action_valids),
         "timestamp": _stats_json(timestamps),
     }
     (out_dir / "meta" / "stats.json").write_text(
@@ -525,7 +729,16 @@ def export_lerobot(
         ),
         "observation.state": _feature("float32", (STATE_DIM,), fps=fps),
         "observation.hand_valid": _feature("float32", (2,), fps=fps),
+        "observation.object_pose": _feature("float32", (OBJECT_POSE_DIM,), fps=fps),
+        "observation.object_pose_valid": _feature("float32", (OBJECT_SLOTS,), ["slot_%d" % i for i in range(OBJECT_SLOTS)], fps=fps),
+        "observation.contact": _feature(
+            "float32", (CONTACT_DIM,), ["left_slot", "left_confidence", "right_slot", "right_confidence"], fps=fps,
+        ),
+        "observation.contact_valid": _feature("float32", (2,), ["left", "right"], fps=fps),
         "action": _feature("float32", (step,), fps=fps),
+        "action.grasp": _feature("float32", (GRASP_DIM,), ["left", "right"], fps=fps),
+        "action.grasp_valid": _feature("float32", (2,), ["left", "right"], fps=fps),
+        "action_valid": _feature("float32", (2,), names=["left", "right"], fps=fps),
         "timestamp": _feature("float32", (1,), fps=fps),
         "frame_index": _feature("int64", (1,), fps=fps),
         "episode_index": _feature("int64", (1,), fps=fps),
@@ -569,7 +782,33 @@ def export_lerobot(
         "image_source": image_source,
         "video_size": None if image_source != "source_mp4" else video_size,
         "confidence": "缺失的手腕置信度视为未知，不把关节置 0",
+        "object_pose": (
+            "observation.object_pose 长度 %d = %d 个槽位 × (xyz + xyzw)。"
+            "按物体 id 排序，多出来的丢掉。无效槽位是 0，要看 observation.object_pose_valid。"
+            % (OBJECT_POSE_DIM, OBJECT_SLOTS)
+        ),
+        "object_slots": OBJECT_SLOTS,
+        "object_tracks_truncated": truncated,
+        "contact": "observation.contact：左手槽位和置信度，再接右手。没有接触时槽位是 -1。掩码是 observation.contact_valid。",
+        "grasp": "action.grasp 是当前帧状态，不是下一步增量。0 张开，1 预备，2 抓住，3 放开。掩码是 action.grasp_valid。",
+        "validity_masks": "object_pose_valid、contact_valid、grasp_valid、action_valid 与 observation.hand_valid 一样，0 表示不要把对应的 0 当成测量值。",
+        "action_valid_doc": (
+            "action_valid[左, 右] 为 1 时，这一步该手的增量来自实测手腕："
+            "当前帧和下一帧都有限、不是 filled、逐帧标注不是丢掉的状态、"
+            "置信度不是低于 0.5 的数字。episode 上若有 good_frame_mask，"
+            "false 的帧两只手都为 0。占位的保持不动仍然写在 action 里。"
+        ),
+        "valid_action_ratio": validity["valid_action_ratio"],
+        "valid_full_chunk_ratio": {
+            str(length): validity["valid_full_chunk_ratio_%d" % length]
+            for length in (16, 50, 100)
+        },
     }
+    events_path = out_dir / "meta" / "interaction_events.jsonl"
+    events_path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in event_rows),
+        encoding="utf-8",
+    )
     (out_dir / "meta" / "egodata_export.json").write_text(
         json.dumps(note, ensure_ascii=False, indent=2), encoding="utf-8",
     )
@@ -580,4 +819,8 @@ def export_lerobot(
         "out": str(out_dir),
         "horizon": horizon,
         "action_step_dim": step,
+        "valid_action_ratio": validity["valid_action_ratio"],
+        "valid_action_count": validity["valid_action_count"],
+        "action_count": validity["action_count"],
+        "valid_full_chunk_ratio": chunk_ratio_map(validity),
     }

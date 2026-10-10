@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np  # noqa: E402
 
 from egodata.coverage import coarse_object_class, normalize_action, normalize_environment  # noqa: E402
-from egodata.schema import SCHEMA_VERSION, save_episode, validate_episode  # noqa: E402
+from egodata.schema import SCHEMA_VERSION, empty_interaction, save_episode, validate_episode  # noqa: E402
 from headcam.hand_pose import (  # noqa: E402
     JOINTS,
     _confidence_vector,
@@ -440,6 +440,7 @@ def build_episode(session_dir, backend=None, hands_path=None, refine=None):
         "camera_intrinsic": intrinsic.tolist(),
         "camera_poses": [np.asarray(pose, dtype=float).tolist() for pose in poses],
         "hands": hands,
+        **empty_interaction(num_frames),
         "annotation": {
             "environment": {
                 "name": environment,

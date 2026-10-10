@@ -1,0 +1,485 @@
+# -*- coding: utf-8 -*-
+"""物体 6DoF、接触、抓取：schema、HOT3D 真值、启发式、评测和 LeRobot 掩码。"""
+import csv
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+import numpy as np
+import pyarrow.parquet as pq
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from egodata.interaction import (  # noqa: E402
+    FINGERTIPS,
+    GT_CONTACT_M,
+    HEURISTIC_DEFAULTS,
+    derive_gt_interaction,
+    estimate_interaction,
+    evaluate_interaction,
+    events_from_labels,
+    min_surface_distance,
+    synthetic_disagreement,
+)
+from egodata.lerobot_export import (  # noqa: E402
+    CONTACT_DIM,
+    GRASP_DIM,
+    OBJECT_POSE_DIM,
+    OBJECT_SLOTS,
+    export_lerobot,
+    pack_contact,
+    pack_grasp,
+    pack_object_pose,
+)
+from egodata.qc import qc_episode  # noqa: E402
+from egodata.schema import (  # noqa: E402
+    EVENT_TYPES,
+    GRASP_STATES,
+    empty_interaction,
+    validate_episode,
+)
+from headcam.hot3d_adapter import (  # noqa: E402
+    export_hot3d_objects,
+    parse_objects_json,
+    se3_from_hot3d,
+)
+
+
+def _wrist(index):
+    return [0.01 * index, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+
+
+def _joints(fingertip=None):
+    joints = [[0.2, 0.0, 0.2] for _ in range(21)]
+    joints[0] = [0.0, 0.0, 0.2]
+    if fingertip is not None:
+        for index in FINGERTIPS:
+            joints[index] = list(fingertip)
+        joints[4] = [fingertip[0] - 0.02, fingertip[1], fingertip[2]]
+        joints[8] = [fingertip[0] + 0.02, fingertip[1], fingertip[2]]
+    return joints
+
+
+def _episode(n=4, objects=None, contact=None, grasp=None, events=None):
+    hands = {"left": {"joints": [], "wrist_pose": [], "confidence": []},
+             "right": {"joints": [], "wrist_pose": [], "confidence": []}}
+    for index in range(n):
+        for side in ("left", "right"):
+            hands[side]["joints"].append(_joints([0.0, 0.0, 0.2]))
+            hands[side]["wrist_pose"].append(_wrist(index))
+            hands[side]["confidence"].append(0.9)
+    episode = {
+        "schema_version": "1.0",
+        "episode_id": "demo",
+        "source": "test",
+        "fps": 10.0,
+        "coordinate_frame": "world",
+        "image_width": 16,
+        "image_height": 16,
+        "num_frames": n,
+        "timestamps": [index / 10.0 for index in range(n)],
+        "camera_intrinsic": [[1, 0, 8], [0, 1, 8], [0, 0, 1]],
+        "camera_poses": [np.eye(4).tolist() for _ in range(n)],
+        "hands": hands,
+        "annotation": {
+            "environment": {"name": "tabletop", "detail": "", "source": "test"},
+            "task": {"name": "pick", "instruction": "拿起杯子"},
+            "subtasks": [],
+            "instructions": [],
+        },
+        "coverage": {"environment": "tabletop", "objects": ["cup"], "task": "pick", "action_types": ["pick"]},
+    }
+    blank = empty_interaction(n)
+    episode["objects"] = objects if objects is not None else blank["objects"]
+    episode["contact"] = contact if contact is not None else blank["contact"]
+    episode["grasp"] = grasp if grasp is not None else blank["grasp"]
+    episode["events"] = events if events is not None else blank["events"]
+    return episode
+
+
+def _yield_csv(path, episode_id):
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["episode_id", "num_frames", "accepted", "reasons"])
+        writer.writeheader()
+        writer.writerow({"episode_id": episode_id, "num_frames": 4, "accepted": "yes", "reasons": ""})
+
+
+class SchemaTest(unittest.TestCase):
+    def test_empty_interaction_validates(self):
+        episode = _episode()
+        self.assertEqual(validate_episode(episode), [])
+        self.assertEqual(GRASP_STATES, ("open", "pre_grasp", "grasp", "release"))
+        self.assertEqual(EVENT_TYPES, ("contact_start", "contact_end", "grasp", "release"))
+
+    def test_missing_objects_is_an_error(self):
+        episode = _episode()
+        del episode["objects"]
+        self.assertTrue(any("objects" in item for item in validate_episode(episode)))
+
+    def test_bad_grasp_state_and_short_pose_fail(self):
+        episode = _episode(n=2, objects=[{
+            "id": "cup",
+            "category": "tableware",
+            "source": "hot3d",
+            "pose": [[0, 0, 0, 0, 0, 0, 1], [0, 0, 0]],
+            "confidence": [1.0, 1.0],
+            "valid": [True, True],
+        }])
+        episode["grasp"]["right"]["state"] = ["holding", "open"]
+        episode["grasp"]["right"]["valid"] = [True, True]
+        errors = validate_episode(episode)
+        self.assertTrue(any("grasp" in item for item in errors))
+        self.assertTrue(any("pose" in item for item in errors))
+
+    def test_event_timestamp_must_fall_inside_the_episode(self):
+        episode = _episode(events=[{
+            "type": "contact_start",
+            "hand": "right",
+            "object_id": "cup",
+            "timestamp": 99.0,
+        }])
+        self.assertTrue(any("timestamp" in item for item in validate_episode(episode)))
+
+
+class Hot3dPoseTest(unittest.TestCase):
+    def test_wxyz_translation_becomes_xyzw_pose(self):
+        matrix = se3_from_hot3d({
+            "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+            "translation_xyz": [0.1, 0.2, 0.3],
+        })
+        self.assertTrue(np.allclose(matrix[:3, 3], [0.1, 0.2, 0.3]))
+        self.assertTrue(np.allclose(matrix[:3, :3], np.eye(3)))
+        half = float(np.sqrt(0.5))
+        spun = se3_from_hot3d({
+            "quaternion_wxyz": [half, 0.0, 0.0, half],
+            "translation_xyz": [0.0, 0.0, 0.0],
+        })
+        self.assertTrue(np.allclose(spun[:3, :3], [[0, -1, 0], [1, 0, 0], [0, 0, 1]], atol=1e-6))
+
+    def test_parse_instance_list_and_skip_missing_frame(self):
+        payload = {
+            "12": [{
+                "object_bop_id": 12,
+                "object_name": "mug",
+                "T_world_from_object": {
+                    "quaternion_wxyz": [1, 0, 0, 0],
+                    "translation_xyz": [0.1, 0.2, 0.3],
+                },
+            }]
+        }
+        found = parse_objects_json(payload)
+        self.assertEqual(found[0]["id"], "12")
+        self.assertEqual(found[0]["category"], "mug")
+        self.assertTrue(np.allclose(found[0]["pose7"][:3], [0.1, 0.2, 0.3]))
+        with tempfile.TemporaryDirectory() as tmp:
+            clip = Path(tmp)
+            (clip / "000000.objects.json").write_text(json.dumps(payload), encoding="utf-8")
+            (clip / "000001.objects.json").write_text("{}", encoding="utf-8")
+            vertices = np.array([[0.0, 0.0, 0.0], [0.02, 0.0, 0.0], [0.0, 0.02, 0.0]], dtype=float)
+            faces = np.array([[0, 1, 2]], dtype=int)
+            hand = np.zeros((21, 3))
+            hand[:] = [0.1, 0.2, 0.3]
+            hand[8] = [0.11, 0.21, 0.301]
+            summary = export_hot3d_objects(
+                clip,
+                clip / "out",
+                keys=["000000", "000001"],
+                timestamps=[0.0, 0.1],
+                hand_points={"left": [None, None], "right": [hand, None]},
+                surfaces={"12": {"vertices": vertices, "faces": faces}},
+            )
+            self.assertEqual(summary["objects"], 1)
+            tracks = json.loads((clip / "out" / "gt" / "objects_gt.json").read_text(encoding="utf-8"))
+            interaction = json.loads((clip / "out" / "gt" / "interaction_gt.json").read_text(encoding="utf-8"))
+        self.assertEqual(tracks["objects"][0]["source"], "hot3d")
+        self.assertEqual(tracks["objects"][0]["valid"], [True, False])
+        self.assertEqual(interaction["contact"]["source"], "hot3d_mesh")
+        self.assertEqual(interaction["contact"]["right"]["object_id"][0], "12")
+        self.assertTrue(interaction["contact"]["right"]["valid"][0])
+        self.assertFalse(interaction["contact"]["right"]["valid"][1])
+        self.assertIn(interaction["grasp"]["right"]["state"][0], GRASP_STATES)
+
+
+class DistanceAndHeuristicTest(unittest.TestCase):
+    def test_point_above_triangle_is_the_height(self):
+        vertices = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        faces = np.array([[0, 1, 2]])
+        distance = min_surface_distance(
+            np.array([[0.2, 0.2, 0.004]]),
+            vertices=vertices,
+            faces=faces,
+        )
+        self.assertAlmostEqual(float(distance[0]), 0.004, places=4)
+
+    def test_sphere_contact_grasp_and_release(self):
+        # 球心在原点，半径 2 cm。指尖放在半径 2.4 cm 上，离表面 4 mm，小于 1 cm。
+        timestamps = [0.0, 0.1, 0.2]
+        tip = [0.024, 0.0, 0.0]
+        far = [0.20, 0.0, 0.0]
+        joints = [
+            _joints(far),
+            _joints(tip),
+            _joints([0.08, 0.0, 0.0]),
+        ]
+        # 第二帧拇指和食指相距 4 cm，五指都在表面上。
+        objects = [{
+            "id": "ball",
+            "category": "toy",
+            "source": "test",
+            "pose": [[0, 0, 0, 0, 0, 0, 1]] * 3,
+            "confidence": [1, 1, 1],
+            "valid": [True, True, True],
+        }]
+        surfaces = {"ball": {"radius_m": 0.02, "center_local": [0, 0, 0]}}
+        hands = {
+            "left": {"joints": [None, None, None], "confidence": [None, None, None]},
+            "right": {"joints": joints, "confidence": [0.9, 0.9, 0.9]},
+        }
+        # 第一帧在远处。第二帧需要有前一帧才能算靠近速度；这里第二帧已经贴在表面上，应判抓取。
+        # 第三帧离开，前一帧是抓取，应判放开。
+        result = estimate_interaction(hands, objects, timestamps, surfaces)
+        right = result["grasp"]["right"]["state"]
+        contact = result["contact"]["right"]["object_id"]
+        self.assertEqual(right[0], "open")
+        self.assertIsNone(contact[0])
+        self.assertEqual(right[1], "grasp")
+        self.assertEqual(contact[1], "ball")
+        self.assertEqual(right[2], "release")
+        self.assertEqual(result["contact"]["source"], "heuristic")
+        types = [item["type"] for item in result["events"] if item["hand"] == "right"]
+        self.assertEqual(types, ["contact_start", "grasp", "contact_end", "release"])
+
+    def test_depth_and_external_hook(self):
+        timestamps = [0.0, 0.1]
+        joints = [_joints([0.0, 0.0, 1.0]), _joints([0.0, 0.0, 1.0])]
+        objects = [{
+            "id": "cup",
+            "category": "tableware",
+            "source": "foundationpose",
+            "pose": [[0, 0, 1.0, 0, 0, 0, 1], [0, 0, 1.0, 0, 0, 0, 1]],
+            "confidence": [0.8, 0.8],
+            "valid": [True, True],
+        }]
+        surfaces = {"cup": {"depth_m": [1.0, 1.0]}}
+        hands = {
+            "left": {"joints": [None, None], "confidence": [None, None]},
+            "right": {"joints": joints, "confidence": [0.9, 0.9]},
+        }
+        camera = [np.eye(4).tolist(), np.eye(4).tolist()]
+
+        def pose_hook(_hands, _timestamps):
+            return objects
+
+        def contact_hook(side, frame_index, _joints, _objects):
+            if side == "right" and frame_index == 0:
+                return {"object_id": "cup", "confidence": 0.7}
+            return None
+
+        hooked = estimate_interaction(
+            hands, [], timestamps, surfaces,
+            camera_poses=camera,
+            pose_hook=pose_hook,
+            contact_hook=contact_hook,
+        )
+        self.assertEqual(hooked["objects"][0]["source"], "foundationpose")
+        self.assertEqual(hooked["contact"]["right"]["object_id"][0], "cup")
+        self.assertEqual(hooked["contact"]["source"], "contacthands")
+        # 第二帧钩子没说话，退回深度启发式：指尖深度 1 m，物体深度 1 m，算接触。
+        self.assertEqual(hooked["contact"]["right"]["object_id"][1], "cup")
+
+
+class EvaluateTest(unittest.TestCase):
+    def test_synthetic_disagreement_has_exact_counts(self):
+        gt, pred, timestamps = synthetic_disagreement()
+        metrics = evaluate_interaction(gt, pred, timestamps)
+        contact = metrics["contact"]["both"]
+        grasp = metrics["grasp"]["both"]
+        # 3 帧里右手有效。第 0 帧都没接触；第 1 帧只有真值接触；第 2 帧两边都接触且都在抓。
+        self.assertEqual(contact["tp"], 1)
+        self.assertEqual(contact["fn"], 1)
+        self.assertEqual(contact["fp"], 0)
+        self.assertAlmostEqual(contact["precision"], 1.0)
+        self.assertAlmostEqual(contact["recall"], 0.5)
+        self.assertEqual(grasp["tp"], 1)
+        self.assertEqual(grasp["fp"], 0)
+        self.assertEqual(grasp["fn"], 0)
+        self.assertAlmostEqual(grasp["precision"], 1.0)
+        self.assertAlmostEqual(grasp["recall"], 1.0)
+        # 接触开始差 1 帧（0.1 秒）；抓取事件两边同一帧，时间差 0。中位数是 0.05 秒。
+        self.assertEqual(metrics["events"]["matched"], 2)
+        self.assertIn(0.1, [round(item, 5) for item in metrics["events"]["timing_error_s"]])
+        self.assertAlmostEqual(metrics["events"]["timing_error_median_s"], 0.05)
+        self.assertIsNone(metrics["contact"]["left"]["precision"])
+
+    def test_events_use_timestamps(self):
+        events = events_from_labels(
+            "right",
+            [None, "cup", "cup", None],
+            [None, "pre_grasp", "grasp", "release"],
+            [0.0, 0.5, 1.0, 1.5],
+            [False, True, True, True],
+        )
+        self.assertEqual(events[0]["type"], "contact_start")
+        self.assertEqual(events[0]["timestamp"], 0.5)
+        self.assertEqual([item["type"] for item in events], ["contact_start", "grasp", "contact_end", "release"])
+
+
+class GtMeshTest(unittest.TestCase):
+    def test_skin_inside_threshold_is_contact_and_two_tips_grasp(self):
+        vertices = np.array([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.0, 0.1, 0.0]])
+        faces = np.array([[0, 1, 2]])
+        points = np.zeros((21, 3))
+        points[:] = [0.0, 0.0, 0.2]
+        points[4] = [0.02, 0.02, GT_CONTACT_M * 0.5]
+        points[8] = [0.03, 0.02, GT_CONTACT_M * 0.5]
+        objects = [{
+            "id": "box",
+            "category": "box",
+            "source": "hot3d",
+            "pose": [[0, 0, 0, 0, 0, 0, 1], [0, 0, 0, 0, 0, 0, 1]],
+            "confidence": [1.0, 1.0],
+            "valid": [True, False],
+        }]
+        hands = {
+            "left": [None, None],
+            "right": [{"points": points, "tips": points[list(FINGERTIPS)]}, None],
+        }
+        gt = derive_gt_interaction(
+            objects, hands, [0.0, 0.1], {"box": {"vertices": vertices, "faces": faces}},
+        )
+        self.assertEqual(gt["contact"]["right"]["object_id"][0], "box")
+        self.assertEqual(gt["grasp"]["right"]["state"][0], "grasp")
+        self.assertFalse(gt["contact"]["right"]["valid"][1])
+        self.assertEqual(gt["contact"]["source"], "hot3d_mesh")
+        self.assertLessEqual(HEURISTIC_DEFAULTS["contact_m"], 0.02)
+
+
+class ExportAndQcTest(unittest.TestCase):
+    def test_masks_zero_invalid_slots_and_keep_codes(self):
+        objects = [{
+            "id": "cup",
+            "category": "tableware",
+            "source": "hot3d",
+            "pose": [[0.1, 0.2, 0.3, 0, 0, 0, 1], None, [0, 0, 0, 0, 0, 0, 1], [0, 0, 0, 0, 0, 0, 1]],
+            "confidence": [0.9, None, 0.9, 0.9],
+            "valid": [True, False, True, True],
+        }]
+        contact = empty_interaction(4)["contact"]
+        contact["right"]["object_id"] = ["cup", None, None, "cup"]
+        contact["right"]["confidence"] = [0.8, None, 0.2, 0.4]
+        contact["right"]["valid"] = [True, False, True, True]
+        grasp = empty_interaction(4)["grasp"]
+        grasp["right"]["state"] = ["grasp", None, "open", "release"]
+        grasp["right"]["confidence"] = [0.9, None, 0.5, 0.5]
+        grasp["right"]["valid"] = [True, False, True, True]
+        episode = _episode(objects=objects, contact=contact, grasp=grasp)
+        pose, pose_valid = pack_object_pose(episode, 0)
+        self.assertEqual(pose.shape, (OBJECT_POSE_DIM,))
+        self.assertEqual(OBJECT_SLOTS, 4)
+        self.assertAlmostEqual(float(pose[0]), 0.1)
+        self.assertEqual(pose_valid.tolist(), [1, 0, 0, 0])
+        missing, missing_valid = pack_object_pose(episode, 1)
+        self.assertTrue(np.allclose(missing, 0))
+        self.assertEqual(missing_valid.tolist(), [0, 0, 0, 0])
+        contact_vec, contact_valid = pack_contact(episode, 0)
+        self.assertEqual(contact_vec.shape, (CONTACT_DIM,))
+        self.assertEqual(contact_valid.tolist(), [0, 1])
+        self.assertAlmostEqual(float(contact_vec[2]), 0.0)
+        self.assertAlmostEqual(float(contact_vec[3]), 0.8)
+        none_vec, none_valid = pack_contact(episode, 2)
+        self.assertEqual(none_valid.tolist(), [0, 1])
+        self.assertAlmostEqual(float(none_vec[2]), -1.0)
+        grasp_vec, grasp_valid = pack_grasp(episode, 0)
+        self.assertEqual(grasp_vec.shape, (GRASP_DIM,))
+        self.assertEqual(grasp_valid.tolist(), [0, 1])
+        self.assertAlmostEqual(float(grasp_vec[1]), 2.0)
+        released, released_valid = pack_grasp(episode, 3)
+        self.assertAlmostEqual(float(released[1]), 3.0)
+        self.assertEqual(released_valid.tolist(), [0, 1])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            episodes = root / "episodes"
+            episodes.mkdir()
+            episode["episode_id"] = "good"
+            (episodes / "good.json").write_text(json.dumps(episode), encoding="utf-8")
+            csv_path = root / "yield.csv"
+            _yield_csv(csv_path, "good")
+            out = root / "lerobot"
+            export_lerobot(episodes, csv_path, out, repo_id="local/contact")
+            info = json.loads((out / "meta" / "info.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["features"]["observation.object_pose"]["shape"], [OBJECT_POSE_DIM])
+            self.assertEqual(info["features"]["observation.object_pose_valid"]["shape"], [OBJECT_SLOTS])
+            self.assertEqual(info["features"]["observation.contact"]["shape"], [CONTACT_DIM])
+            self.assertEqual(info["features"]["observation.contact_valid"]["shape"], [2])
+            self.assertEqual(info["features"]["action.grasp"]["shape"], [GRASP_DIM])
+            self.assertEqual(info["features"]["action.grasp_valid"]["shape"], [2])
+            table = pq.read_table(out / "data" / "chunk-000" / "file-000.parquet")
+            data = table.to_pydict()
+            self.assertEqual(len(data["action.grasp"]), 3)
+            self.assertEqual(list(data["action.grasp_valid"][1]), [0.0, 0.0])
+            self.assertEqual(list(data["observation.object_pose_valid"][1]), [0.0, 0.0, 0.0, 0.0])
+            note = json.loads((out / "meta" / "egodata_export.json").read_text(encoding="utf-8"))
+            self.assertIn("object_pose", note)
+            self.assertTrue((out / "meta" / "interaction_events.jsonl").is_file())
+
+    def test_qc_reports_grasp_without_contact_and_still_accepts_motion(self):
+        import h5py
+        from egodata.egodex import load_episode_hdf5
+        n = 20
+        wrists = [(0.002 * index, 0.0, 1.0) for index in range(n)]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "basic_pick_place" / "0.hdf5"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            intrinsic = np.array([[736.6339, 0, 960], [0, 736.6339, 540], [0, 0, 1]], dtype=np.float32)
+            with h5py.File(path, "w") as handle:
+                handle.create_dataset("camera/intrinsic", data=intrinsic)
+                camera = np.stack([np.eye(4, dtype=np.float32) for _ in range(n)])
+                handle.create_dataset("transforms/camera", data=camera)
+                for prefix in ("left", "right"):
+                    names = [
+                        "%sHand" % prefix, "%sThumbKnuckle" % prefix, "%sThumbIntermediateBase" % prefix,
+                        "%sThumbIntermediateTip" % prefix, "%sThumbTip" % prefix,
+                        "%sIndexFingerKnuckle" % prefix, "%sIndexFingerIntermediateBase" % prefix,
+                        "%sIndexFingerIntermediateTip" % prefix, "%sIndexFingerTip" % prefix,
+                        "%sMiddleFingerKnuckle" % prefix, "%sMiddleFingerIntermediateBase" % prefix,
+                        "%sMiddleFingerIntermediateTip" % prefix, "%sMiddleFingerTip" % prefix,
+                        "%sRingFingerKnuckle" % prefix, "%sRingFingerIntermediateBase" % prefix,
+                        "%sRingFingerIntermediateTip" % prefix, "%sRingFingerTip" % prefix,
+                        "%sLittleFingerKnuckle" % prefix, "%sLittleFingerIntermediateBase" % prefix,
+                        "%sLittleFingerIntermediateTip" % prefix, "%sLittleFingerTip" % prefix,
+                    ]
+                    for joint_index, name in enumerate(names):
+                        offset = np.array([0.0, 0.0, 0.02 * joint_index], dtype=np.float32)
+                        series = []
+                        for frame_index in range(n):
+                            pose = np.eye(4, dtype=np.float32)
+                            pose[:3, 3] = np.asarray(wrists[frame_index], dtype=np.float32) + offset
+                            series.append(pose)
+                        handle.create_dataset("transforms/%s" % name, data=np.stack(series))
+                        handle.create_dataset("confidences/%s" % name, data=np.full((n,), 0.99, dtype=np.float32))
+                handle.attrs["llm_description"] = "pick up the cup"
+                handle.attrs["llm_objects"] = np.array(["cup"], dtype=object)
+                handle.attrs["llm_verbs"] = np.array(["pick"], dtype=object)
+                handle.attrs["environment"] = "table:wood"
+                handle.attrs["task"] = "basic_pick_place"
+            episode = load_episode_hdf5(path)
+        self.assertEqual(validate_episode(episode), [])
+        self.assertEqual(episode["objects"], [])
+        episode["grasp"]["right"]["state"] = ["grasp"] * n
+        episode["grasp"]["right"]["valid"] = [True] * n
+        episode["grasp"]["right"]["confidence"] = [1.0] * n
+        episode["contact"]["right"]["valid"] = [True] * n
+        episode["contact"]["right"]["object_id"] = [None] * n
+        result = qc_episode(episode)
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["flags"]["grasp_without_contact"], n)
+        self.assertNotIn("grasp_without_contact", result["reasons"])
+        self.assertEqual(result["interaction"]["object_pose_valid_fraction"], None)
+        self.assertEqual(result["interaction"]["grasp_valid_fraction"], 0.5)
+
+
+if __name__ == "__main__":
+    unittest.main()
