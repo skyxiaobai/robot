@@ -30,6 +30,18 @@ _FLAG_LABELS = {
 }
 
 
+# 双目专用的坏帧原因（scripts/egodata/stereo_qc.py 产生）。写报告时与上面的四类合在一起查名字。
+STEREO_FLAG_LABELS = {
+    "stereo_one_view": "只有一目认到手",
+    "stereo_inconsistent": "左右目对不上",
+    "stereo_filled": "补出来的帧",
+}
+
+
+def _label(name):
+    return _FLAG_LABELS.get(name) or STEREO_FLAG_LABELS.get(name) or name
+
+
 def _project(intrinsic, camera_pose, point):
     """OpenCV 约定：相机 +Z 向前、+Y 向下。返回 (u, v)，在相机后方时返回 None。"""
     matrix = np.asarray(camera_pose, dtype=float)
@@ -237,7 +249,7 @@ def write_yield_reports(report, html_path, csv_path):
                 item["num_frames"],
                 "通过" if item["accepted"] else "拒绝",
                 100.0 * item["bad_fraction"],
-                html.escape(", ".join(_FLAG_LABELS[name] for name in item["reasons"]) or "—"),
+                html.escape(", ".join(_label(name) for name in item["reasons"]) or "—"),
             )
         )
     document = """<!DOCTYPE html>
@@ -264,12 +276,18 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
         "\n".join(rows),
     )
     html_path.write_text(document, encoding="utf-8")
+    base = ["hands_out_of_frame", "view_drift", "blur", "staged_static"]
+    extra = []
+    for item in report["results"]:
+        for name in item["flags"]:
+            if name not in base and name not in extra:
+                extra.append(name)
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow([
             "episode_id", "num_frames", "duration_s", "accepted", "bad_fraction",
             "hands_out_of_frame", "view_drift", "blur", "staged_static", "reasons",
-        ])
+        ] + extra)
         for item in report["results"]:
             writer.writerow([
                 item["episode_id"],
@@ -282,5 +300,5 @@ td, th { border: 1px solid #ccc; padding: 0.4rem 0.6rem; }
                 item["flags"]["blur"],
                 item["flags"]["staged_static"],
                 "|".join(item["reasons"]),
-            ])
+            ] + [item["flags"].get(name, 0) for name in extra])
     return html_path, csv_path

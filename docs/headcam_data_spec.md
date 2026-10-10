@@ -341,6 +341,7 @@ session/
   rgb.mp4           单目或彩色参考。没有时用 stereo/left.mp4
   stereo/left.mp4   左目
   stereo/right.mp4  右目，只提供 2D
+  stereo/timestamps_lr.csv  frame_index,left_s,right_s。左右各自的曝光时间，用来核对硬件同步（建议必写）
   slam.tum          可选。TUM：timestamp tx ty tz qx qy qz qw
   hands.json        可选。后端已经算好的每帧 21 点
 ```
@@ -355,6 +356,8 @@ session/
 6. 可选的时序精修在 `scripts/headcam/hand_track_refine.py`，`convert_headcam.py` 不传开关时不会改关节。`--refine` 同时打开四件事：One Euro 平滑（也可换成常速度卡尔曼）、最多补 5 帧缺测、按这一段的骨长中位数重摆关节、用手腕轨迹修正左右标签。有 TUM 时平滑在世界系里做，避免把头的转动当成手抖。补上的帧带 `filled=true`，置信度写成 0。QC 看到 `filled`，或者置信度低于 0.5，都不把这帧当成跟踪成功。没有 MANO 文件时形状就是 20 段骨长，不会把骨长写成 betas。
 
 整机标定和 SLAM 仍在仓库外做。这里只读已经算好的 yaml 和 TUM。
+
+双目一条命令管线：`scripts/run_stereo_pipeline.py`（WiLoR 左右目 → 21 点三角化 → 左右一致性检查 → One Euro → 世界系 → 双目 QC → LeRobot），说明与 HOT3D 实测见 `docs/stereo_pipeline.md`。每段录制先用 `scripts/validate_session.py` 校验；`scripts/simulate_device_session.py` 用 HOT3D 生成同格式的会话，可在设备到货前测试整条链路。
 
 ---
 
