@@ -88,13 +88,25 @@ HAND_LANDMARKER_URL = (
 _X_TIE_PX = 1e-3
 
 
+def _importable(module_name):
+    try:
+        __import__(module_name)
+    except ImportError:
+        return False
+    return True
+
+
 def hamer_missing():
-    """返回 HaMeR 还缺的东西。空列表表示包、权重和 MANO 目录都在。"""
+    """返回 HaMeR 还缺的东西。空列表表示包、torch、detectron2、权重和 MANO 都在。"""
     missing = []
     try:
         __import__("hamer")
     except ImportError:
         missing.append("python 包 hamer（https://github.com/geopavlakos/hamer）")
+    if not _importable("torch"):
+        missing.append("python 包 torch")
+    if not _importable("detectron2"):
+        missing.append("python 包 detectron2（HaMeR 的人体检测，需要编译）")
     checkpoint = os.environ.get("HAMER_CHECKPOINT")
     if not checkpoint or not Path(checkpoint).is_file():
         missing.append("环境变量 HAMER_CHECKPOINT 指向的权重文件")
@@ -107,12 +119,16 @@ def hamer_missing():
 
 
 def wilor_missing():
-    """返回 WiLoR 还缺的东西。空列表表示包、权重、检测器和 MANO 都在。"""
+    """返回 WiLoR 还缺的东西。空列表表示包、torch、ultralytics、权重、检测器和 MANO 都在。"""
     missing = []
     try:
         __import__("wilor")
     except ImportError:
         missing.append("python 包 wilor（https://github.com/rolpotamias/WiLoR）")
+    if not _importable("torch"):
+        missing.append("python 包 torch")
+    if not _importable("ultralytics"):
+        missing.append("python 包 ultralytics（WiLoR 的 YOLO 检测器，建议 ultralytics==8.1.34）")
     checkpoint = os.environ.get("WILOR_CHECKPOINT")
     if not checkpoint or not Path(checkpoint).is_file():
         missing.append("环境变量 WILOR_CHECKPOINT 指向的 wilor_final.ckpt")

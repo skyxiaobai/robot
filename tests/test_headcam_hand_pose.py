@@ -429,15 +429,86 @@ class BackendAvailabilityTest(unittest.TestCase):
         self.assertTrue(mediapipe_gl_libraries_missing(RuntimeError("缺少 libEGL.so.1")))
         self.assertFalse(mediapipe_gl_libraries_missing(RuntimeError("模型没有给出 21 个三维关节")))
 
-    @unittest.skipUnless(hamer_available(), "hamer 未安装或缺少 MANO / 权重")
+    @unittest.skipUnless(hamer_available(), "hamer 未安装或缺少 torch / detectron2 / MANO / 权重")
     def test_hamer_blank_frame(self):
         prediction = HaMeRBackend().predict(np.zeros((64, 64, 3), dtype=np.uint8))
         self.assertIn("left", prediction)
 
-    @unittest.skipUnless(wilor_available(), "wilor 未安装或缺少 MANO / 权重")
+    @unittest.skipUnless(wilor_available(), "wilor 未安装或缺少 torch / ultralytics / MANO / 权重")
     def test_wilor_blank_frame(self):
         prediction = WiLoRBackend().predict(np.zeros((64, 64, 3), dtype=np.uint8))
         self.assertIn("left", prediction)
+
+    def test_wilor_and_hamer_require_runtime_imports(self):
+        import sys
+        import types
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mano = root / "mano"
+            mano.mkdir()
+            (mano / "MANO_RIGHT.pkl").write_bytes(b"pkl")
+            (mano / "mano_mean_params.npz").write_bytes(b"mean")
+            weights = root / "weights"
+            weights.mkdir()
+            checkpoint = weights / "wilor_final.ckpt"
+            detector = weights / "detector.pt"
+            config = weights / "model_config.yaml"
+            hamer_ckpt = weights / "hamer.ckpt"
+            for path in (checkpoint, detector, config, hamer_ckpt):
+                path.write_bytes(b"weight")
+            package = root / "pkg"
+            package.mkdir()
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            saved_modules = {
+                name: sys.modules.get(name)
+                for name in ("wilor", "hamer", "torch", "ultralytics", "detectron2")
+            }
+            env_names = (
+                "MANO_MODEL_DIR", "WILOR_CHECKPOINT", "WILOR_DETECTOR", "WILOR_CONFIG", "HAMER_CHECKPOINT",
+            )
+            saved_env = {name: os.environ.get(name) for name in env_names}
+            fake_wilor = types.ModuleType("wilor")
+            fake_wilor.__file__ = str(package / "__init__.py")
+            fake_hamer = types.ModuleType("hamer")
+            fake_hamer.__file__ = str(package / "__init__.py")
+            sys.modules["wilor"] = fake_wilor
+            sys.modules["hamer"] = fake_hamer
+            sys.modules["torch"] = None
+            sys.modules["ultralytics"] = None
+            sys.modules["detectron2"] = None
+            os.environ["MANO_MODEL_DIR"] = str(mano)
+            os.environ["WILOR_CHECKPOINT"] = str(checkpoint)
+            os.environ["WILOR_DETECTOR"] = str(detector)
+            os.environ["WILOR_CONFIG"] = str(config)
+            os.environ["HAMER_CHECKPOINT"] = str(hamer_ckpt)
+            try:
+                wilor_gaps = hand_pose.wilor_missing()
+                hamer_gaps = hand_pose.hamer_missing()
+                self.assertFalse(wilor_available())
+                self.assertFalse(hamer_available())
+                self.assertTrue(any(item == "python 包 torch" for item in wilor_gaps))
+                self.assertTrue(any("ultralytics" in item for item in wilor_gaps))
+                self.assertTrue(any(item == "python 包 torch" for item in hamer_gaps))
+                self.assertTrue(any("detectron2" in item for item in hamer_gaps))
+                for item in wilor_gaps:
+                    self.assertNotIn("WILOR_", item)
+                    self.assertNotIn("MANO_MODEL_DIR", item)
+                    self.assertNotIn("mano_mean_params", item)
+                for item in hamer_gaps:
+                    self.assertNotIn("HAMER_CHECKPOINT", item)
+                    self.assertNotIn("MANO_MODEL_DIR", item)
+                    self.assertNotIn("mano_mean_params", item)
+            finally:
+                for name, module in saved_modules.items():
+                    if module is None:
+                        sys.modules.pop(name, None)
+                    else:
+                        sys.modules[name] = module
+                for name, value in saved_env.items():
+                    if value is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = value
 
 
 class LibraryProjectorAgreesTest(unittest.TestCase):
