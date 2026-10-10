@@ -1,6 +1,6 @@
-# 头戴式数据采集设备规格（纯头显 · v10）
+# 头戴式数据采集设备规格（纯头显 · v11）
 
-> **适用工程**：`/mnt/sda/app/robot` ｜ **文档日期**：2026-10-09（v8 正文 2026-08-01 保留）
+> **适用工程**：`/mnt/sda/app/robot` ｜ **文档日期**：2026-10-10（v11；v8 正文 2026-08-01 保留）
 >
 > **推导逻辑（一条链，一一对应）**：模型训练消费什么 → 数据采集必须产出什么 → 头戴硬件器件需求是什么。
 > **每一条「必须」都引用工程内真实存在的 checkpoint / 训练配置 / 数据集字段作为依据，不靠猜测**。v9 新增的 EgoScale 对齐项来自公开演讲口径，在正文标明「参考方案」，不写成工程内已有 checkpoint。
@@ -10,6 +10,8 @@
 > **v9 变更**（对照 Jim Fan「Robotics End Game」中的 NVIDIA EgoScale）：保留 v8 全文。把**逐帧手部关节关键点 + 世界坐标系手腕 6DoF 位姿**升为核心标签，并写明头戴 IMU 单独不够、需要双目和/或 SLAM。增加稠密时间分段子任务语言标注、无感佩戴要求（重量、长时间佩戴、自动上传），以及 EgoScale 式数据配比参考方案。详见 §7。当前 ACT/BC-RNN 输入契约仍以 §1–§3 为准。
 >
 > **v10 变更**（对照覆盖度采集、产出率 QC、四级语言标注）：保留 v9 全文。增加 §8：四级标注（ENVIRONMENT / TASK / 时间分段 SUBTASK / 分手 INSTRUCTION）及 JSON 样例、训练产出率与自动 QC 的定义、按环境/物体/任务/动作类型统计的覆盖词表。没有自有头戴设备时，用开放数据集上的位姿和元数据先把这三件事跑起来，工具见 `scripts/egodata/`。
+>
+> **v11 变更**（物体 6DoF、接触、抓取）：保留 v10 全文。统一 episode 增加每条物体轨迹、每只手每帧的接触和抓取状态，以及带时间戳的事件。`schema_version` 仍是 `1.0`（新增的是字段，不是另一套文件）。LeRobot 导出增加 `observation.object_pose`、`observation.contact`、`action.grasp` 和对应的有效掩码。新手说明和合成夹具上的数字见 [`docs/contact_grasp.md`](contact_grasp.md)。HOT3D 真实片段上的精确率、召回率和事件时间差 **待补**。
 >
 > **2026-10-10 修订 §0 / §3**：双目改为头戴设备的核心配置，不再写成可选升级。头戴 IMU 与 SLAM/VIO 一起估计世界系相机位姿，不只做头部运动补偿。现行 `docs/headcam_bom.csv` 仍是单目标价，本文不把那些数字改写成双目报价。1000 元内的双目清单见 `docs/headcam_stereo_bom.md` 与 `docs/headcam_stereo_bom.csv`（推荐方案 A 合计约 727–982 元）。
 
@@ -25,6 +27,7 @@
 | ④ v9 核心几何标签 | 逐帧 `observation.hand_joints`（21×3，世界系）+ `observation.wrist_pose`（xyz + 四元数，世界系 6DoF）。度量深度靠双目，世界系相机位姿靠 SLAM/VIO（IMU 提供短期旋转和零偏）。头戴 IMU 单独不够（§7.1–§7.2） |
 | ⑤ v9 语言与佩戴 | 稠密时间分段子任务标注；无感佩戴：头戴重量、可长时间佩戴、采集段自动上传（§7.3–§7.4） |
 | ⑥ v10 质检与覆盖 | 四级标注、片段级产出率、环境/物体/任务/动作覆盖空档（§8）。开放数据集上的实现见 `scripts/egodata/` |
+| ⑦ v11 物体、接触、抓取 | 世界系物体 6DoF、每只手的接触物体、抓取四态、接触/抓取事件（§9）。掩码为 0 时对应数值是占位，不是测量 |
 | 明确不需要 | 手腕相机、Flex 手套、按钮/LED、麦克风/显示屏。双目是核心配置，不是可选升级（§3.3）。pusht/Square 今天不读 depth 字段，这不把头戴双目降回可选项 |
 
 ---
@@ -441,6 +444,123 @@ EgoDex 手腕置信度的含义来自数据集说明：它表示这只手是否�
 EgoDex 的 `environment` 属性是自由文本（例如 `table:wood, position:sitting, background:brown`）。含 table / desk / sitting 归入 `tabletop`，含 kitchen / fridge / sink 归入 `kitchen`，对不上则为 `unknown`。`llm_verbs` 用子串归入动作类型，归不上的记为 `other`。
 
 报告：`python scripts/egodata_coverage.py --episodes <统一JSON目录> --html outputs/coverage_report.html --csv outputs/coverage_counts.csv`
+
+---
+
+## 9. 物体 6DoF、接触与抓取（v11）
+
+手靠近杯子、握住、再放开，光有手腕轨迹还看不出来。v11 在同一条 episode 里加上三样东西：杯子在世界里的位姿、哪只手碰到了它、这一下算张开、预备、抓住还是放开。
+
+```mermaid
+flowchart LR
+  hot3d["HOT3D<br/>物体位姿 + 手和物体的表面"] --> gt["网格距离<br/>写成接触和抓取真值"]
+  own["自己的录像<br/>手关节 + 物体位姿或深度"] --> guess["启发式<br/>指尖距离、张合、相对速度"]
+  hook["可选现成模型<br/>FoundationPose / ContactHands"] -.-> guess
+  gt --> ep["统一 episode"]
+  guess --> ep
+  ep --> out["LeRobot<br/>object_pose、contact、grasp<br/>各带有效掩码"]
+```
+
+名词：
+
+| 说法 | 人话 |
+|---|---|
+| 6DoF | 物体在世界里的位置（3 个数，米）和朝向（四元数 xyzw，4 个数），一共 7 个数 |
+| 接触 | 这一帧这只手碰到了哪个物体。没碰到是空，不知道是「无效」 |
+| 抓取状态 | 只有四档：`open` 张开、`pre_grasp` 预备、`grasp` 抓住、`release` 放开 |
+| 事件 | 状态变了的时刻：`contact_start` / `contact_end` / `grasp` / `release`，带秒 |
+| 有效掩码 | 和 `observation.hand_valid` 一样。0 表示这一格是占位的 0，不能当成真测到了原点或张开 |
+
+`coverage.objects` 仍是物体名字列表，用来数覆盖。顶层 `objects` 才是逐帧位姿，两套不要混。
+
+### 9.1 统一 episode 里的字段
+
+`schema_version` 继续是 `"1.0"`。缺了 `objects`、`contact`、`grasp` 或 `events`，`validate_episode` 会报错。EgoDex 没有物体位姿，转换器写空轨迹，接触和抓取的 `valid` 全是 false。
+
+物体轨迹（列表，可以是空的）：
+
+| 字段 | 含义 |
+|---|---|
+| `id` | 这一条轨迹的名字，片段内不重复 |
+| `category` | 类别或物体名，例如 `mug` |
+| `source` | 位姿从哪来：`hot3d`、`heuristic`、`foundationpose`、`unknown` 等 |
+| `pose` | 长度 = 帧数。每一帧是 xyz + xyzw，缺了是 null |
+| `confidence` | 长度 = 帧数。没有这一通道时是 null，不当成 0 |
+| `valid` | 长度 = 帧数的布尔值。false 时姿态不能拿去训练 |
+
+每只手（`left` / `right`）：
+
+| 通道 | 每帧写什么 |
+|---|---|
+| `contact.object_id` | 碰到的物体 `id`，或 null（明确没碰到） |
+| `contact.confidence` | 0 到 1 的分数。启发式算出来的数，不是标定过的概率 |
+| `contact.valid` | 这一帧的接触判断能不能用 |
+| `grasp.state` | `open` / `pre_grasp` / `grasp` / `release`。无效时是 null |
+| `grasp.confidence` / `grasp.valid` | 同上 |
+
+`contact.source` / `grasp.source` 标明整段用的方法：`hot3d_mesh`（表面距离真值）、`heuristic`、`contacthands`（钩子）、`unknown`（没有标注）。
+
+事件是一条列表，不是固定长度的向量：
+
+```json
+{"type": "contact_start", "hand": "right", "object_id": "12", "timestamp": 0.5, "frame_index": 5}
+```
+
+`timestamp` 必须落在这一段的第一帧和最后一帧之间。
+
+### 9.2 HOT3D 真值
+
+HOT3D-Clips 的 `<帧号>.objects.json` 里，每个物体有 `T_world_from_object`：`translation_xyz`（米）和 `quaternion_wxyz`（注意是 w 在前，写进 episode 时改成 xyzw）。实现在 `scripts/headcam/hot3d_adapter.py`。
+
+接触真值看手的表面和物体表面有多近，默认 **5 mm**（`GT_CONTACT_M`）。这个 5 mm 还没有在 HOT3D 上调过。至少两根指尖也在这个距离里，才记成抓住。预备和放开允许看相邻帧：抓住的前一帧可以是预备，后一帧可以是放开。
+
+没有物体网格、也没有手部点时，只写位姿，接触保持无效。不要用关节冒充网格还把 `source` 写成 `hot3d_mesh`。
+
+### 9.3 自有数据上的启发式
+
+自己的录像通常没有物体网格真值。`scripts/egodata/interaction.py` 用三条线索：
+
+1. **指尖到表面的距离。** 表面可以是网格、一个球，或者指尖深度和物体深度的差。默认 1 cm 以内算碰到（比 5 mm 松，因为关节在骨头上，不在皮肤上）。
+2. **张合。** 拇指尖到食指尖。默认不超过 8 cm，并且至少两根指尖贴着表面，才算抓住。
+3. **相对速度。** 指尖中心相对物体中心、沿着「离开物体」方向的速度。正在靠近、人还没碰到，记成预备。上一帧是抓住、这一帧不再满足抓住，记成放开。
+
+这些默认值都没有用真实头戴录像标定。QC 里「说抓住了但没有接触」只写进报告，**不因此拒绝片段**。等自采数据再决定要不要把它算进那 20% 坏帧。
+
+现成模型不要求装进本仓库。两个可选钩子：
+
+| 钩子 | 别人的模型大概做什么 | 本仓库做什么 |
+|---|---|---|
+| `pose_hook` | FoundationPose 一类：图像、深度和网格 → 物体 6DoF | 调用你传入的函数。函数没给，就用 episode 里已有的位姿 |
+| `contact_hook` | 100DOH / ContactHands 一类：从图像判断手有没有碰到物体 | 某一帧它返回了物体 id，就用它的；返回空则退回上面的启发式 |
+
+### 9.4 LeRobot
+
+导出仍只收 QC 通过的片段。新增列（无效写 0，同时掩码写 0）：
+
+| 特征 | 形状 | 含义 |
+|---|---|---|
+| `observation.object_pose` | 28 | 最多 4 个物体，按 id 排序，每个 xyz + xyzw |
+| `observation.object_pose_valid` | 4 | 每个槽位是否有效 |
+| `observation.contact` | 4 | 左手槽位、左手置信度、右手槽位、右手置信度。没碰到且有效时槽位是 -1 |
+| `observation.contact_valid` | 2 | 左右手 |
+| `action.grasp` | 2 | 当前帧状态：0 张开、1 预备、2 抓住、3 放开。不是下一步增量 |
+| `action.grasp_valid` | 2 | 左右手 |
+
+超过 4 个物体时多出来的丢掉，并在 `meta/egodata_export.json` 的 `object_tracks_truncated` 里计数。事件写在 `meta/interaction_events.jsonl`，不塞进定长向量。
+
+### 9.5 合成夹具上的数，以及还没测的
+
+`python scripts/eval_contact_grasp.py --synthetic` 用一个半径 3 cm 的小球、3 帧、只有右手。皮肤点比关节近 6 mm，所以真值比启发式早一帧碰到。这是合成夹具，**不是** HOT3D。
+
+| 指标 | 合成夹具 | HOT3D 真实片段 |
+|---|---|---|
+| 接触精确率 | 1.0（tp 1，fp 0） | 待补 |
+| 接触召回率 | 0.5（fn 1） | 待补 |
+| 抓取精确率 | 1.0（tp 1，fp 0） | 待补 |
+| 抓取召回率 | 1.0（fn 0） | 待补 |
+| 事件时间差中位数 | 0.05 秒（接触开始差 0.1 秒，抓取事件差 0 秒） | 待补 |
+
+左手整段无效，精确率和召回率没有定义，脚本写成 null，不要当成 0。来源：`tests/test_contact_grasp.py` 里的 `synthetic_disagreement`，2026-10-10 在本仓库跑过。
 
 ---
 

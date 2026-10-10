@@ -28,6 +28,7 @@ from egodata.coverage import (
 )
 from egodata.schema import (
     SCHEMA_VERSION,
+    empty_interaction,
     make_quaternions_continuous,
     rotmat_to_quat_xyzw,
     save_episode,
@@ -234,6 +235,7 @@ def load_episode_hdf5(path, episode_id=None):
         "camera_intrinsic": intrinsic.tolist(),
         "camera_poses": camera.tolist(),
         "hands": hands,
+        **empty_interaction(num_frames),
         "annotation": {
             "environment": {
                 "name": environment,

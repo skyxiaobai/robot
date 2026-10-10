@@ -3,7 +3,7 @@
 > 日期：2026-10-09。对照一条完整链路：
 > **开放数据集下载 → 转成统一格式 → QC / 产出率 → 覆盖统计 → 四级标注 → LeRobot 训练 → 缩放律评估**。
 > 前提：还没有自有头戴采集设备，只能先用带手部位姿的开放第一视角数据。
-> 规格见 `docs/headcam_data_spec.md` v10 §7–§8。
+> 规格见 `docs/headcam_data_spec.md` v11 §7–§9。
 
 ## 0. 结论
 
@@ -64,13 +64,18 @@
 
 ## 3. 统一 episode 里有什么
 
-一条 JSON（`schema_version` 1.0）包含：
+一条 JSON（`schema_version` 1.0，v11 起还要求物体、接触、抓取和事件这四块；没有数据时是空轨迹和全 false 的有效位）包含：
 
 - 来源、帧率、`coordinate_frame=arkit_world`（集内静止，集与集的原点不必相同）
 - 相机内参、每帧 4×4 相机位姿、由主点推出来的图像宽高
 - 左右手各 21×3 关节（MediaPipe 顺序；对不上的 EgoDex 掌骨点不塞进去）、手腕 7 维（xyz + xyzw）、手腕置信度。没有 confidences 组时置信度是 null，四元数在片段内与上一帧同半球
 - `annotation`：四级标注。EgoDex 只填环境和整段任务，子任务和分手指令是空数组
 - `coverage`：归一后的环境、原始物体名、粗类别、任务名、动作类型
+- `objects`：物体在世界系的 6DoF 轨迹（id、类别、xyz+xyzw、置信度、有效位、来源）。这和 `coverage.objects` 的名字列表不是同一项。EgoDex 写空列表
+- `contact` / `grasp`：左右手每帧的接触物体和四态（张开、预备、抓住、放开），以及有效位。没有标注时有效位是 false
+- `events`：接触开始/结束、抓住、放开，带时间戳
+
+LeRobot 导出在原来的手腕增量之外，增加 `observation.object_pose`、`observation.contact`、`action.grasp` 和同名的 `*_valid` 掩码。掩码为 0 时数值是占位。HOT3D 适配器能读 `objects.json` 的位姿；给了表面才用网格距离写接触真值。启发式和合成夹具见 `docs/contact_grasp.md`。HOT3D 真实片段上的精确率、召回率、事件时间差 **待补**。
 
 21 点对照写在 `scripts/egodata/egodex.py`：手腕用 `leftHand`/`rightHand`，食指尖用 `*IndexFingerTip`，拇指用 Knuckle → IntermediateBase → IntermediateTip → Tip。这是 ARKit 名字到 MediaPipe 的近似，不是逐点解剖注册。`Hand` 在前臂上，比 MediaPipe 腕点更靠肘；`ThumbKnuckle` 也不是拇指 CMC。比较误差时用 `EGODEX_NONCORRESPONDING_JOINTS`（0 和 1）把这两点排除。
 

@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-"""统一 episode：世界系手部关节、手腕 6DoF，以及标注和覆盖度字段。"""
+"""统一 episode：世界系手部关节、手腕 6DoF、物体 6DoF、接触和抓取。"""
 import json
 from pathlib import Path
 
 import numpy as np
 
 SCHEMA_VERSION = "1.0"
+GRASP_STATES = ("open", "pre_grasp", "grasp", "release")
+EVENT_TYPES = ("contact_start", "contact_end", "grasp", "release")
+HAND_SIDES = ("left", "right")
 
 # 与 MediaPipe Hands 的 21 点顺序一致。EgoDex 的 Hand / ThumbKnuckle
 # 只是按这个顺序摆进来，解剖上并不等于腕点和拇指 CMC，见
@@ -112,6 +115,154 @@ def _as_floats(value):
     return value
 
 
+def _blank_hand(num_frames, field):
+    return {
+        field: [None] * num_frames,
+        "confidence": [None] * num_frames,
+        "valid": [False] * num_frames,
+    }
+
+
+def empty_interaction(num_frames):
+    """没有物体位姿时的空通道。有效位全是 false，不能把 0 当成真位姿。"""
+    num_frames = int(num_frames)
+    return {
+        "objects": [],
+        "contact": {
+            "source": "unknown",
+            "left": _blank_hand(num_frames, "object_id"),
+            "right": _blank_hand(num_frames, "object_id"),
+        },
+        "grasp": {
+            "source": "unknown",
+            "left": _blank_hand(num_frames, "state"),
+            "right": _blank_hand(num_frames, "state"),
+        },
+        "events": [],
+    }
+
+
+def _finite_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float, np.floating, np.integer)):
+        return False
+    return bool(np.isfinite(value))
+
+
+def _pose7_ok(pose):
+    if not isinstance(pose, (list, tuple)) or len(pose) != 7:
+        return False
+    return all(_finite_number(item) for item in pose)
+
+
+def _validate_interaction(episode, num_frames, errors):
+    objects = episode.get("objects")
+    if not isinstance(objects, list):
+        errors.append("缺少 objects")
+        object_ids = set()
+    else:
+        object_ids = set()
+        for index, obj in enumerate(objects):
+            if not isinstance(obj, dict):
+                errors.append("objects[%d] 必须是对象" % index)
+                continue
+            obj_id = obj.get("id")
+            if not isinstance(obj_id, str) or not obj_id:
+                errors.append("objects[%d].id 必须是非空字符串" % index)
+            elif obj_id in object_ids:
+                errors.append("objects id 重复：%s" % obj_id)
+            else:
+                object_ids.add(obj_id)
+            if not isinstance(obj.get("category"), str) or not obj.get("category"):
+                errors.append("objects[%d].category 必须是非空字符串" % index)
+            if not isinstance(obj.get("source"), str) or not obj.get("source"):
+                errors.append("objects[%d].source 必须是非空字符串" % index)
+            pose = obj.get("pose")
+            confidence = obj.get("confidence")
+            valid = obj.get("valid")
+            if not isinstance(pose, list) or len(pose) != num_frames:
+                errors.append("objects[%d].pose 长度必须等于 num_frames" % index)
+            if not isinstance(confidence, list) or len(confidence) != num_frames:
+                errors.append("objects[%d].confidence 长度必须等于 num_frames" % index)
+            if not isinstance(valid, list) or len(valid) != num_frames:
+                errors.append("objects[%d].valid 长度必须等于 num_frames" % index)
+            elif isinstance(pose, list) and len(pose) == num_frames:
+                for frame_index, flag in enumerate(valid):
+                    if not isinstance(flag, (bool, np.bool_)):
+                        errors.append("objects[%d].valid[%d] 必须是布尔值" % (index, frame_index))
+                        break
+                    if flag and not _pose7_ok(pose[frame_index]):
+                        errors.append("objects[%d].pose[%d] 必须是 xyz + xyzw 共 7 个数" % (index, frame_index))
+                        break
+    for channel, field, allowed in (
+        ("contact", "object_id", None),
+        ("grasp", "state", GRASP_STATES),
+    ):
+        block = episode.get(channel)
+        if not isinstance(block, dict):
+            errors.append("缺少 %s" % channel)
+            continue
+        if "source" in block and not isinstance(block.get("source"), str):
+            errors.append("%s.source 必须是字符串" % channel)
+        for side in HAND_SIDES:
+            hand = block.get(side)
+            if not isinstance(hand, dict):
+                errors.append("缺少 %s.%s" % (channel, side))
+                continue
+            values = hand.get(field)
+            confidence = hand.get("confidence")
+            valid = hand.get("valid")
+            if not isinstance(values, list) or len(values) != num_frames:
+                errors.append("%s.%s.%s 长度必须等于 num_frames" % (channel, side, field))
+                continue
+            if not isinstance(confidence, list) or len(confidence) != num_frames:
+                errors.append("%s.%s.confidence 长度必须等于 num_frames" % (channel, side))
+            if not isinstance(valid, list) or len(valid) != num_frames:
+                errors.append("%s.%s.valid 长度必须等于 num_frames" % (channel, side))
+                continue
+            for frame_index, flag in enumerate(valid):
+                if not isinstance(flag, (bool, np.bool_)):
+                    errors.append("%s.%s.valid[%d] 必须是布尔值" % (channel, side, frame_index))
+                    break
+                if not flag:
+                    continue
+                value = values[frame_index]
+                if channel == "contact":
+                    if value is not None and not isinstance(value, str):
+                        errors.append("contact.%s.object_id[%d] 必须是字符串或空" % (side, frame_index))
+                        break
+                    if isinstance(value, str) and object_ids and value not in object_ids:
+                        errors.append("contact.%s.object_id[%d] 不在 objects 里" % (side, frame_index))
+                        break
+                elif value not in allowed:
+                    errors.append("grasp.%s.state[%d] 必须是 %s" % (side, frame_index, "/".join(GRASP_STATES)))
+                    break
+    events = episode.get("events")
+    if not isinstance(events, list):
+        errors.append("缺少 events")
+        return
+    timestamps = episode.get("timestamps")
+    t0 = t1 = None
+    if isinstance(timestamps, list) and timestamps:
+        try:
+            t0 = float(timestamps[0])
+            t1 = float(timestamps[-1])
+        except (TypeError, ValueError):
+            t0 = t1 = None
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            errors.append("events[%d] 必须是对象" % index)
+            continue
+        if event.get("type") not in EVENT_TYPES:
+            errors.append("events[%d].type 必须是 %s" % (index, "/".join(EVENT_TYPES)))
+        if event.get("hand") not in HAND_SIDES:
+            errors.append("events[%d].hand 必须是 left 或 right" % index)
+        stamp = event.get("timestamp")
+        if not _finite_number(stamp):
+            errors.append("events[%d].timestamp 必须是数" % index)
+        elif t0 is not None and (float(stamp) < t0 - 1e-6 or float(stamp) > t1 + 1e-6):
+            errors.append("events[%d].timestamp 必须落在片段时间范围内" % index)
+
+
 def validate_episode(episode):
     """返回结构错误列表。空列表表示可以进入 QC。"""
     errors = []
@@ -165,6 +316,7 @@ def validate_episode(episode):
                     break
         if not isinstance(confidence, list) or len(confidence) != num_frames:
             errors.append("hands.%s.confidence 长度必须等于 num_frames" % side)
+    _validate_interaction(episode, num_frames, errors)
     return errors
 
 

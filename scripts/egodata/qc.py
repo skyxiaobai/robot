@@ -43,9 +43,95 @@ _EXTRA_LABELS = {
     "low_label_coverage": "标注覆盖不足",
 }
 
+# 接触和抓取还没有在自采数据上标定过，只写进报告，不算坏帧，也不因此拒绝片段。
+INTERACTION_FLAG_LABELS = {
+    "grasp_without_contact": "抓取但没有接触",
+    "contact_unknown_object": "接触到了不认识的物体",
+}
+
 
 def _label(name):
-    return _FLAG_LABELS.get(name) or STEREO_FLAG_LABELS.get(name) or _EXTRA_LABELS.get(name) or name
+    return (
+        _FLAG_LABELS.get(name)
+        or STEREO_FLAG_LABELS.get(name)
+        or INTERACTION_FLAG_LABELS.get(name)
+        or _EXTRA_LABELS.get(name)
+        or name
+    )
+
+
+def interaction_frame_flags(episode):
+    """抓取和接触对不上的帧。没有这两段标注时返回空，避免给旧 JSON 加一列。"""
+    if "grasp" not in episode and "contact" not in episode:
+        return {}
+    num_frames = int(episode["num_frames"])
+    flags = {name: np.zeros(num_frames, dtype=bool) for name in INTERACTION_FLAG_LABELS}
+    known = {
+        str(obj.get("id"))
+        for obj in (episode.get("objects") or [])
+        if isinstance(obj, dict) and obj.get("id") is not None
+    }
+    grasp = episode.get("grasp") or {}
+    contact = episode.get("contact") or {}
+    for side in ("left", "right"):
+        g_hand = grasp.get(side) or {}
+        c_hand = contact.get(side) or {}
+        states = g_hand.get("state") or []
+        g_valid = g_hand.get("valid") or []
+        object_ids = c_hand.get("object_id") or []
+        c_valid = c_hand.get("valid") or []
+        for index in range(num_frames):
+            grasped = (
+                index < len(g_valid) and bool(g_valid[index])
+                and index < len(states) and states[index] == "grasp"
+            )
+            if grasped:
+                touched = (
+                    index < len(c_valid) and bool(c_valid[index])
+                    and index < len(object_ids) and object_ids[index] is not None
+                )
+                if not touched:
+                    flags["grasp_without_contact"][index] = True
+            if (
+                index < len(c_valid) and bool(c_valid[index])
+                and index < len(object_ids) and isinstance(object_ids[index], str)
+                and object_ids[index] not in known
+            ):
+                flags["contact_unknown_object"][index] = True
+    return flags
+
+
+def interaction_summary(episode):
+    """有效位占比。没有物体轨迹时物体那一项是 None，不是 0。"""
+    num_frames = int(episode.get("num_frames") or 0)
+    objects = episode.get("objects")
+    if not isinstance(objects, list) or not objects or num_frames < 1:
+        pose_fraction = None
+    else:
+        good = 0
+        total = 0
+        for obj in objects:
+            valid = obj.get("valid") or []
+            total += num_frames
+            good += sum(1 for index in range(num_frames) if index < len(valid) and valid[index])
+        pose_fraction = good / float(total)
+
+    def channel_fraction(block):
+        if not isinstance(block, dict) or num_frames < 1:
+            return None
+        good = 0
+        total = 0
+        for side in ("left", "right"):
+            valid = (block.get(side) or {}).get("valid") or []
+            total += num_frames
+            good += sum(1 for index in range(num_frames) if index < len(valid) and valid[index])
+        return None if total == 0 else good / float(total)
+
+    return {
+        "object_pose_valid_fraction": pose_fraction,
+        "contact_valid_fraction": channel_fraction(episode.get("contact")),
+        "grasp_valid_fraction": channel_fraction(episode.get("grasp")),
+    }
 
 
 def _project(intrinsic, camera_pose, point):
@@ -203,10 +289,13 @@ def qc_episode(episode, **overrides):
     options = dict(DEFAULTS)
     options.update(overrides)
     flags = frame_qc_flags(episode, **overrides)
+    extra = interaction_frame_flags(episode)
     num_frames = episode["num_frames"]
     fps = float(episode["fps"])
     counts = {name: int(np.sum(values)) for name, values in flags.items()}
-    bad = int(np.sum(np.any(np.stack([flags[name] for name in flags]), axis=0)))
+    for name, values in extra.items():
+        counts[name] = int(np.sum(values))
+    bad = int(np.sum(np.any(np.stack([flags[name] for name in _FLAG_LABELS]), axis=0)))
     bad_fraction = bad / float(num_frames)
     accepted = bad_fraction <= options["max_bad_fraction"]
     reasons = []
@@ -222,6 +311,7 @@ def qc_episode(episode, **overrides):
         "bad_fraction": bad_fraction,
         "flags": counts,
         "reasons": reasons,
+        "interaction": interaction_summary(episode),
     }
     result.update(validity_fields(episode))
     return result
