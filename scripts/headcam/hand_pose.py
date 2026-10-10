@@ -1649,6 +1649,27 @@ class WiLoRBackend(_ManoFamilyBackend):
         self._detector.to(self._device)
 
 
+def refine_tracked_hands(frames, params=None, timestamps=None, camera_poses=None):
+    """对一整段检测做可选的时序精修。默认关闭，要调用才会改结果。
+
+    实现在 ``headcam.hand_track_refine``。不传 ``params`` 时用 One Euro、最多补 5 帧、
+    固定骨长，并做左右手轨迹一致性。``frames`` 与 ``predict`` 的返回值相同。
+    """
+    from headcam.hand_track_refine import RefineParams, refine_prediction_sequence
+
+    if params is None:
+        params = RefineParams(
+            smooth="one_euro",
+            gap_fill=True,
+            max_gap=5,
+            fixed_shape=True,
+            lr_consistency=True,
+        )
+    return refine_prediction_sequence(
+        frames, params, timestamps=timestamps, camera_poses=camera_poses,
+    )
+
+
 def get_backend(name, wrist_depth_m=DEFAULT_WRIST_DEPTH_M):
     key = (name or "mediapipe").lower()
     if key == "mediapipe":
@@ -1853,8 +1874,11 @@ def evaluate_hand_frames(samples, exclude_joints=(), match_px=250.0, min_visible
         "px_error_median": _median(px_errors),
         "px_error_mean": _mean(px_errors),
         "root_relative_m_median": _median(relative_errors),
+        "root_relative_m_mean": _mean(relative_errors),
         "wrist_error_m_median": _median(wrist_errors),
+        "wrist_error_m_mean": _mean(wrist_errors),
         "wrist_error_scaled_m_median": _median(scaled_errors),
+        "wrist_error_scaled_m_mean": _mean(scaled_errors),
         "scale_median": _median(list(scales.values())),
         "exclude_joints": excluded,
     }

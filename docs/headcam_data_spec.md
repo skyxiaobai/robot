@@ -352,6 +352,7 @@ session/
 3. `p_world = T_world_cam · p_cam`。`T` 来自 TUM 里时间最近的一帧。没有轨迹时 `T` 是单位阵，`coordinate_frame` 写 `camera`，这还不是 §7.1 的世界系。有轨迹时写 `slam_world`。
 4. 手腕朝向：x 从手腕指向食指 MCP，掌面法向由食指 MCP 与小指 MCP 叉乘得到。缺测帧写空值，不用 0 填充。
 5. 子任务和分手指令留空。语言不在这个转换器里编造。
+6. 可选的时序精修在 `scripts/headcam/hand_track_refine.py`，`convert_headcam.py` 不传开关时不会改关节。`--refine` 同时打开四件事：One Euro 平滑（也可换成常速度卡尔曼）、最多补 5 帧缺测、按这一段的骨长中位数重摆关节、用手腕轨迹修正左右标签。有 TUM 时平滑在世界系里做，避免把头的转动当成手抖。补上的帧带 `filled=true`，置信度写成 0。QC 看到 `filled`，或者置信度低于 0.5，都不把这帧当成跟踪成功。没有 MANO 文件时形状就是 20 段骨长，不会把骨长写成 betas。
 
 整机标定和 SLAM 仍在仓库外做。这里只读已经算好的 yaml 和 TUM。
 

@@ -1,0 +1,205 @@
+{
+  "backend": "mediapipe",
+  "wilor_missing": [
+    "python 包 wilor（https://github.com/rolpotamias/WiLoR）",
+    "环境变量 WILOR_CHECKPOINT 指向的 wilor_final.ckpt",
+    "环境变量 WILOR_DETECTOR 指向的 detector.pt",
+    "环境变量 WILOR_CONFIG 指向的 model_config.yaml",
+    "环境变量 MANO_MODEL_DIR（目录内要有 MANO_RIGHT.pkl）"
+  ],
+  "episodes": [
+    {
+      "path": "test/open_close_insert_remove_case/8.hdf5",
+      "frames": 15
+    },
+    {
+      "path": "test/add_remove_lid/14.hdf5",
+      "frames": 330
+    },
+    {
+      "path": "test/add_remove_lid/23.hdf5",
+      "frames": 363
+    },
+    {
+      "path": "test/add_remove_lid/8.hdf5",
+      "frames": 345
+    }
+  ],
+  "metrics": {
+    "baseline/excluded": {
+      "name": "基线",
+      "detection_rate": 0.3715116279069767,
+      "mpjpe_cm": 9.508018409143745,
+      "mpjpe_median_cm": 9.199448100933088,
+      "wrist_cm_median": 24.588984758837928,
+      "wrist_cm_mean": 26.197421572933273,
+      "wrist_scaled_cm_median": 4.752899609727842,
+      "wrist_scaled_cm_mean": 4.8907405565549995,
+      "jitter_mps2": 53.2269405327916,
+      "swap_rate": 0.702660406885759,
+      "confident_detection_rate": 0.3715116279069767,
+      "gt_visible": 1720,
+      "matched": 639,
+      "exclude_joints": [
+        0,
+        1
+      ]
+    },
+    "smoothing/excluded": {
+      "name": "只平滑",
+      "detection_rate": 0.3540697674418605,
+      "mpjpe_cm": 9.307238697216354,
+      "mpjpe_median_cm": 9.124368607528096,
+      "wrist_cm_median": 25.02958220898202,
+      "wrist_cm_mean": 26.05264920602722,
+      "wrist_scaled_cm_median": 5.152264770133148,
+      "wrist_scaled_cm_mean": 5.551148476042941,
+      "jitter_mps2": 7.913121513582272,
+      "swap_rate": 0.7093596059113301,
+      "confident_detection_rate": 0.3540697674418605,
+      "gt_visible": 1720,
+      "matched": 609,
+      "exclude_joints": [
+        0,
+        1
+      ]
+    },
+    "gap_fill/excluded": {
+      "name": "只补洞",
+      "detection_rate": 0.4877906976744186,
+      "mpjpe_cm": 9.794172492671592,
+      "mpjpe_median_cm": 9.425580069034368,
+      "wrist_cm_median": 24.530320154917863,
+      "wrist_cm_mean": 25.897135811340497,
+      "wrist_scaled_cm_median": 4.908258827475645,
+      "wrist_scaled_cm_mean": 5.139606532153831,
+      "jitter_mps2": 25.214905012099084,
+      "swap_rate": 0.5148986889153755,
+      "confident_detection_rate": 0.3715116279069767,
+      "gt_visible": 1720,
+      "matched": 839,
+      "exclude_joints": [
+        0,
+        1
+      ]
+    },
+    "fixed_shape/excluded": {
+      "name": "只固定手型",
+      "detection_rate": 0.3715116279069767,
+      "mpjpe_cm": 9.342219342950193,
+      "mpjpe_median_cm": 9.152702716686607,
+      "wrist_cm_median": 24.588984341302215,
+      "wrist_cm_mean": 26.19742146491792,
+      "wrist_scaled_cm_median": 4.7528946942768515,
+      "wrist_scaled_cm_mean": 4.8907397017054,
+      "jitter_mps2": 53.07107587157597,
+      "swap_rate": 0.702660406885759,
+      "confident_detection_rate": 0.3715116279069767,
+      "gt_visible": 1720,
+      "matched": 639,
+      "exclude_joints": [
+        0,
+        1
+      ]
+    },
+    "all/excluded": {
+      "name": "全部打开",
+      "detection_rate": 0.4738372093023256,
+      "mpjpe_cm": 9.527130295851734,
+      "mpjpe_median_cm": 9.230024507315763,
+      "wrist_cm_median": 24.90380870429878,
+      "wrist_cm_mean": 25.994968111411204,
+      "wrist_scaled_cm_median": 5.147672190816959,
+      "wrist_scaled_cm_mean": 5.501311703167292,
+      "jitter_mps2": 4.060480765058615,
+      "swap_rate": 0.5128834355828221,
+      "confident_detection_rate": 0.3633720930232558,
+      "gt_visible": 1720,
+      "matched": 815,
+      "exclude_joints": [
+        0,
+        1
+      ]
+    },
+    "baseline/all": {
+      "name": "基线",
+      "detection_rate": 0.3715116279069767,
+      "mpjpe_cm": 9.169606011018564,
+      "mpjpe_median_cm": 8.885545522516235,
+      "wrist_cm_median": 24.588984758837928,
+      "wrist_cm_mean": 26.197421572933273,
+      "wrist_scaled_cm_median": 4.752899609727842,
+      "wrist_scaled_cm_mean": 4.8907405565549995,
+      "jitter_mps2": 53.2269405327916,
+      "swap_rate": 0.702660406885759,
+      "confident_detection_rate": 0.3715116279069767,
+      "gt_visible": 1720,
+      "matched": 639,
+      "exclude_joints": []
+    },
+    "smoothing/all": {
+      "name": "只平滑",
+      "detection_rate": 0.3540697674418605,
+      "mpjpe_cm": 8.972734492491433,
+      "mpjpe_median_cm": 8.786896799950986,
+      "wrist_cm_median": 25.02958220898202,
+      "wrist_cm_mean": 26.05264920602722,
+      "wrist_scaled_cm_median": 5.152264770133148,
+      "wrist_scaled_cm_mean": 5.551148476042941,
+      "jitter_mps2": 7.913121513582272,
+      "swap_rate": 0.7093596059113301,
+      "confident_detection_rate": 0.3540697674418605,
+      "gt_visible": 1720,
+      "matched": 609,
+      "exclude_joints": []
+    },
+    "gap_fill/all": {
+      "name": "只补洞",
+      "detection_rate": 0.4877906976744186,
+      "mpjpe_cm": 9.442360559786485,
+      "mpjpe_median_cm": 9.088231198942363,
+      "wrist_cm_median": 24.530320154917863,
+      "wrist_cm_mean": 25.897135811340497,
+      "wrist_scaled_cm_median": 4.908258827475645,
+      "wrist_scaled_cm_mean": 5.139606532153831,
+      "jitter_mps2": 25.214905012099084,
+      "swap_rate": 0.5148986889153755,
+      "confident_detection_rate": 0.3715116279069767,
+      "gt_visible": 1720,
+      "matched": 839,
+      "exclude_joints": []
+    },
+    "fixed_shape/all": {
+      "name": "只固定手型",
+      "detection_rate": 0.3715116279069767,
+      "mpjpe_cm": 9.005419562329934,
+      "mpjpe_median_cm": 8.810778939432797,
+      "wrist_cm_median": 24.588984341302215,
+      "wrist_cm_mean": 26.19742146491792,
+      "wrist_scaled_cm_median": 4.7528946942768515,
+      "wrist_scaled_cm_mean": 4.8907397017054,
+      "jitter_mps2": 53.07107587157597,
+      "swap_rate": 0.702660406885759,
+      "confident_detection_rate": 0.3715116279069767,
+      "gt_visible": 1720,
+      "matched": 639,
+      "exclude_joints": []
+    },
+    "all/all": {
+      "name": "全部打开",
+      "detection_rate": 0.4738372093023256,
+      "mpjpe_cm": 9.17547696635511,
+      "mpjpe_median_cm": 8.90184419096757,
+      "wrist_cm_median": 24.90380870429878,
+      "wrist_cm_mean": 25.994968111411204,
+      "wrist_scaled_cm_median": 5.147672190816959,
+      "wrist_scaled_cm_mean": 5.501311703167292,
+      "jitter_mps2": 4.060480765058615,
+      "swap_rate": 0.5128834355828221,
+      "confident_detection_rate": 0.3633720930232558,
+      "gt_visible": 1720,
+      "matched": 815,
+      "exclude_joints": []
+    }
+  }
+}
