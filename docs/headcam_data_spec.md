@@ -339,7 +339,7 @@ session/
 
 几何按 §7.2 合成，实现在 `scripts/headcam/hand_pose.py`：
 
-1. 手部后端给出左相机系 21 点（MediaPipe 顺序）和 2D。主后端是 [HaMeR](https://github.com/geopavlakos/hamer) 或 [WiLoR](https://github.com/rolpotamias/WiLoR)，都要 MANO 右手模型。MANO 是马普所非商业许可，从 https://mano.is.tue.mpg.de 注册下载，**权重不进仓库**。没有权重时用 MediaPipe Hands（CPU，无 MANO），它的三维不是公制相机系。
+1. 手部后端给出左相机系 21 点（MediaPipe 顺序）和 2D。主后端是 [HaMeR](https://github.com/geopavlakos/hamer) 或 [WiLoR](https://github.com/rolpotamias/WiLoR)，都要 MANO 右手模型。MANO 是马普所非商业许可，从 https://mano.is.tue.mpg.de 注册下载，**权重不进仓库**。没有权重时用 MediaPipe Hands（CPU，无 MANO）。它的三维不是公制相机系：单目路径用可配置的手腕深度先验（默认 0.55 m）把 2D 抬进相机系，这不是米制深度，公制尺度要靠双目三角化。`mediapipe>=0.10.30` 没有 `mp.solutions`，后端改用 Tasks `HandLandmarker`（需下载 `hand_landmarker.task`）。无头环境可能缺 `libGLESv2`，默认 CPU delegate；仍有旧接口时会退回 `mp.solutions.hands`。
 2. 左右目 2D 用标定三角化到左相机系，修正单目尺度，并给出每个关节的重投影置信度。点在相机后面或已校正双目视差符号不对时置信度为 0。
 3. `p_world = T_world_cam · p_cam`。`T` 来自 TUM 里时间最近的一帧。没有轨迹时 `T` 是单位阵，`coordinate_frame` 写 `camera`，这还不是 §7.1 的世界系。有轨迹时写 `slam_world`。
 4. 手腕朝向：x 从手腕指向食指 MCP，掌面法向由食指 MCP 与小指 MCP 叉乘得到。缺测帧写空值，不用 0 填充。

@@ -55,7 +55,7 @@ python scripts/ego_visualize.py traj3d \
     --out outputs/open_data_demo/viz/traj3d.png
 ```
 
-自有头戴会话（设备还没有，目录见规格 §7.7）收成同一份 JSON。有 `hands.json` 和标定时会做双目尺度校正；`--backend mediapipe` 在 CPU 上跑，HaMeR / WiLoR 需要仓库外的 MANO 权重：
+自有头戴会话（设备还没有，目录见规格 §7.7）收成同一份 JSON。有 `hands.json` 和标定时会做双目尺度校正；`--backend mediapipe` 在 CPU 上跑，HaMeR / WiLoR 需要仓库外的 MANO 权重。MediaPipe 单目手腕深度只是先验（默认 0.55 m），公制深度要靠双目。`mediapipe>=0.10.30` 用 Tasks `HandLandmarker`；无头环境若缺 `libEGL` / `libGLESv2`，先装系统库，推理再用 CPU delegate。和 EgoDex 比的时候，`Hand` / `ThumbKnuckle` 不是 MediaPipe 的腕点和拇指 CMC，可以用 `EGODEX_NONCORRESPONDING_JOINTS` 排除。
 
 ```bash
 python scripts/convert_headcam.py --session /path/to/session --out outputs/headcam/episode.json
@@ -100,8 +100,8 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | `scripts/demo_open_dataset_pipeline.py` | 用合成 EgoDex 式样本把上面几步串起来 |
 | `scripts/ego_visualize.py` | 手骨架叠加、质检对照、世界系轨迹。投影与 QC 相同。不把画面提交进仓库 |
 | `scripts/convert_headcam.py` | 头戴会话目录 → 统一 episode。HaMeR / WiLoR / MediaPipe，双目三角化，TUM 位姿 |
-| `scripts/headcam/hand_pose.py` | 上面三个后端、Kalibr/OpenCV 标定、尺度校正、手腕 6DoF。MANO 权重不入库 |
-| `notebooks/headcam_hand_pose_colab.ipynb` | 合成双目的厘米误差、QC 和叠加；可选 GPU 上的 HaMeR / WiLoR，并和 EgoDex 手腕比较 |
+| `scripts/headcam/hand_pose.py` | 上面三个后端、Kalibr/OpenCV 标定、尺度校正、手腕 6DoF。MediaPipe 走 Tasks，单目深度是先验。MANO 权重不入库 |
+| `notebooks/headcam_hand_pose_colab.ipynb` | 合成双目的厘米误差、QC 和叠加；可选 GPU 上的 HaMeR / WiLoR。和 EgoDex 比时用每段内参、全部帧和全部关节 |
 | `scripts/ego_to_lerobot.py` | QC 通过的统一 episode → LeRobot v3.0。动作是手腕增量，mp4 可缩放到 224 |
 | `scripts/ego_pretrain_bc.py` | 岭回归线性 BC。特征和动作都用全训练池统计量，可扫描 l2，多种子写均值和标准差 |
 | `examples/ego_pretrain_bc.yaml` | 线性 BC 配方：增量动作、horizon、不同数据量 |
