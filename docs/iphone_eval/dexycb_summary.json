@@ -1,0 +1,145 @@
+{
+ "frames_with_gt": 519,
+ "wilor_detected": 515,
+ "gt_wrist_depth_m": {
+  "median": 0.8083347678184509,
+  "min": 0.5490793585777283,
+  "max": 1.1549922227859497
+ },
+ "mono_all_detected": {
+  "n": 515,
+  "median_cm": 3.96200660095586,
+  "p90_cm": 9.467935278185804,
+  "mean_cm": 4.619956545737163,
+  "within_2cm": 0.287378640776699
+ },
+ "mono_all_detected_mpjpe_cm": 4.596414302486273,
+ "conditions": {
+  "realsense": {
+   "coverage_of_gt": 0.6146435452793835,
+   "coverage_of_detected": 0.6194174757281553,
+   "wrist": {
+    "n": 319,
+    "median_cm": 1.4091827574737865,
+    "p90_cm": 3.02934748453144,
+    "mean_cm": 1.7030407813703634,
+    "within_2cm": 0.7617554858934169
+   },
+   "mpjpe_cm": 1.7528044397270643,
+   "raw_depth_wrist_same_hands": {
+    "n": 293,
+    "median_cm": 1.26193766437548,
+    "p90_cm": 3.040919143439979,
+    "mean_cm": 1.6055477607563602,
+    "within_2cm": 0.7679180887372014
+   },
+   "mono_same_hands": {
+    "n": 319,
+    "median_cm": 2.7549826111466285,
+    "p90_cm": 7.876250370329477,
+    "mean_cm": 3.6108432146569722,
+    "within_2cm": 0.38557993730407525
+   },
+   "status_counts": {
+    "fit": 169,
+    "ok": 319,
+    "lowconf": 3,
+    "few_joints": 24
+   }
+  },
+  "iphone_sim": {
+   "coverage_of_gt": 0.5048169556840078,
+   "coverage_of_detected": 0.5087378640776699,
+   "wrist": {
+    "n": 262,
+    "median_cm": 1.5111020295384054,
+    "p90_cm": 2.60679152855203,
+    "mean_cm": 1.7235403701581435,
+    "within_2cm": 0.7175572519083969
+   },
+   "mpjpe_cm": 1.8086349435506461,
+   "raw_depth_wrist_same_hands": {
+    "n": 251,
+    "median_cm": 1.19913188870003,
+    "p90_cm": 2.4087095808356813,
+    "mean_cm": 1.3994805661832876,
+    "within_2cm": 0.8286852589641435
+   },
+   "mono_same_hands": {
+    "n": 262,
+    "median_cm": 2.4286633140742913,
+    "p90_cm": 7.374053699630815,
+    "mean_cm": 3.389375744505164,
+    "within_2cm": 0.4083969465648855
+   },
+   "status_counts": {
+    "fit": 190,
+    "ok": 262,
+    "lowconf": 44,
+    "few_joints": 19
+   }
+  },
+  "iphone_sim_2x": {
+   "coverage_of_gt": 0.005780346820809248,
+   "coverage_of_detected": 0.005825242718446602,
+   "wrist": {
+    "n": 3,
+    "median_cm": 0.9912531895283307,
+    "p90_cm": 1.595139786525702,
+    "mean_cm": 1.186313888188461,
+    "within_2cm": 1.0
+   },
+   "mpjpe_cm": 0.9583952092208605,
+   "raw_depth_wrist_same_hands": {
+    "n": 2,
+    "median_cm": 1.211192186562567,
+    "p90_cm": 1.7534718056823122,
+    "mean_cm": 1.211192186562567,
+    "within_2cm": 1.0
+   },
+   "mono_same_hands": {
+    "n": 3,
+    "median_cm": 1.25027534184155,
+    "p90_cm": 1.5529883338848989,
+    "mean_cm": 1.3726440725394642,
+    "within_2cm": 1.0
+   },
+   "status_counts": {
+    "lowconf": 512,
+    "ok": 3
+   }
+  },
+  "iphone_sim_2x_conf1": {
+   "coverage_of_gt": 0.5838150289017341,
+   "coverage_of_detected": 0.5883495145631068,
+   "wrist": {
+    "n": 303,
+    "median_cm": 1.5184494092125054,
+    "p90_cm": 2.7347051512172977,
+    "mean_cm": 1.803890056342769,
+    "within_2cm": 0.6996699669966997
+   },
+   "mpjpe_cm": 1.8133498537867867,
+   "raw_depth_wrist_same_hands": {
+    "n": 299,
+    "median_cm": 1.2991725311060278,
+    "p90_cm": 3.3185985343544773,
+    "mean_cm": 1.6834688728715868,
+    "within_2cm": 0.7157190635451505
+   },
+   "mono_same_hands": {
+    "n": 303,
+    "median_cm": 2.7638403538953202,
+    "p90_cm": 8.140373768604285,
+    "mean_cm": 3.672499113168378,
+    "within_2cm": 0.37623762376237624
+   },
+   "status_counts": {
+    "fit": 190,
+    "ok": 303,
+    "lowconf": 3,
+    "few_joints": 19
+   }
+  }
+ }
+}

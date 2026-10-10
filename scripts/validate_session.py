@@ -12,6 +12,10 @@
 - SLAM：slam.tum 覆盖全部帧，最近位姿时间差 ≤ 半帧
 - IMU（可选）：imu.csv 行数与采样率（≥100 Hz 建议）、时间覆盖录像区间
 
+iPhone 会话（有 depth.npz，见 scripts/iphone/record3d_adapter.py）改走 ``validate_iphone``：
+rgb.mp4 / depth.npz / timestamps.csv 帧数一致；内参主点在图内；深度有效像素比例、高置信比例、
+深度落在激光雷达量程 0.25–5 m 的比例；ARKit 位姿覆盖全部帧、相邻帧跳变（代替 Record3D 不导出的跟踪状态）。
+
 用法::
 
     python scripts/validate_session.py /path/to/session [--json report.json]
@@ -55,7 +59,84 @@ def _read_numeric_csv(path):
     return np.asarray(rows, dtype=float)
 
 
+IPHONE_DEFAULTS = {"min_valid_frac": 0.5, "min_high_conf_frac": 0.3, "lidar_range_m": (0.25, 5.0),
+                   "max_pose_jump_m": 0.10, "max_pose_jump_deg": 20.0, "max_jump_frames": 0.01}
+
+
+def validate_iphone(session, **overrides):
+    opt = dict(IPHONE_DEFAULTS)
+    opt.update(overrides)
+    s = Path(session)
+    errors, warns, facts = [], [], {}
+    for rel in ("rgb.mp4", "depth.npz", "calib.yaml"):
+        if not (s / rel).is_file():
+            errors.append("缺少 %s" % rel)
+    if errors:
+        return {"session": str(s), "kind": "iphone", "ok": False, "errors": errors, "warnings": warns, "facts": facts}
+    meta = json.loads((s / "metadata.json").read_text(encoding="utf-8")) if (s / "metadata.json").is_file() else {}
+    fps = float(meta.get("fps", 30.0))
+    calib = json.loads((s / "calib.yaml").read_text(encoding="utf-8"))
+    K = np.asarray(calib["K_rgb"], dtype=float)
+    w, h = int(calib["image_width"]), int(calib["image_height"])
+    if not (0 < K[0, 2] < w and 0 < K[1, 2] < h):
+        errors.append("K_rgb 主点不在图像里")
+    vid = _video_info(s / "rgb.mp4")
+    data = np.load(s / "depth.npz")
+    depth, conf = data["depth"].astype(np.float32), data["conf"]
+    n = len(depth)
+    facts.update(frames=n, rgb=vid, depth_shape=list(depth.shape[1:]))
+    if vid is None:
+        errors.append("打不开 rgb.mp4")
+    else:
+        if vid["frames"] != n:
+            errors.append("rgb.mp4 有 %d 帧，深度有 %d 帧" % (vid["frames"], n))
+        if (vid["width"], vid["height"]) != (w, h):
+            errors.append("视频尺寸 %dx%d 与 calib %dx%d 不一致" % (vid["width"], vid["height"], w, h))
+    valid = np.isfinite(depth) & (depth > 0)
+    lo, hi = opt["lidar_range_m"]
+    facts["depth_valid_frac"] = float(valid.mean())
+    facts["depth_high_conf_frac"] = float((conf >= 2).mean())
+    facts["depth_in_range_frac"] = float(((depth >= lo) & (depth <= hi) & valid).sum() / max(valid.sum(), 1))
+    facts["depth_median_m"] = float(np.median(depth[valid])) if valid.any() else None
+    if facts["depth_valid_frac"] < opt["min_valid_frac"]:
+        errors.append("有效深度像素只有 %.0f%%（不是激光雷达录制？用了前置摄像头？）" % (100 * facts["depth_valid_frac"]))
+    if facts["depth_high_conf_frac"] < opt["min_high_conf_frac"]:
+        warns.append("高置信深度只有 %.0f%%（太暗、太远或反光表面多）" % (100 * facts["depth_high_conf_frac"]))
+    stamps = None
+    if (s / "timestamps.csv").is_file():
+        arr = _read_numeric_csv(s / "timestamps.csv")
+        stamps = arr[:, -1]
+        if len(stamps) != n:
+            errors.append("timestamps.csv 有 %d 行，深度 %d 帧" % (len(stamps), n))
+        d = np.diff(stamps)
+        if len(d) and (d <= 0).any():
+            errors.append("时间戳不是严格递增（%d 处）" % int((d <= 0).sum()))
+        if len(d):
+            med = float(np.median(d))
+            facts["measured_fps"] = 1.0 / med
+            if abs(1.0 / med - fps) > 0.05 * fps:
+                errors.append("实测帧率 %.2f 与 metadata.fps %.2f 不一致" % (1.0 / med, fps))
+    else:
+        warns.append("没有 timestamps.csv")
+    if (s / "slam.tum").is_file() and stamps is not None:
+        from headcam.hand_pose import associate_camera_poses
+        from headcam.rgbd_pipeline import pose_jumps
+        poses, gaps = associate_camera_poses(list(stamps), s / "slam.tum")
+        facts["pose_max_gap_s"] = float(np.max(gaps))
+        if facts["pose_max_gap_s"] > 0.5 / fps:
+            errors.append("ARKit 位姿与帧时间最大相差 %.1f ms，超过半帧" % (1e3 * facts["pose_max_gap_s"]))
+        jumps = pose_jumps(poses, opt["max_pose_jump_m"], opt["max_pose_jump_deg"])
+        facts["pose_jump_frames"] = int(jumps.sum())
+        if jumps.sum() > opt["max_jump_frames"] * n:
+            warns.append("ARKit 位姿跳变 %d 帧（跟踪丢失/重定位？录制时别遮挡镜头、别对着白墙）" % int(jumps.sum()))
+    else:
+        errors.append("没有 slam.tum（ARKit 位姿）：Record3D 导出里缺 poses？")
+    return {"session": str(s), "kind": "iphone", "ok": not errors, "errors": errors, "warnings": warns, "facts": facts}
+
+
 def validate(session, **overrides):
+    if (Path(session) / "depth.npz").is_file():
+        return validate_iphone(session, **{k: v for k, v in overrides.items() if k in IPHONE_DEFAULTS})
     opt = dict(DEFAULTS)
     opt.update(overrides)
     s = Path(session)
