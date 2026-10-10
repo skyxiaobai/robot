@@ -55,7 +55,7 @@ python scripts/ego_visualize.py traj3d \
     --out outputs/open_data_demo/viz/traj3d.png
 ```
 
-自有头戴会话（设备还没有，目录见规格 §7.7）收成同一份 JSON。有 `hands.json` 和标定时会做双目尺度校正；`--backend mediapipe` 在 CPU 上跑，HaMeR / WiLoR 需要仓库外的 MANO 权重。MediaPipe 单目手腕深度只是先验（默认 0.55 m），公制深度要靠双目。`mediapipe>=0.10.30` 用 Tasks `HandLandmarker`；无头环境若缺 `libEGL` / `libGLESv2`，先装系统库，推理再用 CPU delegate。和 EgoDex 比的时候，`Hand` / `ThumbKnuckle` 不是 MediaPipe 的腕点和拇指 CMC，可以用 `EGODEX_NONCORRESPONDING_JOINTS` 排除。WiLoR / HaMeR 的公制平移用 `calib['K_left']` 的 fx、fy 和主点；二维点仍按虚拟焦距投影，传不传 K 都一样。不传 K 时平移用约 37500 px（1920 宽），手腕深度不是米。`mano_mean_params.npz` 不在官方 MANO 压缩包里，放在 `MANO_MODEL_DIR` 或 WiLoR 仓库的 `mano_data/`。Colab GPU 上优先用 WiLoR。安装见 `hand_pose.MANO_LICENSE`：`ultralytics==8.1.34`、`pip install --no-build-isolation chumpy`；pyrender 只用于可视化。HaMeR 还要编译 detectron2 和 mmcv。
+自有头戴会话（设备还没有，目录见规格 §7.7）收成同一份 JSON。有 `hands.json` 和标定时会做双目尺度校正；默认推荐 WiLoR（需 GPU 和仓库外的 MANO 权重）；`--backend mediapipe` 只作为 CPU 兜底，HaMeR 也需要 MANO 权重。MediaPipe 单目手腕深度只是先验（默认 0.55 m），公制深度要靠双目。`mediapipe>=0.10.30` 用 Tasks `HandLandmarker`；无头环境若缺 `libEGL` / `libGLESv2`，先装系统库，推理再用 CPU delegate。和 EgoDex 比的时候，`Hand` / `ThumbKnuckle` 不是 MediaPipe 的腕点和拇指 CMC，可以用 `EGODEX_NONCORRESPONDING_JOINTS` 排除。WiLoR / HaMeR 的公制平移用 `calib['K_left']` 的 fx、fy 和主点；二维点仍按虚拟焦距投影，传不传 K 都一样。不传 K 时平移用约 37500 px（1920 宽），手腕深度不是米。`mano_mean_params.npz` 不在官方 MANO 压缩包里，放在 `MANO_MODEL_DIR` 或 WiLoR 仓库的 `mano_data/`。Colab GPU 上优先用 WiLoR。安装见 `hand_pose.MANO_LICENSE`：`ultralytics==8.1.34`、`pip install --no-build-isolation chumpy`；pyrender 只用于可视化。HaMeR 还要编译 detectron2 和 mmcv。
 
 ```bash
 python scripts/convert_headcam.py --session /path/to/session --out outputs/headcam/episode.json
@@ -89,8 +89,8 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | `docs/ANALYSIS_PROCESS.md` | **全部分析过程记录**（推导、调研、评审修正，建议从这读起） |
 | `docs/headcam_data_spec.md`（v10） | 头戴设备规格：v9 的世界系手部标签与语言分段；v10 增加四级标注、产出率 QC、覆盖词表 |
 | `docs/gap_analysis.md` | 开放数据下载 → 统一格式 → QC → 覆盖 → 标注 → LeRobot → 缩放律：已有、缺失、优先级 |
-| `docs/headcam_bom.csv` | **可下单采购清单**：15 列证据链版（提供的数据/格式标准/数据契约/依据/采购原因），Excel 可直接打开 |
-| `docs/twostage_pretrain_finetune_plan.md` | 两段式训练方案评估（合成预训练 → 头戴真实微调；路线 C 引用 headcam 规格 §7） |
+| `docs/headcam_bom.csv` | 采购清单（**当前为单目方案，双目版待更新**）：15 列证据链版（提供的数据/格式标准/数据契约/依据/采购原因），Excel 可直接打开 |
+| `docs/twostage_pretrain_finetune_plan.md` | 两段式训练方案评估（早期版本写的是合成预训练 → 头戴真实微调；当前路线改为 EgoDex 第一视角预训练 → 头戴微调，见上文速览） |
 | `scripts/build_headcam_bom.py` | BOM 生成脚本（可复现再生成 CSV） |
 | `scripts/scaling_law.py` | 对数直线和饱和幂律都拟合，R² 更高的作为默认。多种子画均值和标准差。无输入则跳过 |
 | `scripts/convert_egodex.py` | EgoDex HDF5 → 统一 episode JSON。`--workers` 多进程；缺置信度记为未知 |
@@ -113,10 +113,17 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 
 ## 核心结论（速览）
 
-- **头戴设备只需 3 件核心**：头戴摄像头 + 头戴 IMU（仅 ego-motion 补偿）+ SOC；`state` 来自机器人侧、`action` 由画面内 MediaPipe 关键点 retargeting 得到
-- **成本**：A 档 370-555 元 / B 档 700-945 元（均 ≤1000 元）；B 档 = AR0234 全局快门升级
-- **数据量**：微调 50-150 条/任务（有预训练底座），从零训练 500-1000 条/任务
-- **两段式可行但不可直接迁移**：现有 Square/pusht 是第三视角机械臂/2D 仿真，头戴是第一视角人手，需走「视觉表征迁移」或「同视角合成预训练」
+> **当前状态：软件链路已基本就绪，等双目头戴设备做出来后用自采数据验证。**
+
+- **设备是头戴双目**：同步的全局快门双目 + RGB + IMU，并且要做好标定。两个摄像头像人的两只眼睛，用来算出手离相机的真实距离；IMU 配合 SLAM/VIO 算出相机在世界坐标系里的位置和朝向，不只是用来抵消头部晃动（规格 §7.1–§7.2）。
+- **每帧要产出的标签**：21 个手部关节点、世界系手腕 6DoF（位置 + 朝向），以及四级语言标注：环境 → 任务 → 子任务 → 单手指令（规格 v10 §8）。
+- **手部识别用 WiLoR**：在 EgoDex 上和 MediaPipe 对比，WiLoR 约 95% 的帧能认出手（MediaPipe 约 50%），关节误差约 3.5 cm（MediaPipe 约 8 cm）。WiLoR 需要 GPU 和 MANO 权重（非商业许可，不入库）；MediaPipe 只作为 CPU 兜底。
+- **单目算不准距离，所以必须双目**：只用一个摄像头时，手腕位置会差 4–10 cm，目标是 2 cm 以内。`scripts/headcam/` 已实现双目三角化、尺度校正和世界系手腕位姿。
+- **数据先筛再用**：自动 QC 能算出可用于训练的比例（产出率），覆盖报告能指出哪些环境、物体、任务或动作还没采到，`scripts/egodata/` 已实现。
+- **先用开放数据预训练**：EgoDex（第一视角、带世界系手部位姿）→ 统一格式 → QC → LeRobot v3.0 → 线性 BC / ACT，并用 `scripts/scaling_law.py` 画数据量和效果的缩放曲线（见 `notebooks/egodex_act_scaling_colab.ipynb`）。
+- **两段式训练**：先用 EgoDex 这类第一视角人手数据预训练，再用自有头戴数据微调。旧的 Square/pusht 是第三视角机械臂或 2D 仿真，只用来验证训练框架，不能直接迁移到头戴人手数据。
+- **成本（以 `docs/headcam_bom.csv` 为准）**：现有 BOM 仍是单目方案，A 档约 370–555 元，B 档（换 AR0234 全局快门）约 700–945 元。BOM 中的双目选项（OAK-D-LR，或双 AR0234 + 外部触发 + RK3566）标价 ≥1500–3000 元，超过 1000 元预算。**双目版 BOM 还没整理，待更新。**
+- **数据量（规格附录的参考值，不是本仓库的实测结果）**：已有预训练底座时，每个任务约需 50–150 条用于微调；从零训练约需 500–1000 条。
 
 ## 目录说明
 
