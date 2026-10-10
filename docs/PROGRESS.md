@@ -127,7 +127,7 @@ flowchart LR
 | 2026-10-10 | [#25](https://github.com/skyxiaobai/robot/pull/25) | 没测到的手腕不再当成「保持不动」来学：导出 `action_valid`，训练损失按手屏蔽，质检和导出摘要报告有效动作比例。 |
 | 2026-10-10 | [#26](https://github.com/skyxiaobai/robot/pull/26) | iPhone Pro 采集：Record3D（.r3d / EXR+JPG）转会话目录，激光雷达深度代替三角化，`run_stereo_pipeline.py --iphone` 一条命令；DexYCB 实测手腕中位 1.41 cm（单目同批 2.75 cm），iPhone 仿真 1.51 cm。导出同样带 `action_valid`。 |
 | 2026-10-10 | [#27](https://github.com/skyxiaobai/robot/pull/27) | 统一格式加上物体 6DoF、接触和抓取。合成小球上接触召回 0.5、抓取召回 1.0；HOT3D 真实片段的同样指标待补。规格到 v11。 |
-| 2026-10-10 | 本次 | 记下 HOT3D/EgoDex 快手速度和快动作仿真；跳点门限改成按时间的预测（米/秒、加速度），RTS 噪声按速度在 30–300 之间取。慢动作手腕误差用新默认重跑 **待补**。 |
+| 2026-10-10 | [#29](https://github.com/skyxiaobai/robot/pull/29) | 记下 HOT3D/EgoDex 快手速度和快动作仿真；跳点门限改成按时间的预测（米/秒、加速度），RTS 噪声按速度在 30–300 之间取。慢动作手腕误差用新默认重跑 **待补**。 |
 
 ---
 
