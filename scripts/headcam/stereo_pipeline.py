@@ -45,7 +45,7 @@ class StereoParams(object):
                  depth_range_m=(0.10, 1.20), palm_range_m=(0.05, 0.15),
                  smooth="rts", min_cutoff=3.0, beta=50.0, gap_fill=True, max_gap=5, fixed_shape=False,
                  consistency=True, wrist_mode="rigid_fit", velocity_gate_m=0.02, rts_q=0.3, rts_r=4e-4,
-                 max_median_reproj_px=None, max_offaxis_deg=None):
+                 max_median_reproj_px=None, max_offaxis_deg=None, assoc=True, recrop=True, assoc_params=None):
         self.max_reproj_px = float(max_reproj_px)
         self.joint_reproj_px = float(joint_reproj_px)
         self.min_joints = int(min_joints)
@@ -72,6 +72,11 @@ class StereoParams(object):
         # 可选的严格门限（默认关）：换更低产出换更小 p90，曲线见 docs/hot3d_stereo/tail.md
         self.max_median_reproj_px = max_median_reproj_px
         self.max_offaxis_deg = max_offaxis_deg
+        # 手部关联（docs/hot3d_stereo/hand_assoc.md）：WiLoR 多候选（翻转 TTA + 左右两种假设）→ 时序 + 双目关联
+        # → 另一目重新裁剪。只对 wilor 后端生效；assoc=False 恢复 PR #23 的逐目 predict。
+        self.assoc = bool(assoc)
+        self.recrop = bool(recrop)
+        self.assoc_params = dict(assoc_params or {})
 
     def to_dict(self):
         return dict(self.__dict__)
@@ -160,6 +165,77 @@ def run_backend(info, backend_name="wilor", cache_path=None, backend=None, log=p
         Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
         Path(cache_path).write_text(json.dumps({"backend": backend_name, "views": views, "seconds": seconds}),
                                     encoding="utf-8")
+    return views, seconds
+
+
+def run_backend_assoc(info, cache_dir, params, backend=None, log=print):
+    """WiLoR 多候选 + 关联 + 另一目重新裁剪。候选和重裁结果分别缓存，中断后重跑直接读。返回 (views, seconds)。"""
+    import convert_headcam as ch
+    from headcam import hand_assoc as HA
+    name = info["session"].name
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cand_path = cache_dir / ("%s.wilor_cands.json" % name)
+    recrop_path = cache_dir / ("%s.wilor_recrop.json" % name)
+    calib = info["calib"]
+    wc = None
+    seconds = 0.0
+
+    def _wc():
+        from headcam.wilor_candidates import WiLoRCandidates
+        return WiLoRCandidates(backend=backend)
+
+    if cand_path.is_file():
+        log("  复用候选缓存 %s" % cand_path)
+        cands = json.loads(cand_path.read_text(encoding="utf-8"))
+    else:
+        wc = _wc()
+        cands, t0 = {}, time.time()
+        for view, path in (("left", info["left_video"]), ("right", info["right_video"])):
+            view_calib = dict(calib, K_left=calib["K_right"]) if view == "right" else calib
+            cands[view] = [wc.frame_candidates(img, calib=view_calib) for img in ch._iter_rgb(path)]
+            log("  %s 目候选完成 %.1fs" % (view, time.time() - t0))
+        cands["seconds"] = time.time() - t0
+        cand_path.write_text(json.dumps(cands), encoding="utf-8")
+    seconds += float(cands.get("seconds") or 0.0)
+    ap = HA.AssocParams(**params.assoc_params)
+    cands = {v: [[c for c in fr if HA._score(c) >= ap.min_det_score] for fr in cands[v]] for v in SIDES}
+    n = min(len(cands["left"]), len(cands["right"]))
+    fps = float(info["metadata"]["fps"])
+    ts = ch._read_timestamps(info["timestamps_path"], n, fps) if info["timestamps_path"] else [i / fps for i in range(n)]
+    poses = [np.asarray(p, dtype=float) for p in associate_camera_poses(ts, info["slam_path"])[0]]
+    views, chosen = HA.associate(cands, calib, poses, ap)
+    if params.recrop:
+        if recrop_path.is_file():
+            extra = json.loads(recrop_path.read_text(encoding="utf-8"))
+        else:
+            HA.annotate_chosen_wrists(chosen, cands, calib, poses)
+            reqs = HA.cross_view_requests(cands, chosen, calib, poses, ap)
+            wc = wc or _wc()
+            extra, t0 = {"items": [], "requests": len(reqs)}, time.time()
+            by = {}
+            for r in reqs:
+                by.setdefault((r[0], r[1]), []).append(r)
+            import cv2
+            for view, path in (("left", info["left_video"]), ("right", info["right_video"])):
+                view_calib = dict(calib, K_left=calib["K_right"]) if view == "right" else calib
+                for t, img in enumerate(ch._iter_rgb(path)):
+                    rs = by.get((t, view))
+                    if not rs:
+                        continue
+                    bgr = cv2.cvtColor(np.ascontiguousarray(img), cv2.COLOR_RGB2BGR)
+                    preds = wc.predict_boxes(bgr, [r[3] for r in rs], [1.0 if r[2] == "right" else 0.0 for r in rs],
+                                             view_calib)
+                    for r, pr in zip(rs, preds):
+                        extra["items"].append({"t": t, "view": view, "cand": {
+                            "box": r[3], "orig": None, "flip": None, "recrop": True, r[2]: pr}})
+            extra["seconds"] = time.time() - t0
+            recrop_path.write_text(json.dumps(extra), encoding="utf-8")
+        seconds += float(extra.get("seconds") or 0.0)
+        for e in extra["items"]:
+            if e["t"] < n:
+                cands[e["view"]][e["t"]].append(e["cand"])
+        views, chosen = HA.associate(cands, calib, poses, ap)
     return views, seconds
 
 
@@ -563,7 +639,10 @@ def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="
         name = info["session"].name
         log("[%s] 手部模型（%s）" % (name, backend_name))
         cache = out / "cache" / ("%s.%s.json" % (name, backend_name))
-        views, seconds = run_backend(info, backend_name, cache_path=cache, backend=backend, log=log)
+        if params.assoc and backend_name == "wilor":
+            views, seconds = run_backend_assoc(info, out / "cache", params, backend=backend, log=log)
+        else:
+            views, seconds = run_backend(info, backend_name, cache_path=cache, backend=backend, log=log)
         timing["backend_s"] += float(seconds or 0.0)
         t0 = time.time()
         episode, extra = build_stereo_episode(info, views, params)

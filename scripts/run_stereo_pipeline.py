@@ -111,6 +111,8 @@ def main(argv=None):
                     help="标注覆盖率下限。默认 0：只报告，不因此拒绝片段。临时值，等真实设备数据再定")
     ap.add_argument("--fixed-shape", action="store_true", help="固定手型（默认关）")
     ap.add_argument("--max-reproj-px", type=float, default=10.0)
+    ap.add_argument("--no-assoc", action="store_true", help="关闭手部关联（翻转 TTA + 时序/双目关联），恢复 PR #23 行为")
+    ap.add_argument("--no-recrop", action="store_true", help="关闭另一目重新裁剪")
     ap.add_argument("--no-export", action="store_true")
     ap.add_argument("--export-python", default=os.environ.get("STEREO_EXPORT_PYTHON"),
                     help="用另一个装了 pyarrow 的 Python 做 LeRobot 导出（WiLoR 环境 numpy 太老时用）")
@@ -138,7 +140,8 @@ def main(argv=None):
     params = StereoParams(max_reproj_px=a.max_reproj_px, wrist_mode=a.wrist_mode,
                           velocity_gate_m=a.velocity_gate_m, max_median_reproj_px=a.strict_reproj_px,
                           max_offaxis_deg=a.strict_offaxis_deg, smooth=a.smooth, min_cutoff=a.min_cutoff, beta=a.beta, gap_fill=a.max_gap > 0,
-                          max_gap=max(a.max_gap, 0), fixed_shape=a.fixed_shape, consistency=not a.no_consistency)
+                          max_gap=max(a.max_gap, 0), fixed_shape=a.fixed_shape, consistency=not a.no_consistency,
+                          assoc=not a.no_assoc, recrop=not a.no_recrop)
     summary = run_pipeline(sessions, out, params, backend_name=a.backend, repo_id=a.repo_id, export=not a.no_export,
                            export_python=a.export_python, min_label_coverage=a.min_label_coverage)
     summary["timing"]["adapter_s"] = sum(i.get("seconds", 0.0) for i in adapter or [])
