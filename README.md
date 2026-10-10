@@ -101,7 +101,8 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | `docs/headcam_data_spec.md`（v10） | 头戴设备规格：v9 的世界系手部标签与语言分段；v10 增加四级标注、产出率 QC、覆盖词表 |
 | `docs/gap_analysis.md` | 开放数据下载 → 统一格式 → QC → 覆盖 → 标注 → LeRobot → 缩放律：已有、缺失、优先级 |
 | `docs/headcam_bom.csv` | 采购清单（**单目方案，留作对照**）：15 列证据链版（提供的数据/格式标准/数据契约/依据/采购原因），Excel 可直接打开 |
-| `docs/headcam_stereo_bom.md` / `docs/headcam_stereo_bom.csv` | **1000 元内双目采购清单**（推荐方案 A 约 727–982 元）。说明见 md，明细见 csv |
+| `docs/headcam_stereo_bom.md` / `docs/headcam_stereo_bom.csv` | **1000 元内双目采购清单**（推荐方案 A 约 727–982 元）。说明见 md，明细见 csv。下单向卖家要 8–10 cm 基线，镜头选约 100° |
+| `docs/hot3d_stereo/results.md` | HOT3D Quest3 上的双目手腕评测和硬件选型。双目手腕中位数 1.22 cm，75% 在 2 cm 内 |
 | `docs/twostage_pretrain_finetune_plan.md` | 两段式训练方案评估（早期版本写的是合成预训练 → 头戴真实微调；当前路线改为 EgoDex 第一视角预训练 → 头戴微调，见上文速览） |
 | `scripts/build_headcam_bom.py` | BOM 生成脚本（可复现再生成 CSV） |
 | `scripts/scaling_law.py` | 对数直线和饱和幂律都拟合，R² 更高的作为默认。多种子画均值和标准差。无输入则跳过 |
