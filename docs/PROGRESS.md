@@ -109,6 +109,7 @@ flowchart LR
 | 2026-10-10 | [#22](https://github.com/skyxiaobai/robot/pull/22) | 一条命令跑通双目手部管线，并加上 HOT3D 适配器、假录制器、会话校验，以及整体架构和到货第一天文档。 |
 | 2026-10-10 | [#23](https://github.com/skyxiaobai/robot/pull/23) | 刚体对齐手腕、2 cm 速度门限和 RTS 平滑写入管线；立体门限丢掉的帧改记标注覆盖，不再用 20% 坏帧把整段拒绝掉。 |
 | 2026-10-10 | [#24](https://github.com/skyxiaobai/robot/pull/24) | 双目手部关联：翻转 TTA（左右两种假设）+ 时序/双目关联 + 去重 + 另一目重裁，HOT3D 标注覆盖 53% → 71%，手腕误差不变。 |
+| 2026-10-10 | [#28](https://github.com/skyxiaobai/robot/pull/28) | 仿真里把 EgoDex 式的抓放手腕重定向到 6 轴臂：重放 20/20，脚本专家 50/50，行为克隆 46% / 40% / 68%。合成演示，不是真实录像。 |
 
 ---
 
