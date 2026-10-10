@@ -1,0 +1,883 @@
+{
+ "gt_definition": {
+  "contact_m": 0.005,
+  "min_fingers": 2
+ },
+ "gt_stats": {
+  "clip-000000": {
+   "hand_frames": 300,
+   "contact": 131,
+   "grasp": 127,
+   "events": 8
+  },
+  "clip-000001": {
+   "hand_frames": 300,
+   "contact": 158,
+   "grasp": 154,
+   "events": 12
+  },
+  "clip-000101": {
+   "hand_frames": 300,
+   "contact": 197,
+   "grasp": 195,
+   "events": 16
+  },
+  "clip-000300": {
+   "hand_frames": 300,
+   "contact": 150,
+   "grasp": 150,
+   "events": 2
+  },
+  "clip-000400": {
+   "hand_frames": 300,
+   "contact": 32,
+   "grasp": 30,
+   "events": 8
+  },
+  "clip-000564": {
+   "hand_frames": 300,
+   "contact": 125,
+   "grasp": 117,
+   "events": 16
+  },
+  "clip-000684": {
+   "hand_frames": 300,
+   "contact": 201,
+   "grasp": 189,
+   "events": 16
+  },
+  "clip-000700": {
+   "hand_frames": 300,
+   "contact": 0,
+   "grasp": 0,
+   "events": 0
+  },
+  "clip-000776": {
+   "hand_frames": 300,
+   "contact": 191,
+   "grasp": 181,
+   "events": 12
+  },
+  "clip-001100": {
+   "hand_frames": 300,
+   "contact": 102,
+   "grasp": 52,
+   "events": 30
+  }
+ },
+ "tune_clip": "clip-000000",
+ "tuned_params": {
+  "gt_joints": {
+   "contact_m": 0.01,
+   "min_tips": 1,
+   "aperture_grasp_m": 0.08
+  },
+  "stereo": {
+   "contact_m": 0.02,
+   "min_tips": 1,
+   "aperture_grasp_m": 0.1
+  }
+ },
+ "defaults": {
+  "contact_m": 0.01,
+  "approach_m": 0.05,
+  "aperture_grasp_m": 0.08,
+  "approach_speed_m_s": 0.02,
+  "grasp_speed_m_s": 0.15,
+  "min_tips": 2
+ },
+ "results": {
+  "gt_joints/default": {
+   "per_clip": {
+    "clip-000000": {
+     "contact": {
+      "tp": 131,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+     },
+     "grasp": {
+      "tp": 125,
+      "fp": 1,
+      "fn": 2,
+      "precision": 0.9920634920634921,
+      "recall": 0.984251968503937,
+      "f1": 0.9881422924901185
+     },
+     "events": {
+      "matched": 8,
+      "unmatched_gt": 0,
+      "unmatched_pred": 2,
+      "timing_median_s": 0.0
+     }
+    },
+    "clip-000001": {
+     "contact": {
+      "tp": 158,
+      "fp": 1,
+      "fn": 0,
+      "precision": 0.9937106918238994,
+      "recall": 1.0,
+      "f1": 0.9968454258675079
+     },
+     "grasp": {
+      "tp": 151,
+      "fp": 1,
+      "fn": 3,
+      "precision": 0.993421052631579,
+      "recall": 0.9805194805194806,
+      "f1": 0.9869281045751634
+     },
+     "events": {
+      "matched": 12,
+      "unmatched_gt": 0,
+      "unmatched_pred": 0,
+      "timing_median_s": 0.0
+     }
+    },
+    "clip-000101": {
+     "contact": {
+      "tp": 197,
+      "fp": 3,
+      "fn": 0,
+      "precision": 0.985,
+      "recall": 1.0,
+      "f1": 0.9924433249370278
+     },
+     "grasp": {
+      "tp": 181,
+      "fp": 0,
+      "fn": 14,
+      "precision": 1.0,
+      "recall": 0.9282051282051282,
+      "f1": 0.9627659574468085
+     },
+     "events": {
+      "matched": 16,
+      "unmatched_gt": 0,
+      "unmatched_pred": 2,
+      "timing_median_s": 0.0
+     }
+    },
+    "clip-000300": {
+     "contact": {
+      "tp": 150,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+     },
+     "grasp": {
+      "tp": 150,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+     },
+     "events": {
+      "matched": 2,
+      "unmatched_gt": 0,
+      "unmatched_pred": 0,
+      "timing_median_s": 0.0
+     }
+    },
+    "clip-000400": {
+     "contact": {
+      "tp": 32,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+     },
+     "grasp": {
+      "tp": 28,
+      "fp": 0,
+      "fn": 2,
+      "precision": 1.0,
+      "recall": 0.9333333333333333,
+      "f1": 0.9655172413793104
+     },
+     "events": {
+      "matched": 8,
+      "unmatched_gt": 0,
+      "unmatched_pred": 0,
+      "timing_median_s": 0.0
+     }
+    },
+    "clip-000564": {
+     "contact": {
+      "tp": 125,
+      "fp": 2,
+      "fn": 0,
+      "precision": 0.984251968503937,
+      "recall": 1.0,
+      "f1": 0.9920634920634921
+     },
+     "grasp": {
+      "tp": 56,
+      "fp": 0,
+      "fn": 61,
+      "precision": 1.0,
+      "recall": 0.47863247863247865,
+      "f1": 0.6473988439306358
+     },
+     "events": {
+      "matched": 7,
+      "unmatched_gt": 9,
+      "unmatched_pred": 0,
+      "timing_median_s": 0.03333333299815422
+     }
+    },
+    "clip-000684": {
+     "contact": {
+      "tp": 199,
+      "fp": 4,
+      "fn": 2,
+      "precision": 0.9802955665024631,
+      "recall": 0.9900497512437811,
+      "f1": 0.9851485148514852
+     },
+     "grasp": {
+      "tp": 154,
+      "fp": 0,
+      "fn": 35,
+      "precision": 1.0,
+      "recall": 0.8148148148148148,
+      "f1": 0.8979591836734693
+     },
+     "events": {
+      "matched": 15,
+      "unmatched_gt": 1,
+      "unmatched_pred": 2,
+      "timing_median_s": 0.0
+     }
+    },
+    "clip-000700": {
+     "contact": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null
+     },
+     "grasp": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null
+     },
+     "events": {
+      "matched": 0,
+      "unmatched_gt": 0,
+      "unmatched_pred": 0,
+      "timing_median_s": null
+     }
+    },
+    "clip-000776": {
+     "contact": {
+      "tp": 155,
+      "fp": 2,
+      "fn": 36,
+      "precision": 0.9872611464968153,
+      "recall": 0.8115183246073299,
+      "f1": 0.8908045977011495
+     },
+     "grasp": {
+      "tp": 129,
+      "fp": 1,
+      "fn": 52,
+      "precision": 0.9923076923076923,
+      "recall": 0.712707182320442,
+      "f1": 0.8295819935691319
+     },
+     "events": {
+      "matched": 12,
+      "unmatched_gt": 0,
+      "unmatched_pred": 6,
+      "timing_median_s": 0.06666666700039059
+     }
+    },
+    "clip-001100": {
+     "contact": {
+      "tp": 100,
+      "fp": 2,
+      "fn": 2,
+      "precision": 0.9803921568627451,
+      "recall": 0.9803921568627451,
+      "f1": 0.9803921568627451
+     },
+     "grasp": {
+      "tp": 25,
+      "fp": 7,
+      "fn": 27,
+      "precision": 0.78125,
+      "recall": 0.4807692307692308,
+      "f1": 0.5952380952380952
+     },
+     "events": {
+      "matched": 24,
+      "unmatched_gt": 6,
+      "unmatched_pred": 0,
+      "timing_median_s": 0.033333333500195295
+     }
+    }
+   },
+   "pooled_test": {
+    "contact": {
+     "tp": 1116,
+     "fp": 14,
+     "fn": 40,
+     "precision": 0.9876106194690265,
+     "recall": 0.9653979238754326,
+     "f1": 0.9763779527559054
+    },
+    "grasp": {
+     "tp": 874,
+     "fp": 9,
+     "fn": 194,
+     "precision": 0.9898074745186863,
+     "recall": 0.8183520599250936,
+     "f1": 0.8959507944643772
+    }
+   },
+   "test_clips": [
+    "clip-000001",
+    "clip-000101",
+    "clip-000300",
+    "clip-000400",
+    "clip-000564",
+    "clip-000684",
+    "clip-000700",
+    "clip-000776",
+    "clip-001100"
+   ]
+  },
+  "gt_joints/tuned": {
+   "per_clip": {
+    "clip-000000": {
+     "contact": {
+      "tp": 131,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+     },
+     "grasp": {
+      "tp": 127,
+      "fp": 3,
+      "fn": 0,
+      "precision": 0.9769230769230769,
+      "recall": 1.0,
+      "f1": 0.9883268482490272
+     },
+     "events": {
+      "matched": 8,
+      "unmatched_gt": 0,
+      "unmatched_pred": 0,
+      "timing_median_s": 0.0
+     }
+    },
+    "clip-000001": {
+     "contact": {
+      "tp": 158,
+      "fp": 1,
+      "fn": 0,
+      "precision": 0.9937106918238994,
+      "recall": 1.0,
+      "f1": 0.9968454258675079
+     },
+     "grasp": {
+      "tp": 153,
+      "fp": 4,
+      "fn": 1,
+      "precision": 0.9745222929936306,
+      "recall": 0.9935064935064936,
+      "f1": 0.9839228295819937
+     },
+     "events": {
+      "matched": 12,
+      "unmatched_gt": 0,
+      "unmatched_pred": 0,
+      "timing_median_s": 0.0
+     }
+    },
+    "clip-000101": {
+     "contact": {
+      "tp": 197,
+      "fp": 3,
+      "fn": 0,
+      "precision": 0.985,
+      "recall": 1.0,
+      "f1": 0.9924433249370278
+     },
+     "grasp": {
+      "tp": 181,
+      "fp": 0,
+      "fn": 14,
+      "precision": 1.0,
+      "recall": 0.9282051282051282,
+      "f1": 0.9627659574468085
+     },
+     "events": {
+      "matched": 16,
+      "unmatched_gt": 0,
+      "unmatched_pred": 2,
+      "timing_median_s": 0.0
+     }
+    },
+    "clip-000300": {
+     "contact": {
+      "tp": 150,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+     },
+     "grasp": {
+      "tp": 150,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+     },
+     "events": {
+      "matched": 2,
+      "unmatched_gt": 0,
+      "unmatched_pred": 0,
+      "timing_median_s": 0.0
+     }
+    },
+    "clip-000400": {
+     "contact": {
+      "tp": 32,
+      "fp": 0,
+      "fn": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+     },
+     "grasp": {
+      "tp": 28,
+      "fp": 1,
+      "fn": 2,
+      "precision": 0.9655172413793104,
+      "recall": 0.9333333333333333,
+      "f1": 0.9491525423728815
+     },
+     "events": {
+      "matched": 8,
+      "unmatched_gt": 0,
+      "unmatched_pred": 0,
+      "timing_median_s": 0.0
+     }
+    },
+    "clip-000564": {
+     "contact": {
+      "tp": 125,
+      "fp": 2,
+      "fn": 0,
+      "precision": 0.984251968503937,
+      "recall": 1.0,
+      "f1": 0.9920634920634921
+     },
+     "grasp": {
+      "tp": 57,
+      "fp": 1,
+      "fn": 60,
+      "precision": 0.9827586206896551,
+      "recall": 0.48717948717948717,
+      "f1": 0.6514285714285714
+     },
+     "events": {
+      "matched": 9,
+      "unmatched_gt": 7,
+      "unmatched_pred": 0,
+      "timing_median_s": 0.03333333299815422
+     }
+    },
+    "clip-000684": {
+     "contact": {
+      "tp": 199,
+      "fp": 4,
+      "fn": 2,
+      "precision": 0.9802955665024631,
+      "recall": 0.9900497512437811,
+      "f1": 0.9851485148514852
+     },
+     "grasp": {
+      "tp": 154,
+      "fp": 8,
+      "fn": 35,
+      "precision": 0.9506172839506173,
+      "recall": 0.8148148148148148,
+      "f1": 0.8774928774928775
+     },
+     "events": {
+      "matched": 15,
+      "unmatched_gt": 1,
+      "unmatched_pred": 4,
+      "timing_median_s": 0.03333333299815422
+     }
+    },
+    "clip-000700": {
+     "contact": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null
+     },
+     "grasp": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null
+     },
+     "events": {
+      "matched": 0,
+      "unmatched_gt": 0,
+      "unmatched_pred": 0,
+      "timing_median_s": null
+     }
+    },
+    "clip-000776": {
+     "contact": {
+      "tp": 155,
+      "fp": 2,
+      "fn": 36,
+      "precision": 0.9872611464968153,
+      "recall": 0.8115183246073299,
+      "f1": 0.8908045977011495
+     },
+     "grasp": {
+      "tp": 145,
+      "fp": 7,
+      "fn": 36,
+      "precision": 0.9539473684210527,
+      "recall": 0.8011049723756906,
+      "f1": 0.8708708708708709
+     },
+     "events": {
+      "matched": 10,
+      "unmatched_gt": 2,
+      "unmatched_pred": 2,
+      "timing_median_s": 0.03333333299815422
+     }
+    },
+    "clip-001100": {
+     "contact": {
+      "tp": 100,
+      "fp": 2,
+      "fn": 2,
+      "precision": 0.9803921568627451,
+      "recall": 0.9803921568627451,
+      "f1": 0.9803921568627451
+     },
+     "grasp": {
+      "tp": 28,
+      "fp": 29,
+      "fn": 24,
+      "precision": 0.49122807017543857,
+      "recall": 0.5384615384615384,
+      "f1": 0.5137614678899082
+     },
+     "events": {
+      "matched": 26,
+      "unmatched_gt": 4,
+      "unmatched_pred": 0,
+      "timing_median_s": 0.0333333330017922
+     }
+    }
+   },
+   "pooled_test": {
+    "contact": {
+     "tp": 1116,
+     "fp": 14,
+     "fn": 40,
+     "precision": 0.9876106194690265,
+     "recall": 0.9653979238754326,
+     "f1": 0.9763779527559054
+    },
+    "grasp": {
+     "tp": 896,
+     "fp": 50,
+     "fn": 172,
+     "precision": 0.9471458773784355,
+     "recall": 0.8389513108614233,
+     "f1": 0.8897715988083418
+    }
+   },
+   "test_clips": [
+    "clip-000001",
+    "clip-000101",
+    "clip-000300",
+    "clip-000400",
+    "clip-000564",
+    "clip-000684",
+    "clip-000700",
+    "clip-000776",
+    "clip-001100"
+   ]
+  },
+  "stereo/default": {
+   "per_clip": {
+    "clip-000000": {
+     "contact": {
+      "tp": 84,
+      "fp": 3,
+      "fn": 13,
+      "precision": 0.9655172413793104,
+      "recall": 0.865979381443299,
+      "f1": 0.9130434782608695
+     },
+     "grasp": {
+      "tp": 36,
+      "fp": 3,
+      "fn": 58,
+      "precision": 0.9230769230769231,
+      "recall": 0.3829787234042553,
+      "f1": 0.5413533834586466
+     },
+     "events": {
+      "matched": 8,
+      "unmatched_gt": 0,
+      "unmatched_pred": 46,
+      "timing_median_s": 0.2833333335001953
+     }
+    },
+    "clip-000300": {
+     "contact": {
+      "tp": 110,
+      "fp": 3,
+      "fn": 5,
+      "precision": 0.9734513274336283,
+      "recall": 0.9565217391304348,
+      "f1": 0.9649122807017544
+     },
+     "grasp": {
+      "tp": 70,
+      "fp": 0,
+      "fn": 45,
+      "precision": 1.0,
+      "recall": 0.6086956521739131,
+      "f1": 0.7567567567567568
+     },
+     "events": {
+      "matched": 2,
+      "unmatched_gt": 0,
+      "unmatched_pred": 55,
+      "timing_median_s": 0.03333333400223637
+     }
+    },
+    "clip-000700": {
+     "contact": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null
+     },
+     "grasp": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null
+     },
+     "events": {
+      "matched": 0,
+      "unmatched_gt": 0,
+      "unmatched_pred": 0,
+      "timing_median_s": null
+     }
+    },
+    "clip-001100": {
+     "contact": {
+      "tp": 47,
+      "fp": 5,
+      "fn": 38,
+      "precision": 0.9038461538461539,
+      "recall": 0.5529411764705883,
+      "f1": 0.6861313868613139
+     },
+     "grasp": {
+      "tp": 12,
+      "fp": 2,
+      "fn": 33,
+      "precision": 0.8571428571428571,
+      "recall": 0.26666666666666666,
+      "f1": 0.4067796610169491
+     },
+     "events": {
+      "matched": 22,
+      "unmatched_gt": 8,
+      "unmatched_pred": 18,
+      "timing_median_s": 0.18333333350528846
+     }
+    }
+   },
+   "pooled_test": {
+    "contact": {
+     "tp": 157,
+     "fp": 8,
+     "fn": 43,
+     "precision": 0.9515151515151515,
+     "recall": 0.785,
+     "f1": 0.8602739726027397
+    },
+    "grasp": {
+     "tp": 82,
+     "fp": 2,
+     "fn": 78,
+     "precision": 0.9761904761904762,
+     "recall": 0.5125,
+     "f1": 0.6721311475409836
+    }
+   },
+   "test_clips": [
+    "clip-000300",
+    "clip-000700",
+    "clip-001100"
+   ]
+  },
+  "stereo/tuned": {
+   "per_clip": {
+    "clip-000000": {
+     "contact": {
+      "tp": 97,
+      "fp": 5,
+      "fn": 0,
+      "precision": 0.9509803921568627,
+      "recall": 1.0,
+      "f1": 0.9748743718592965
+     },
+     "grasp": {
+      "tp": 75,
+      "fp": 6,
+      "fn": 19,
+      "precision": 0.9259259259259259,
+      "recall": 0.7978723404255319,
+      "f1": 0.8571428571428572
+     },
+     "events": {
+      "matched": 7,
+      "unmatched_gt": 1,
+      "unmatched_pred": 35,
+      "timing_median_s": 0.0666666660035844
+     }
+    },
+    "clip-000300": {
+     "contact": {
+      "tp": 112,
+      "fp": 7,
+      "fn": 3,
+      "precision": 0.9411764705882353,
+      "recall": 0.9739130434782609,
+      "f1": 0.9572649572649573
+     },
+     "grasp": {
+      "tp": 74,
+      "fp": 6,
+      "fn": 41,
+      "precision": 0.925,
+      "recall": 0.6434782608695652,
+      "f1": 0.7589743589743589
+     },
+     "events": {
+      "matched": 2,
+      "unmatched_gt": 0,
+      "unmatched_pred": 63,
+      "timing_median_s": 0.03333333400223637
+     }
+    },
+    "clip-000700": {
+     "contact": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null
+     },
+     "grasp": {
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "precision": null,
+      "recall": null,
+      "f1": null
+     },
+     "events": {
+      "matched": 0,
+      "unmatched_gt": 0,
+      "unmatched_pred": 0,
+      "timing_median_s": null
+     }
+    },
+    "clip-001100": {
+     "contact": {
+      "tp": 63,
+      "fp": 23,
+      "fn": 22,
+      "precision": 0.7325581395348837,
+      "recall": 0.7411764705882353,
+      "f1": 0.736842105263158
+     },
+     "grasp": {
+      "tp": 18,
+      "fp": 32,
+      "fn": 27,
+      "precision": 0.36,
+      "recall": 0.4,
+      "f1": 0.3789473684210526
+     },
+     "events": {
+      "matched": 30,
+      "unmatched_gt": 0,
+      "unmatched_pred": 58,
+      "timing_median_s": 0.06666666650198749
+     }
+    }
+   },
+   "pooled_test": {
+    "contact": {
+     "tp": 175,
+     "fp": 30,
+     "fn": 25,
+     "precision": 0.8536585365853658,
+     "recall": 0.875,
+     "f1": 0.8641975308641976
+    },
+    "grasp": {
+     "tp": 92,
+     "fp": 38,
+     "fn": 68,
+     "precision": 0.7076923076923077,
+     "recall": 0.575,
+     "f1": 0.6344827586206897
+    }
+   },
+   "test_clips": [
+    "clip-000300",
+    "clip-000700",
+    "clip-001100"
+   ]
+  }
+ }
+}

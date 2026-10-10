@@ -11,7 +11,7 @@
 >
 > **v10 变更**（对照覆盖度采集、产出率 QC、四级语言标注）：保留 v9 全文。增加 §8：四级标注（ENVIRONMENT / TASK / 时间分段 SUBTASK / 分手 INSTRUCTION）及 JSON 样例、训练产出率与自动 QC 的定义、按环境/物体/任务/动作类型统计的覆盖词表。没有自有头戴设备时，用开放数据集上的位姿和元数据先把这三件事跑起来，工具见 `scripts/egodata/`。
 >
-> **v11 变更**（物体 6DoF、接触、抓取）：保留 v10 全文。统一 episode 增加每条物体轨迹、每只手每帧的接触和抓取状态，以及带时间戳的事件。`schema_version` 仍是 `1.0`（新增的是字段，不是另一套文件）。LeRobot 导出增加 `observation.object_pose`、`observation.contact`、`action.grasp` 和对应的有效掩码。新手说明和合成夹具上的数字见 [`docs/contact_grasp.md`](contact_grasp.md)。HOT3D 真实片段上的精确率、召回率和事件时间差 **待补**。
+> **v11 变更**（物体 6DoF、接触、抓取）：保留 v10 全文。统一 episode 增加每条物体轨迹、每只手每帧的接触和抓取状态，以及带时间戳的事件。`schema_version` 仍是 `1.0`（新增的是字段，不是另一套文件）。LeRobot 导出增加 `observation.object_pose`、`observation.contact`、`action.grasp` 和对应的有效掩码。新手说明、合成夹具和 HOT3D 真实片段上的数字见 [`docs/contact_grasp.md`](contact_grasp.md)。HOT3D 那一组是没开时间滤波的；开了滤波再跑 **待补**。
 >
 > **2026-10-10 修订 §0 / §3**：双目改为头戴设备的核心配置，不再写成可选升级。头戴 IMU 与 SLAM/VIO 一起估计世界系相机位姿，不只做头部运动补偿。现行 `docs/headcam_bom.csv` 仍是单目标价，本文不把那些数字改写成双目报价。1000 元内的双目清单见 `docs/headcam_stereo_bom.md` 与 `docs/headcam_stereo_bom.csv`（推荐方案 A 合计约 727–982 元）。
 >
@@ -558,15 +558,15 @@ HOT3D-Clips 的 `<帧号>.objects.json` 里，每个物体有 `T_world_from_obje
 
 `python scripts/eval_contact_grasp.py --synthetic` 用一个半径 3 cm 的小球、3 帧、只有右手。皮肤点比关节近 6 mm，所以真值比启发式早一帧碰到。这是合成夹具，**不是** HOT3D。
 
-| 指标 | 合成夹具 | HOT3D 真实片段 |
+| 指标 | 合成夹具 | HOT3D 真实片段（没开时间滤波） |
 |---|---|---|
-| 接触精确率 | 1.0（tp 1，fp 0） | 待补 |
-| 接触召回率 | 0.5（fn 1） | 待补 |
-| 抓取精确率 | 1.0（tp 1，fp 0） | 待补 |
-| 抓取召回率 | 1.0（fn 0） | 待补 |
-| 事件时间差中位数 | 0.05 秒（接触开始差 0.1 秒，抓取事件差 0 秒） | 待补 |
+| 接触精确率 | 1.0（tp 1，fp 0） | 0.99（真值关节，默认参数，8 段） |
+| 接触召回率 | 0.5（fn 1） | 0.97 |
+| 抓取精确率 | 1.0（tp 1，fp 0） | 0.99 |
+| 抓取召回率 | 1.0（fn 0） | 0.82 |
+| 事件时间差中位数 | 0.05 秒（接触开始差 0.1 秒，抓取事件差 0 秒） | 0–0.07 秒 |
 
-左手整段无效，精确率和召回率没有定义，脚本写成 null，不要当成 0。来源：`tests/test_contact_grasp.py` 里的 `synthetic_disagreement`，2026-10-10 在本仓库跑过。
+左手整段无效，精确率和召回率没有定义，脚本写成 null，不要当成 0。合成夹具来源：`tests/test_contact_grasp.py` 里的 `synthetic_disagreement`，2026-10-10 在本仓库跑过，关着时间滤波。HOT3D 列来自 `docs/contact_eval/hot3d_report.json`，同样没开滤波；开了滤波的重跑是 **待补**。双目手的数字见 [`contact_grasp.md`](contact_grasp.md)。
 
 ---
 

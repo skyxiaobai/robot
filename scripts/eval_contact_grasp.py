@@ -7,7 +7,8 @@
     python scripts/eval_contact_grasp.py --synthetic
 
 真片段要有统一 episode，以及一份同结构的真值 JSON（``contact`` / ``grasp`` / ``events``）。
-本仓库环境里没有 HOT3D clip、物体网格和 MANO，所以真实片段的数字是待补，脚本不会编一个。
+HOT3D 上已经测过的数字在 ``docs/contact_grasp.md``，那次没开时间滤波；开了滤波再跑是待补。
+这个脚本不读 HOT3D，也不会编那组数。
 
     python scripts/eval_contact_grasp.py --episode pred.json --gt gt.json
 """
@@ -40,14 +41,14 @@ def main(argv=None):
         gt, pred, timestamps = synthetic_disagreement()
         metrics = evaluate_interaction(gt, pred, timestamps)
         metrics["source"] = "synthetic_sphere_3frames"
-        metrics["hot3d"] = "待补"
+        metrics["hot3d"] = "见 docs/contact_grasp.md（没开时间滤波；滤波重跑待补）"
     elif args.episode and args.gt:
         episode = load_episode(args.episode)
         gt = _load_labels(args.gt)
         metrics = evaluate_interaction(gt, episode, episode["timestamps"])
         metrics["source"] = str(args.episode)
     else:
-        print("需要 --synthetic，或同时给 --episode 和 --gt。HOT3D 真实片段的指标是待补。", file=sys.stderr)
+        print("需要 --synthetic，或同时给 --episode 和 --gt。HOT3D 整段评测用 eval_hot3d_contact.py。", file=sys.stderr)
         return 2
     text = json.dumps(metrics, ensure_ascii=False, indent=2)
     if args.out:

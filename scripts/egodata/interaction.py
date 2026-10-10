@@ -9,6 +9,8 @@
 3. 手相对物体的速度：指尖中心相对物体中心，沿「离开物体」方向的分量。
 
 状态只有四个：``open`` 张开、``pre_grasp`` 预备抓、``grasp`` 抓住、``release`` 放开。
+接触默认带时间滤波：距离用分开的进入/离开两档（滞回），状态要连续保持
+``dwell_s`` 秒才切换，所以跟帧率无关。``temporal_filter=False`` 关掉，回到单阈值、当帧生效。
 可选的 ``pose_hook`` / ``contact_hook`` 用来接现成模型（FoundationPose 一类的物体位姿，
 100DOH / ContactHands 一类的接触检测）。钩子不实现、也不下载那些模型。
 """
@@ -24,6 +26,8 @@ GT_CONTACT_M = 0.005
 GT_MIN_TIPS = 2
 
 # 启发式比真值松：关节在骨头上，不在皮肤上。这些数同样没有用真实录像标定。
+# 时间滤波默认开。没另外给 contact_on_m 时，进入阈值就是 contact_m；
+# 离开阈值再远 contact_off_margin_m。dwell_s 是秒，不是帧数。
 HEURISTIC_DEFAULTS = {
     "contact_m": 0.010,
     "approach_m": 0.050,
@@ -31,6 +35,8 @@ HEURISTIC_DEFAULTS = {
     "approach_speed_m_s": 0.02,
     "grasp_speed_m_s": 0.15,
     "min_tips": 2,
+    "dwell_s": 0.10,
+    "contact_off_margin_m": 0.010,
 }
 
 
@@ -92,14 +98,49 @@ def _point_triangle(point, tri):
     return float(np.linalg.norm(a + ab * v + ac * w - point))
 
 
+def _closest_on_triangles(point, a, b, c):
+    """一个点到很多三角形（a/b/c 各 Nx3）的最近距离，向量化版的 Ericson 区域划分。"""
+    ab, ac, ap = b - a, c - a, point - a
+    d1 = np.einsum("ij,ij->i", ab, ap)
+    d2 = np.einsum("ij,ij->i", ac, ap)
+    bp = point - b
+    d3 = np.einsum("ij,ij->i", ab, bp)
+    d4 = np.einsum("ij,ij->i", ac, bp)
+    cp = point - c
+    d5 = np.einsum("ij,ij->i", ab, cp)
+    d6 = np.einsum("ij,ij->i", ac, cp)
+    va = d3 * d6 - d5 * d4
+    vb = d5 * d2 - d1 * d6
+    vc = d1 * d4 - d3 * d2
+    with np.errstate(divide="ignore", invalid="ignore"):
+        denom = va + vb + vc
+        v = np.where(denom != 0.0, vb / denom, 0.0)
+        w = np.where(denom != 0.0, vc / denom, 0.0)
+        closest = a + ab * v[:, None] + ac * w[:, None]
+        # 边 bc
+        m = (va <= 0.0) & ((d4 - d3) >= 0.0) & ((d5 - d6) >= 0.0)
+        wbc = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+        closest = np.where(m[:, None], b + wbc[:, None] * (c - b), closest)
+        # 边 ac
+        m = (vb <= 0.0) & (d2 >= 0.0) & (d6 <= 0.0)
+        wac = d2 / (d2 - d6)
+        closest = np.where(m[:, None], a + wac[:, None] * ac, closest)
+        # 边 ab
+        m = (vc <= 0.0) & (d1 >= 0.0) & (d3 <= 0.0)
+        vab = d1 / (d1 - d3)
+        closest = np.where(m[:, None], a + vab[:, None] * ab, closest)
+    closest = np.where(((d6 >= 0.0) & (d5 <= d6))[:, None], c, closest)
+    closest = np.where(((d3 >= 0.0) & (d4 <= d3))[:, None], b, closest)
+    closest = np.where(((d1 <= 0.0) & (d2 <= 0.0))[:, None], a, closest)
+    return np.linalg.norm(closest - point, axis=1)
+
+
 def _distance_to_triangles(points, vertices, faces):
     out = np.full(points.shape[0], np.inf, dtype=float)
     triangles = vertices[faces]
+    a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
     for point_index, point in enumerate(points):
-        best = np.inf
-        for tri in triangles:
-            best = min(best, _point_triangle(point, tri))
-        out[point_index] = best
+        out[point_index] = float(np.min(_closest_on_triangles(point, a, b, c)))
     return out
 
 
@@ -213,8 +254,8 @@ def _camera_depth(points, camera_pose):
     return local[:, 2]
 
 
-def _nearest_object(objects, surfaces, frame_index, query, camera_pose=None):
-    best = None
+def _object_observations(objects, surfaces, frame_index, query, camera_pose=None):
+    found = []
     for obj in objects:
         valid = obj.get("valid") or []
         if frame_index >= len(valid) or not _as_bool(valid[frame_index]):
@@ -228,15 +269,158 @@ def _nearest_object(objects, surfaces, frame_index, query, camera_pose=None):
         distances, center = _surface_query(surface, pose, query, camera_pose=camera_pose, depth_m=depth)
         if distances is None:
             continue
-        distance = float(np.min(distances))
-        if best is None or distance < best["distance"]:
-            best = {
-                "id": obj["id"],
-                "distance": distance,
-                "distances": distances,
-                "center": center,
-            }
+        found.append({
+            "id": obj["id"],
+            "distance": float(np.min(distances)),
+            "distances": distances,
+            "center": center,
+        })
+    return found
+
+
+def _nearest_object(objects, surfaces, frame_index, query, camera_pose=None):
+    best = None
+    for item in _object_observations(objects, surfaces, frame_index, query, camera_pose=camera_pose):
+        if best is None or item["distance"] < best["distance"]:
+            best = item
     return best
+
+
+def _temporal_settings(options, enabled):
+    """返回 (进入距离, 离开距离, 最短停留秒)。关掉滤波时两档都是 contact_m，停留为 0。"""
+    contact_m = float(options["contact_m"])
+    if not enabled:
+        return contact_m, contact_m, 0.0
+    if options.get("contact_on_m") is not None:
+        on_m = float(options["contact_on_m"])
+    else:
+        on_m = contact_m
+    if options.get("contact_off_m") is not None:
+        off_m = float(options["contact_off_m"])
+    else:
+        off_m = on_m + float(options["contact_off_margin_m"])
+    if off_m < on_m:
+        off_m = on_m
+    dwell_s = max(0.0, float(options["dwell_s"]))
+    return on_m, off_m, dwell_s
+
+
+def _latch_contact(observations, latched_id, on_m, off_m):
+    """滞回：已经贴上的物体要远于 off 才松开；没贴上则要近于 on 才算贴上。"""
+    by_id = {item["id"]: item for item in observations}
+    if latched_id is not None and latched_id in by_id:
+        item = by_id[latched_id]
+        n_tips = int(np.sum(np.asarray(item["distances"]) <= off_m))
+        if item["distance"] <= off_m and n_tips >= 1:
+            return latched_id, item, n_tips
+    best = None
+    best_n = 0
+    for item in observations:
+        n_tips = int(np.sum(np.asarray(item["distances"]) <= on_m))
+        if n_tips >= 1 and item["distance"] <= on_m and (best is None or item["distance"] < best["distance"]):
+            best = item
+            best_n = n_tips
+    if best is None:
+        return None, None, 0
+    return best["id"], best, best_n
+
+
+class _Hold(object):
+    """候选值要连续出现 dwell_s 秒才替换当前值。比较的是时间戳，不是帧数。"""
+
+    def __init__(self, dwell_s, initial):
+        self.dwell_s = float(dwell_s)
+        self.initial = initial
+        self.value = initial
+        self._pending = None
+        self._since = None
+
+    def reset(self):
+        self.value = self.initial
+        self._pending = None
+        self._since = None
+
+    def push(self, value, timestamp):
+        if value == self.value:
+            self._pending = None
+            self._since = None
+            return self.value
+        stamp = float(timestamp)
+        if self._pending != value or self._since is None:
+            self._pending = value
+            self._since = stamp
+        if stamp - float(self._since) >= self.dwell_s - 1e-9:
+            self.value = value
+            self._pending = None
+            self._since = None
+        return self.value
+
+
+def _filtered_labels(observations, nearest, latched_id, id_hold, grasp_hold, prev_state,
+                     aperture, speed, hooked, options, on_m, off_m, stamp):
+    """滞回得到原始接触/抓取，再用停留时间决定真正写出去的标签。"""
+    hook_id = None
+    hook_state = None
+    if hooked is not None:
+        if hooked.get("object_id") is not None:
+            hook_id = hooked["object_id"]
+        if hooked.get("state") in GRASP_STATES:
+            hook_state = hooked["state"]
+    if hook_id is not None:
+        raw_id = hook_id
+        selected = None
+        for item in observations:
+            if item["id"] == raw_id:
+                selected = item
+                break
+        if selected is None:
+            n_tips = 0
+        else:
+            n_tips = int(np.sum(np.asarray(selected["distances"]) <= off_m))
+    else:
+        raw_id, selected, n_tips = _latch_contact(observations, latched_id, on_m, off_m)
+    latched_id = raw_id
+    if hook_state is not None:
+        raw_grasp = hook_state == "grasp"
+    else:
+        raw_grasp = (
+            raw_id is not None
+            and n_tips >= int(options["min_tips"])
+            and aperture is not None
+            and aperture <= float(options["aperture_grasp_m"])
+            and (speed is None or speed <= float(options["grasp_speed_m_s"]))
+        )
+    committed_id = id_hold.push(raw_id, stamp)
+    committed_grasp = bool(grasp_hold.push(bool(raw_grasp) and raw_id is not None, stamp))
+    if committed_id is None:
+        committed_grasp = False
+        if grasp_hold.value:
+            grasp_hold.value = False
+            grasp_hold._pending = None
+            grasp_hold._since = None
+    if committed_id is not None and selected is not None and selected["id"] == committed_id:
+        distance = selected["distance"]
+    elif nearest is not None:
+        distance = nearest["distance"]
+    else:
+        distance = None
+    touching = committed_id is not None
+    approaching = (
+        not touching
+        and distance is not None
+        and distance <= float(options["approach_m"])
+        and speed is not None
+        and speed <= -float(options["approach_speed_m_s"])
+    )
+    if committed_grasp:
+        state = "grasp"
+    elif prev_state == "grasp":
+        state = "release"
+    elif approaching or touching:
+        state = "pre_grasp"
+    else:
+        state = "open"
+    return committed_id, state, distance, touching, latched_id
 
 
 def _tips_of(points):
@@ -345,11 +529,17 @@ def estimate_interaction(
     pose_hook=None,
     contact_hook=None,
     params=None,
+    temporal_filter=True,
 ):
-    """用指尖距离、张合和相对速度估计接触和抓取。钩子给了结果就用钩子的。"""
+    """用指尖距离、张合和相对速度估计接触和抓取。钩子给了结果就用钩子的。
+
+    ``temporal_filter`` 默认开：接触距离分进入/离开两档，并且新状态要连续保持
+    ``dwell_s`` 秒才写出去。关掉则只用 ``contact_m``，当帧就切换。
+    """
     options = dict(HEURISTIC_DEFAULTS)
     if params:
         options.update(params)
+    on_m, off_m, dwell_s = _temporal_settings(options, temporal_filter)
     if pose_hook is not None:
         hooked = pose_hook(hands, timestamps)
         if hooked is not None:
@@ -362,6 +552,9 @@ def estimate_interaction(
         joints_series = (hands.get(side) or {}).get("joints") or [None] * num_frames
         prev = None
         prev_state = None
+        latched_id = None
+        id_hold = _Hold(dwell_s, None)
+        grasp_hold = _Hold(dwell_s, False)
         for index, stamp in enumerate(timestamps):
             joints = _joints_array(joints_series[index] if index < len(joints_series) else None)
             camera = None
@@ -373,52 +566,65 @@ def estimate_interaction(
             if joints is None and hooked is None:
                 prev_state = None
                 prev = None
+                latched_id = None
+                id_hold.reset()
+                grasp_hold.reset()
                 continue
             tips = None if joints is None else joints[list(FINGERTIPS)]
-            nearest = None
+            observations = []
             if tips is not None:
-                nearest = _nearest_object(objects, surfaces, index, tips, camera_pose=camera)
+                observations = _object_observations(objects, surfaces, index, tips, camera_pose=camera)
+            nearest = None
+            for item in observations:
+                if nearest is None or item["distance"] < nearest["distance"]:
+                    nearest = item
             aperture = None
             if joints is not None:
                 aperture = float(np.linalg.norm(joints[4] - joints[8]))
             center = None if nearest is None else nearest["center"]
             centroid = None if tips is None else tips.mean(axis=0)
             speed = _separation_speed(prev, center, centroid, stamp) if centroid is not None else None
-            n_tips = 0
-            distance = None
-            object_id = None
-            if nearest is not None:
-                distance = nearest["distance"]
-                n_tips = int(np.sum(nearest["distances"] <= options["contact_m"]))
-                if distance <= options["contact_m"] and n_tips >= 1:
-                    object_id = nearest["id"]
-            if hooked is not None and hooked.get("object_id") is not None:
-                object_id = hooked["object_id"]
-            touching = object_id is not None
-            stable = (
-                touching
-                and n_tips >= int(options["min_tips"])
-                and aperture is not None
-                and aperture <= options["aperture_grasp_m"]
-                and (speed is None or speed <= options["grasp_speed_m_s"])
-            )
-            approaching = (
-                not touching
-                and distance is not None
-                and distance <= options["approach_m"]
-                and speed is not None
-                and speed <= -options["approach_speed_m_s"]
-            )
-            if hooked is not None and hooked.get("state") in GRASP_STATES:
-                state = hooked["state"]
-            elif stable:
-                state = "grasp"
-            elif prev_state == "grasp":
-                state = "release"
-            elif approaching or touching:
-                state = "pre_grasp"
+            if temporal_filter:
+                object_id, state, distance, touching, latched_id = _filtered_labels(
+                    observations, nearest, latched_id, id_hold, grasp_hold, prev_state,
+                    aperture, speed, hooked, options, on_m, off_m, stamp,
+                )
             else:
-                state = "open"
+                n_tips = 0
+                distance = None
+                object_id = None
+                if nearest is not None:
+                    distance = nearest["distance"]
+                    n_tips = int(np.sum(nearest["distances"] <= options["contact_m"]))
+                    if distance <= options["contact_m"] and n_tips >= 1:
+                        object_id = nearest["id"]
+                if hooked is not None and hooked.get("object_id") is not None:
+                    object_id = hooked["object_id"]
+                touching = object_id is not None
+                stable = (
+                    touching
+                    and n_tips >= int(options["min_tips"])
+                    and aperture is not None
+                    and aperture <= options["aperture_grasp_m"]
+                    and (speed is None or speed <= options["grasp_speed_m_s"])
+                )
+                approaching = (
+                    not touching
+                    and distance is not None
+                    and distance <= options["approach_m"]
+                    and speed is not None
+                    and speed <= -options["approach_speed_m_s"]
+                )
+                if hooked is not None and hooked.get("state") in GRASP_STATES:
+                    state = hooked["state"]
+                elif stable:
+                    state = "grasp"
+                elif prev_state == "grasp":
+                    state = "release"
+                elif approaching or touching:
+                    state = "pre_grasp"
+                else:
+                    state = "open"
             contact[side]["valid"][index] = True
             contact[side]["object_id"][index] = object_id
             if hooked is not None and hooked.get("confidence") is not None:
@@ -426,7 +632,7 @@ def estimate_interaction(
             elif distance is None:
                 contact[side]["confidence"][index] = 0.0
             else:
-                scale = options["contact_m"] if touching else options["approach_m"]
+                scale = off_m if touching else options["approach_m"]
                 contact[side]["confidence"][index] = float(np.clip(1.0 - distance / scale, 0.0, 1.0))
             grasp[side]["valid"][index] = True
             grasp[side]["state"][index] = state
@@ -596,7 +802,8 @@ def synthetic_disagreement():
     }
     hands_gt = {"left": [None, None, None], "right": [skin(frame) for frame in joints]}
     gt = derive_gt_interaction(objects, hands_gt, timestamps, surfaces)
-    pred = estimate_interaction(hands_est, objects, timestamps, surfaces)
+    # 3 帧、间隔 0.1 秒，短于默认停留。文档里的合成数是没开时间滤波的。
+    pred = estimate_interaction(hands_est, objects, timestamps, surfaces, temporal_filter=False)
     return gt, pred, timestamps
 
 

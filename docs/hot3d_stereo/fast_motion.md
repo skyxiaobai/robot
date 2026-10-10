@@ -115,11 +115,11 @@
 ## 7. 管线（已按上面的结论改默认值）
 
 1. `velocity_gate` 默认改成按时间的匀加速预测（`mode="predicted"`）：邻居取 ±0.10 s，残差超过 2 cm，或速度超过 8 m/s、加速度超过 80 m/s²，才剔。仿真里的 `linear_gate(degree=2)` 是同一想法；生产代码还加了速度和加速度上限，并且时间窗不随帧率变。`--velocity-gate median` 或 `--legacy-temporal` 恢复“每帧 2 cm”的旧门限。
-2. `rts_q` 默认按估计速度在 30–300 之间取值（慢用 30，快用 300）。`--rts-q 0.3` 或 `--legacy-temporal` 恢复旧默认。真机上还要再调，这次没有新的 HOT3D 慢动作重跑。
+2. `rts_q` 默认按估计速度在 30–300 之间取值（慢用 30，快用 300）。`--rts-q 0.3` 或 `--legacy-temporal` 恢复旧默认。真机上还要再调。HOT3D 慢动作 4 段已用新默认重跑，见 [tail.md §5](tail.md)。
 3. 补洞、轨迹记忆、iPhone 位姿跳变改成秒 / 米每秒。`--max-gap`（帧）或 `--legacy-temporal` 按帧数。
 4. 会话规格要求关掉自动曝光、锁定 ≤2 ms（最多 5 ms），并把每帧曝光写进 `stereo/exposure.csv`。`validate_session.py` 会查。
 
-上面第 5 节的“新管线”数字是这次仿真（固定 q=30 或 300、样本窗 3 帧），不是用新默认在 HOT3D 慢动作上重跑的结果。慢动作那套数（`docs/hot3d_stereo/tail.md`、`docs/stereo_pipeline.md`）仍是旧默认（2 cm/帧 + q=0.3）。用新默认重跑 **待补**。
+上面第 5 节的“新管线”数字是这次仿真（固定 q=30 或 300、样本窗 3 帧）。用生产默认在 HOT3D 慢动作 4 段上重跑的结果：手腕中位 **1.13 cm**、p90 **2.38 cm**、≤2 cm **85%**，标注覆盖 **70.5%**，片段 4/4 通过（`--legacy-temporal` 对照 1.11 / 2.29 / 87%，覆盖 70.7%）。详见 [tail.md §5](tail.md)。§3 / 选型表里已经发表的中位数 1.22 cm 等（不同协议、见 [results.md](results.md)）未改。
 
 ## 局限
 

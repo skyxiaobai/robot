@@ -42,7 +42,7 @@ flowchart TD
 | ⑦ | 三角化 + 一致性 | ⑥ + `calib.yaml` | 左相机系 21 点（米）；每只手每帧的检查状态 | `headcam/stereo_pipeline.py` | 🟢 HOT3D 4 段跑通，误差见 `docs/stereo_pipeline.md` |
 | ⑧ | 平滑 / 补帧 | ⑦ | 平滑后的关节；补的帧标 `filled` | `headcam/hand_track_refine.py` | 🟢 同上；固定手型默认关（EgoDex 上没收益） |
 | ⑨ | 世界系 episode | ⑧ + `slam.tum` | 统一 episode JSON（世界系 21 点、手腕 xyz+四元数、置信度、`stereo` 诊断字段） | `headcam/stereo_pipeline.py`、`egodata/schema.py` | 🟢 |
-| ⑨b | 物体位姿、接触、抓取 | 手关节 + 物体位姿或 HOT3D 网格 | episode 里的 `objects` / `contact` / `grasp` / `events` | `egodata/interaction.py`、`headcam/hot3d_adapter.py` | 🟡 格式、启发式和合成夹具能跑。HOT3D 真实片段上的精确率/召回率待补。FoundationPose、ContactHands 只留钩子 |
+| ⑨b | 物体位姿、接触、抓取 | 手关节 + 物体位姿或 HOT3D 网格 | episode 里的 `objects` / `contact` / `grasp` / `events` | `egodata/interaction.py`、`headcam/hot3d_adapter.py` | 🟡 格式、启发式和合成夹具能跑。HOT3D 真实片段的精确率/召回率在 `docs/contact_grasp.md`，没开时间滤波；滤波重跑待补。FoundationPose、ContactHands 只留钩子 |
 | ⑩ | QC | episode | `qc/yield.csv`、`qc/yield.html`；坏帧原因 7 类（手出画、视线飘移、运动模糊、静止、只有一目认到、左右对不上、补出来的帧）。「抓住但没接触」另报，不拒绝。另报有效动作比例，以及 16/50/100 步窗口里两只手每一步都有效的比例（片段比窗口短时为空，不写成 0）。统计含被拒绝的片段 | `egodata/qc.py`、`egodata/stereo_qc.py`、`egodata/action_valid.py` | 🟢；阈值是事先定的，等自采数据再校准 |
 | ⑪ | 语言标注 | episode + 视频 | episode 里 `annotation`（四级） | `egodata/labels.py`、`validate_hierarchy.py` | 🟡 结构和校验有；自采数据的标注流程（人工 / VLM）还没定 |
 | ⑫ | LeRobot 导出 | 通过 QC 的 episode | LeRobot v3.0 目录（parquet + mp4 + meta）。另有物体位姿、接触、抓取和有效掩码。每行多一列 `action_valid`，形状 `(2,)`（左、右）。当前帧和下一帧该手手腕都是实测才为 1：有限、不是 `filled`、逐帧状态为空 / `none` / `ok`、数字置信度不低于 0.5。存了 `good_frame_mask` 时，false 的帧两只手都为 0。缺测仍写下「保持不动」的占位。`meta/egodata_export.json` 写通过片段上的有效动作比例和 16/50/100 整段窗口比例 | `egodata/lerobot_export.py`、`egodata/action_valid.py`、`ego_to_lerobot.py` | 🟢 EgoDex、HOT3D 与 iPhone 的导出路径都在。物体/接触/抓取列已接上，没有标注时掩码为 0。全量上的有效动作比例 **待补** |

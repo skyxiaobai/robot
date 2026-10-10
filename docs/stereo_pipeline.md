@@ -49,7 +49,7 @@ WiLoR 环境的 numpy 太老、导入不了 pyarrow 时，加 `--export-python /
 
 一致性检查的阈值是**事先按常识定的**，没有用 HOT3D 真值调过：重投影中位数 ≤ 10 px；能三角化的关节（单关节重投影 ≤ 15 px）≥ 15 个；手腕深度 0.1–1.2 m；手腕到中指根 5–15 cm。
 
-> 下面第 3 节的手腕误差是旧默认（One Euro，或后来的 2 cm/帧 + RTS q=0.3）跑出来的。当前默认是按时间的预测门限和速度自适应的 RTS（q 约 30–300）。用新默认重跑 **待补**。见 [hot3d_stereo/fast_motion.md](hot3d_stereo/fast_motion.md)。
+> 下面第 3 节的手腕误差是旧默认（One Euro，或后来的 2 cm/帧 + RTS q=0.3）跑出来的。当前默认是按时间的预测门限和速度自适应的 RTS（q 约 30–300）。同一 4 段 HOT3D Quest3 用新默认重跑：手腕中位 **1.13 cm**、p90 **2.38 cm**、≤2 cm **85%**，标注覆盖 **70.5%**，片段 4/4 通过（`--legacy-temporal` 1.11 / 2.29 / 87%，覆盖 70.7%）。见 [hot3d_stereo/tail.md §5](hot3d_stereo/tail.md)、[hot3d_stereo/fast_motion.md](hot3d_stereo/fast_motion.md)。
 
 ## 3. HOT3D Quest3 实测（4 段 × 150 帧 = 600 帧，全部帧）
 

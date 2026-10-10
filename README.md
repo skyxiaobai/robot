@@ -103,7 +103,7 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | `docs/hardware_day1_checklist.md` | 硬件到货第一天：同步、标定、首段录制和合格线 |
 | `docs/ANALYSIS_PROCESS.md` | **全部分析过程记录**（推导、调研、评审修正） |
 | `docs/headcam_data_spec.md`（v11） | 头戴设备规格：v9 的世界系手部标签与语言分段；v10 四级标注、产出率 QC、覆盖词表；v11 物体 6DoF、接触和抓取 |
-| `docs/contact_grasp.md` | 物体位姿、接触和抓取的新手说明。合成夹具上的精确率/召回率写在这里；HOT3D 真实片段待补 |
+| `docs/contact_grasp.md` | 物体位姿、接触和抓取的新手说明。合成夹具和 HOT3D 真实片段的精确率/召回率写在这里；HOT3D 数字没开时间滤波，滤波重跑待补 |
 | `docs/gap_analysis.md` | 开放数据下载 → 统一格式 → QC → 覆盖 → 标注 → LeRobot → 缩放律：已有、缺失、优先级 |
 | `docs/headcam_bom.csv` | 采购清单（**单目方案，留作对照**）：15 列证据链版（提供的数据/格式标准/数据契约/依据/采购原因），Excel 可直接打开 |
 | `docs/headcam_stereo_bom.md` / `docs/headcam_stereo_bom.csv` | **1000 元内双目采购清单**（推荐方案 A 约 727–982 元）。说明见 md，明细见 csv。下单向卖家要 8–10 cm 基线，镜头选约 100° |
