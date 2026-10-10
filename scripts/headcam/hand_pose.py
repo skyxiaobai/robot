@@ -8,9 +8,11 @@ MANO 是马普所的非商业学术许可，权重不能放进这个仓库。拿
 能跑，不需要 MANO。单目三维不是公制相机系，默认只把手腕放在 0.55 m 的
 深度先验上；公制尺度要靠双目三角化。
 
-HaMeR / WiLoR 把 crop 相机变到全图时要用 ``calib['K_left']`` 的 fx、fy 和主点。
-不传内参时仍用虚拟焦距 ``EXTRA.FOCAL_LENGTH / MODEL.IMAGE_SIZE * max(宽, 高)``
-（1920 宽时约 37500 px），手腕会落到几十米，不是米制深度。``cam_crop_to_full``
+HaMeR / WiLoR 的三维手是在虚拟焦距下预测的。公制平移用 ``calib['K_left']``
+的 fx、fy 和主点；二维点仍用虚拟焦距
+``EXTRA.FOCAL_LENGTH / MODEL.IMAGE_SIZE * max(宽, 高)``（1920 宽时约 37500 px）
+投到全图。用短焦去投这组三维点会把手形拉歪。不传内参时平移也用虚拟焦距，
+手腕会落到几十米，不是米制深度。``cam_crop_to_full``
 在本文件实现。不要导入 ``hamer.utils.renderer`` / ``wilor.utils.renderer``：
 它们会 ``import pyrender`` 并设置 EGL。模型默认 ``init_renderer=True``
 （``wilor/models/wilor.py``、``hamer/models/hamer.py``）会构造
@@ -59,16 +61,19 @@ cam_crop_to_full，并传 init_renderer=False）。没有 pyrender 时会放一�
 HaMeR 还要编译 detectron2，以及 ViTPose 用的 mmcv（常见是 mmcv==1.3.9）。这两步需要 C++ 编译器，
 CPU 上更慢，不作为默认。
 
-WiLoR 的 load_wilor 会把 MANO 路径改成相对当前目录的 ./mano_data/。本模块再用 MANO_MODEL_DIR
-的绝对路径覆盖 DATA_DIR、MODEL_PATH，以及同目录下的 mano_mean_params.npz（WiLoR 自带，不在 MANO
-压缩包里）。当前目录还没有 mano_data 时会做符号链接，已有目录或链接不覆盖。不要把这个链接提交进仓库。
+WiLoR 的 load_wilor 会把 MANO 路径改成相对当前目录的 ./mano_data/。本模块再用绝对路径覆盖
+DATA_DIR、MODEL_PATH，不会在当前目录建 mano_data 链接。mano_mean_params.npz 不在官方 MANO
+压缩包里，随 WiLoR / HaMeR 发布。查找顺序是 MANO_MODEL_DIR、wilor 或 hamer 仓库里的
+mano_data/（HaMeR 还有 _DATA/data/），以及 checkpoint 旁边。找不到时 wilor_missing() 会说明，
+而不是退回 ./mano_data 再抛 FileNotFoundError。
 
 PyTorch>=2.6 的 torch.load 默认 weights_only=True，官方 checkpoint 和 YOLO detector 会加载失败。
 本模块只对 WILOR_CHECKPOINT、WILOR_DETECTOR、HAMER_CHECKPOINT 这三个环境变量指向的官方文件
 使用 weights_only=False，不放宽其他路径。
 
-传入 predict(..., calib={"K_left": K}) 时，crop 相机用 K 的 fx、fy 和主点 (cx, cy)。
-不传 K 时虚拟焦距约 37500 px（1920 宽），手腕深度不是米。
+传入 predict(..., calib={"K_left": K}) 时，公制平移用 K 的 fx、fy 和主点 (cx, cy)。
+二维关键点始终按虚拟焦距投影，传不传 K 都一样。不传 K 时平移也用约 37500 px（1920 宽），
+手腕深度不是米。
 官方 demo 跑完后，把每帧 21 点写成 hands.json，交给 scripts/convert_headcam.py，
 同样不需要把权重放进仓库。
 """.strip()
@@ -96,6 +101,8 @@ def hamer_missing():
     mano = os.environ.get("MANO_MODEL_DIR")
     if not mano or not Path(mano).is_dir() or not (Path(mano) / "MANO_RIGHT.pkl").is_file():
         missing.append("环境变量 MANO_MODEL_DIR（目录内要有 MANO_RIGHT.pkl）")
+    if mano_mean_params_path() is None:
+        missing.append(_mean_params_missing_message())
     return missing
 
 
@@ -118,6 +125,8 @@ def wilor_missing():
     mano = os.environ.get("MANO_MODEL_DIR")
     if not mano or not Path(mano).is_dir() or not (Path(mano) / "MANO_RIGHT.pkl").is_file():
         missing.append("环境变量 MANO_MODEL_DIR（目录内要有 MANO_RIGHT.pkl）")
+    if mano_mean_params_path() is None:
+        missing.append(_mean_params_missing_message())
     return missing
 
 
@@ -811,6 +820,15 @@ def choose_mediapipe_api(has_tasks, has_solutions):
     )
 
 
+def mediapipe_gl_libraries_missing(exc):
+    """Tasks 初始化是否因为缺少 libEGL / libGLESv2 而失败。
+
+    无头机器没有这两份动态库时，空白帧测试应跳过，不当成手部后端的回归。
+    """
+    text = "%s\n%s" % (exc, getattr(exc, "__cause__", "") or "")
+    return "libGLESv2" in text or "libEGL" in text
+
+
 def mediapipe_tasks_failure_message(exc):
     return (
         "MediaPipe Tasks HandLandmarker 初始化失败（%s）。"
@@ -1024,27 +1042,40 @@ class _ManoFamilyBackend(HandPoseBackend):
         self._device = None
 
     def _camera_joints(
-        self, joints, is_right, cam_translation, focal, image_shape, principal_point=None, focal_y=None,
+        self, joints, is_right, cam_translation, image_shape,
+        project_translation=None, project_focal=None, project_focal_y=None, project_principal=None,
     ):
+        """公制关节用 ``cam_translation``。二维点用虚拟相机，不用真实短焦。
+
+        WiLoR / HaMeR 的手形是在约 37500 px 的虚拟焦距下预测的。把公制关节
+        （深度已经按真实 fx 缩到几十厘米）再用短焦投影，会把手形拉歪。
+        ``project_translation`` 与 ``project_focal`` 来自虚拟焦距的 crop→全图，
+        和有没有传入 K 无关。
+        """
         joints = np.asarray(joints, dtype=np.float64)
         if joints.shape[0] < JOINTS or joints.shape[-1] != 3:
             raise RuntimeError("模型没有给出 21 个三维关节")
+        if project_focal is None:
+            raise ValueError("二维投影必须给出虚拟焦距，不能用真实 K 的短焦")
         joints = joints[:JOINTS].copy()
         joints[:, 0] *= (2.0 * float(is_right) - 1.0)
         joints_cam = joints + np.asarray(cam_translation, dtype=np.float64).reshape(1, 3)
+        if project_translation is None:
+            project_translation = cam_translation
+        pixels = joints + np.asarray(project_translation, dtype=np.float64).reshape(1, 3)
         height, width = image_shape[:2]
-        fx = float(focal)
-        fy = fx if focal_y is None else float(focal_y)
-        if principal_point is None:
+        fx = float(project_focal)
+        fy = fx if project_focal_y is None else float(project_focal_y)
+        if project_principal is None:
             cx, cy = width / 2.0, height / 2.0
         else:
-            cx, cy = float(principal_point[0]), float(principal_point[1])
+            cx, cy = float(project_principal[0]), float(project_principal[1])
         intrinsic = np.array([
             [fx, 0.0, cx],
             [0.0, fy, cy],
             [0.0, 0.0, 1.0],
         ])
-        keypoints = project_pinhole(joints_cam, intrinsic)
+        keypoints = project_pinhole(pixels, intrinsic)
         return joints_cam, keypoints
 
 
@@ -1110,14 +1141,27 @@ def intrinsics_for_crop(calib, img_size, model_cfg):
 
 
 def _full_camera_from_batch(pred_cam, batch, model_cfg, calib):
+    """返回公制平移、虚拟焦距下的平移，以及二维投影用的虚拟焦距。
+
+    有 ``K_left`` 时公制平移用真实 fx、fy 和主点。二维相机始终用虚拟焦距和图像中心，
+    因此传不传 K，二维点相同。
+    """
     img_size = batch["img_size"].float() if hasattr(batch["img_size"], "float") else batch["img_size"]
     box_center = batch["box_center"].float() if hasattr(batch["box_center"], "float") else batch["box_center"]
     box_size = batch["box_size"].float() if hasattr(batch["box_size"], "float") else batch["box_size"]
-    fx, fy, principal = intrinsics_for_crop(calib, img_size, model_cfg)
-    cam_full = cam_crop_to_full(
-        pred_cam, box_center, box_size, img_size, focal_length=fx, principal_point=principal, focal_y=fy,
+    project_focal = _scaled_focal(model_cfg, img_size)
+    cam_pixels = cam_crop_to_full(
+        pred_cam, box_center, box_size, img_size, focal_length=project_focal,
     )
-    return cam_full, fx, fy, principal
+    if calib is not None and calib.get("K_left") is not None:
+        fx, fy, principal = intrinsics_for_crop(calib, img_size, model_cfg)
+        cam_metric = cam_crop_to_full(
+            pred_cam, box_center, box_size, img_size,
+            focal_length=fx, principal_point=principal, focal_y=fy,
+        )
+    else:
+        cam_metric = cam_pixels
+    return cam_metric, cam_pixels, project_focal
 
 
 def recursive_to(value, target):
@@ -1195,42 +1239,90 @@ def allow_official_torch_load(paths=None, torch_module=None):
     return _OfficialTorchLoad(torch_module, allowed)
 
 
-def apply_mano_model_dir(cfg):
-    """把配置里的 MANO 路径改成 ``MANO_MODEL_DIR`` 的绝对路径。"""
+_MEAN_PARAMS_NAME = "mano_mean_params.npz"
+
+
+def _mean_params_missing_message():
+    return (
+        "mano_mean_params.npz（官方 MANO 压缩包里没有这个文件，它随 WiLoR / HaMeR 发布。"
+        "放到 MANO_MODEL_DIR，或留在 WiLoR 仓库的 mano_data/、HaMeR 的 _DATA/data/，"
+        "也可以放在 checkpoint 旁边）"
+    )
+
+
+def _mean_param_candidates():
+    """官方 MANO zip 不含均值参数。先看 MANO_MODEL_DIR，再看 WiLoR / HaMeR 仓库。"""
+    candidates = []
     mano_dir = os.environ.get("MANO_MODEL_DIR")
-    if not mano_dir or not hasattr(cfg, "MANO"):
+    if mano_dir:
+        candidates.append(Path(mano_dir) / _MEAN_PARAMS_NAME)
+    for package in ("wilor", "hamer"):
+        try:
+            module = __import__(package)
+        except ImportError:
+            continue
+        origin = getattr(module, "__file__", None)
+        if not origin:
+            continue
+        root = Path(origin).resolve().parent
+        candidates.extend([
+            root / "mano_data" / _MEAN_PARAMS_NAME,
+            root.parent / "mano_data" / _MEAN_PARAMS_NAME,
+            root.parent / "_DATA" / "data" / _MEAN_PARAMS_NAME,
+            root.parent / "data" / _MEAN_PARAMS_NAME,
+        ])
+    for env_name in ("WILOR_CONFIG", "WILOR_CHECKPOINT", "HAMER_CHECKPOINT"):
+        value = os.environ.get(env_name)
+        if not value:
+            continue
+        parent = Path(value).resolve().parent
+        candidates.extend([
+            parent / _MEAN_PARAMS_NAME,
+            parent / "mano_data" / _MEAN_PARAMS_NAME,
+            parent.parent / "mano_data" / _MEAN_PARAMS_NAME,
+            parent.parent / "_DATA" / "data" / _MEAN_PARAMS_NAME,
+        ])
+    return candidates
+
+
+def mano_mean_params_path():
+    """返回 ``mano_mean_params.npz`` 的绝对路径。找不到则是 None。"""
+    seen = set()
+    for path in _mean_param_candidates():
+        key = os.path.normpath(str(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        if path.is_file():
+            return path.resolve()
+    return None
+
+
+def apply_mano_model_dir(cfg):
+    """把配置里的 MANO 路径改成绝对路径，不再依赖当前目录的 ``./mano_data``。"""
+    if not hasattr(cfg, "MANO"):
         return cfg
-    root = Path(mano_dir).resolve()
+    mano_dir = os.environ.get("MANO_MODEL_DIR")
+    mean = mano_mean_params_path()
+    if not mano_dir and mean is None:
+        return cfg
     defrost = getattr(cfg, "defrost", None)
     freeze = getattr(cfg, "freeze", None)
     if defrost is not None:
         defrost()
     mano = cfg.MANO
-    mano.DATA_DIR = str(root)
-    mano.MODEL_PATH = str(root)
-    mean = root / "mano_mean_params.npz"
-    if mean.is_file() and hasattr(mano, "MEAN_PARAMS"):
-        mano.MEAN_PARAMS = str(mean)
+    if mano_dir:
+        root = str(Path(mano_dir).resolve())
+        mano.DATA_DIR = root
+        mano.MODEL_PATH = root
+    if hasattr(mano, "MEAN_PARAMS"):
+        if mean is not None:
+            mano.MEAN_PARAMS = str(mean)
+        elif mano_dir:
+            mano.MEAN_PARAMS = str(Path(mano_dir).resolve() / _MEAN_PARAMS_NAME)
     if freeze is not None:
         freeze()
     return cfg
-
-
-def link_mano_data():
-    """当前目录没有 ``mano_data`` 时，链到 ``MANO_MODEL_DIR``。已有路径不覆盖。
-
-    WiLoR 的 ``load_wilor`` 会把路径写成 ``./mano_data/``。配置覆盖负责绝对路径；
-    这条链接留给仍按相对路径打开文件的代码。不要把链接提交进仓库。
-    """
-    mano_dir = os.environ.get("MANO_MODEL_DIR")
-    if not mano_dir:
-        return None
-    root = Path(mano_dir).resolve()
-    link = Path.cwd() / "mano_data"
-    if link.exists() or link.is_symlink():
-        return link
-    link.symlink_to(root, target_is_directory=True)
-    return link
 
 
 def load_checkpoint_without_renderer(load_from_checkpoint, *args, **kwargs):
@@ -1369,11 +1461,11 @@ class HaMeRBackend(_ManoFamilyBackend):
             multiplier = (2 * batch["right"] - 1)
             pred_cam = out["pred_cam"]
             pred_cam[:, 1] = multiplier * pred_cam[:, 1]
-            cam_full, focal, focal_y, principal = _full_camera_from_batch(pred_cam, batch, self._cfg, calib)
-            count = cam_full.shape[0]
+            cam_metric, cam_pixels, project_focal = _full_camera_from_batch(pred_cam, batch, self._cfg, calib)
+            count = cam_metric.shape[0]
             _fill_prediction(
-                prediction, self, out, batch, cam_full, focal, scores[cursor:cursor + count],
-                focal_y=focal_y, principal_point=principal,
+                prediction, self, out, batch, cam_metric, cam_pixels, project_focal,
+                scores[cursor:cursor + count],
             )
             cursor += count
         return prediction
@@ -1383,7 +1475,6 @@ class HaMeRBackend(_ManoFamilyBackend):
             return
         import torch
         ensure_pyrender_importable()
-        link_mano_data()
         from hamer.utils.utils_detectron2 import DefaultPredictor_Lazy
         from vitpose_model import ViTPoseModel
         from hamer.models import load_hamer
@@ -1433,18 +1524,16 @@ def _hamer_detector(predictor_cls):
     return predictor_cls(detectron_cfg)
 
 
-def _fill_prediction(prediction, backend, out, batch, cam_full, focal, scores, focal_y=None, principal_point=None):
+def _fill_prediction(prediction, backend, out, batch, cam_metric, cam_pixels, project_focal, scores):
     joints_batch = out["pred_keypoints_3d"].detach().cpu().numpy()
     rights = batch["right"].detach().cpu().numpy()
     width_height = batch["img_size"].detach().cpu().numpy()
     detections = []
     for index in range(joints_batch.shape[0]):
         image_shape = (int(width_height[index][1]), int(width_height[index][0]))
-        focal_here = focal if np.ndim(focal) == 0 else focal[index]
-        fy_here = None if focal_y is None else (focal_y if np.ndim(focal_y) == 0 else focal_y[index])
         joints_cam, keypoints = backend._camera_joints(
-            joints_batch[index], rights[index], cam_full[index], focal_here, image_shape,
-            principal_point=principal_point, focal_y=fy_here,
+            joints_batch[index], rights[index], cam_metric[index], image_shape,
+            project_translation=cam_pixels[index], project_focal=project_focal,
         )
         side = "right" if float(rights[index]) >= 0.5 else "left"
         score = 1.0 if scores is None or len(scores) <= index else float(scores[index])
@@ -1513,11 +1602,11 @@ class WiLoRBackend(_ManoFamilyBackend):
             multiplier = (2 * batch["right"] - 1)
             pred_cam = out["pred_cam"]
             pred_cam[:, 1] = multiplier * pred_cam[:, 1]
-            cam_full, focal, focal_y, principal = _full_camera_from_batch(pred_cam, batch, self._cfg, calib)
-            count = cam_full.shape[0]
+            cam_metric, cam_pixels, project_focal = _full_camera_from_batch(pred_cam, batch, self._cfg, calib)
+            count = cam_metric.shape[0]
             _fill_prediction(
-                prediction, self, out, batch, cam_full, focal, scores[cursor:cursor + count],
-                focal_y=focal_y, principal_point=principal,
+                prediction, self, out, batch, cam_metric, cam_pixels, project_focal,
+                scores[cursor:cursor + count],
             )
             cursor += count
         return prediction
@@ -1527,7 +1616,6 @@ class WiLoRBackend(_ManoFamilyBackend):
             return
         import torch
         ensure_pyrender_importable()
-        link_mano_data()
         from ultralytics import YOLO
         from wilor.models import load_wilor
         from wilor.models.wilor import WiLoR
