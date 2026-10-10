@@ -125,6 +125,31 @@ class GapAndIdentityTest(unittest.TestCase):
         self.assertTrue(np.allclose(filled_joints[0], joints[0]))
         self.assertTrue(np.allclose(filled_joints[4], joints[4]))
 
+    def test_gap_fill_duration_does_not_depend_on_fps(self):
+        # 0.12 s 的洞：30 fps 大约 3 帧，60 fps 大约 7 帧。按 5/30 秒两种都补；按 5 帧则 60 fps 补不上。
+        for fps in (30.0, 60.0):
+            count = int(fps)
+            times = np.arange(count, dtype=np.float64) / fps
+            hole = (times > 0.40) & (times < 0.52)
+            joints = _sequence(count, lambda index: (0.01 * float(times[index]), 0.0, 0.5))
+            joints[hole] = np.nan
+            _, filled = fill_gaps(joints, ~hole, max_gap=5, timestamps=times, max_gap_s=5.0 / 30.0)
+            self.assertTrue(hole.any())
+            self.assertTrue(filled[hole].all(), fps)
+            long_hole = (times > 0.40) & (times < 0.70)
+            longer = joints.copy()
+            longer[long_hole] = np.nan
+            _, not_filled = fill_gaps(longer, ~long_hole, max_gap=5, timestamps=times, max_gap_s=5.0 / 30.0)
+            self.assertFalse(not_filled.any(), fps)
+        count = 60
+        times = np.arange(count, dtype=np.float64) / 60.0
+        hole = (times > 0.40) & (times < 0.52)
+        joints = _sequence(count, lambda index: (0.0, 0.0, 0.5))
+        joints[hole] = np.nan
+        _, legacy = fill_gaps(joints, ~hole, max_gap=5)
+        self.assertGreater(int(hole.sum()), 5)
+        self.assertFalse(legacy.any())
+
     def test_gap_longer_than_n_stays_empty(self):
         joints = _sequence(6, lambda index: (0.0, 0.0, 0.5))
         joints[1:5] = np.nan

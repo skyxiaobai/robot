@@ -1,0 +1,1744 @@
+{
+ "blur_coef": 0.5952580158160127,
+ "n_residual_pairs": 313,
+ "k": [
+  1,
+  3,
+  6,
+  10
+ ],
+ "n_segments": 20,
+ "runs": [
+  {
+   "label": "OV9281 基准（全局、硬件同步、30fps、曝光2ms、现管线：中位数门限2cm + RTS q=0.3）",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "median",
+    "gate_m": 0.02
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 0.7166353383458647,
+     "raw_median_cm": 1.0261892498418281,
+     "raw_p90_cm": 2.932222802296267,
+     "final_median_cm": 0.540916954280601,
+     "final_p90_cm": 1.1013405628388333,
+     "final_within_2cm": 0.9842622950819672
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 0.5,
+     "raw_median_cm": 1.1149931324958655,
+     "raw_p90_cm": 3.2882170792881964,
+     "final_median_cm": 1.027253241701082,
+     "final_p90_cm": 2.0693809945082995,
+     "final_within_2cm": 0.8924485125858124
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 0.25118483412322273,
+     "raw_median_cm": 1.2423767572343514,
+     "raw_p90_cm": 4.131616259875288,
+     "final_median_cm": 1.3436355129715825,
+     "final_p90_cm": 2.9409367747769313,
+     "final_within_2cm": 0.6886792452830188
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 0.1,
+     "raw_median_cm": 1.2671965192309749,
+     "raw_p90_cm": 3.7345363149686963,
+     "final_median_cm": 1.141251349273162,
+     "final_p90_cm": 3.2136796727573484,
+     "final_within_2cm": 0.6666666666666666
+    }
+   ]
+  },
+  {
+   "label": "只三角化，不剔点不平滑（硬件本身的精度）",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0261892498418281,
+     "raw_p90_cm": 2.932222802296267,
+     "final_median_cm": 1.0261892498418281,
+     "final_p90_cm": 2.932222802296267,
+     "final_within_2cm": 0.8021616541353384
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1149931324958655,
+     "raw_p90_cm": 3.2882170792881964,
+     "final_median_cm": 1.1149931324958655,
+     "final_p90_cm": 3.2882170792881964,
+     "final_within_2cm": 0.7929061784897025
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2423767572343514,
+     "raw_p90_cm": 4.131616259875288,
+     "final_median_cm": 1.2423767572343514,
+     "final_p90_cm": 4.131616259875288,
+     "final_within_2cm": 0.7251184834123223
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2671965192309749,
+     "raw_p90_cm": 3.7345363149686963,
+     "final_median_cm": 1.2671965192309749,
+     "final_p90_cm": 3.7345363149686963,
+     "final_within_2cm": 0.719047619047619
+    }
+   ]
+  },
+  {
+   "label": "同步偏差 0.1 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.1,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0266047720183893,
+     "raw_p90_cm": 2.92787044508979,
+     "final_median_cm": 1.0266047720183893,
+     "final_p90_cm": 2.92787044508979,
+     "final_within_2cm": 0.8007518796992481
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.112029865525005,
+     "raw_p90_cm": 3.2706796413979937,
+     "final_median_cm": 1.112029865525005,
+     "final_p90_cm": 3.2706796413979937,
+     "final_within_2cm": 0.7940503432494279
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2474614458958577,
+     "raw_p90_cm": 4.139455020813453,
+     "final_median_cm": 1.2474614458958577,
+     "final_p90_cm": 4.139455020813453,
+     "final_within_2cm": 0.7274881516587678
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.253443480439369,
+     "raw_p90_cm": 3.778722955271497,
+     "final_median_cm": 1.253443480439369,
+     "final_p90_cm": 3.778722955271497,
+     "final_within_2cm": 0.7142857142857143
+    }
+   ]
+  },
+  {
+   "label": "同步偏差 1 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 1,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0285183288760764,
+     "raw_p90_cm": 2.884398303770416,
+     "final_median_cm": 1.0285183288760764,
+     "final_p90_cm": 2.884398303770416,
+     "final_within_2cm": 0.8016917293233082
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1222132783899856,
+     "raw_p90_cm": 3.2367344494277335,
+     "final_median_cm": 1.1222132783899856,
+     "final_p90_cm": 3.2367344494277335,
+     "final_within_2cm": 0.7963386727688787
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2804389508450202,
+     "raw_p90_cm": 4.097671209704001,
+     "final_median_cm": 1.2804389508450202,
+     "final_p90_cm": 4.097671209704001,
+     "final_within_2cm": 0.7156398104265402
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.3405438090407773,
+     "raw_p90_cm": 3.695911174339686,
+     "final_median_cm": 1.3405438090407773,
+     "final_p90_cm": 3.695911174339686,
+     "final_within_2cm": 0.7047619047619048
+    }
+   ]
+  },
+  {
+   "label": "同步偏差 5 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 5,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0447946530751937,
+     "raw_p90_cm": 2.929172794508873,
+     "final_median_cm": 1.0447946530751937,
+     "final_p90_cm": 2.929172794508873,
+     "final_within_2cm": 0.793233082706767
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2107764643750147,
+     "raw_p90_cm": 3.4441101783765795,
+     "final_median_cm": 1.2107764643750147,
+     "final_p90_cm": 3.4441101783765795,
+     "final_within_2cm": 0.7677345537757437
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.8315214151040191,
+     "raw_p90_cm": 4.804254703801914,
+     "final_median_cm": 1.8315214151040191,
+     "final_p90_cm": 4.804254703801914,
+     "final_within_2cm": 0.5521327014218009
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 2.2876034796273066,
+     "raw_p90_cm": 6.881301753840741,
+     "final_median_cm": 2.2876034796273066,
+     "final_p90_cm": 6.881301753840741,
+     "final_within_2cm": 0.41904761904761906
+    }
+   ]
+  },
+  {
+   "label": "同步偏差 10 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 10,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.094111309507612,
+     "raw_p90_cm": 2.919623395776552,
+     "final_median_cm": 1.094111309507612,
+     "final_p90_cm": 2.919623395776552,
+     "final_within_2cm": 0.7833646616541353
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.5167907307007837,
+     "raw_p90_cm": 4.088080501097353,
+     "final_median_cm": 1.5167907307007837,
+     "final_p90_cm": 4.088080501097353,
+     "final_within_2cm": 0.6556064073226545
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 2.8254074224678556,
+     "raw_p90_cm": 6.088806084743224,
+     "final_median_cm": 2.8254074224678556,
+     "final_p90_cm": 6.088806084743224,
+     "final_within_2cm": 0.3222748815165877
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 4.075122773629183,
+     "raw_p90_cm": 10.15720988498137,
+     "final_median_cm": 4.075122773629183,
+     "final_p90_cm": 10.15720988498137,
+     "final_within_2cm": 0.21428571428571427
+    }
+   ]
+  },
+  {
+   "label": "同步偏差 30 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 30,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.470631224272936,
+     "raw_p90_cm": 3.6784915485830663,
+     "final_median_cm": 1.470631224272936,
+     "final_p90_cm": 3.6784915485830663,
+     "final_within_2cm": 0.6668233082706767
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 3.1687639531773932,
+     "raw_p90_cm": 7.6042394764467405,
+     "final_median_cm": 3.1687639531773932,
+     "final_p90_cm": 7.6042394764467405,
+     "final_within_2cm": 0.26773455377574373
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 6.771489250094668,
+     "raw_p90_cm": 15.75554653944696,
+     "final_median_cm": 6.771489250094668,
+     "final_p90_cm": 15.75554653944696,
+     "final_within_2cm": 0.08767772511848342
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 12.240661506375474,
+     "raw_p90_cm": 27.378379042708744,
+     "final_median_cm": 12.240661506375474,
+     "final_p90_cm": 27.378379042708744,
+     "final_within_2cm": 0.03333333333333333
+    }
+   ]
+  },
+  {
+   "label": "卷帘快门 读出 10 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 10,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0256340392386942,
+     "raw_p90_cm": 2.921902657626346,
+     "final_median_cm": 1.0256340392386942,
+     "final_p90_cm": 2.921902657626346,
+     "final_within_2cm": 0.7984022556390977
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1663616119910636,
+     "raw_p90_cm": 3.2412503381975446,
+     "final_median_cm": 1.1663616119910636,
+     "final_p90_cm": 3.2412503381975446,
+     "final_within_2cm": 0.7906178489702517
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.4429291147442853,
+     "raw_p90_cm": 4.145029403245841,
+     "final_median_cm": 1.4429291147442853,
+     "final_p90_cm": 4.145029403245841,
+     "final_within_2cm": 0.6824644549763034
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.5973802214023842,
+     "raw_p90_cm": 4.093814654154722,
+     "final_median_cm": 1.5973802214023842,
+     "final_p90_cm": 4.093814654154722,
+     "final_within_2cm": 0.6095238095238096
+    }
+   ]
+  },
+  {
+   "label": "卷帘快门 读出 20 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 20,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.034671259667247,
+     "raw_p90_cm": 2.9289843283381822,
+     "final_median_cm": 1.034671259667247,
+     "final_p90_cm": 2.9289843283381822,
+     "final_within_2cm": 0.7951127819548872
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.258933944062611,
+     "raw_p90_cm": 3.245316655379619,
+     "final_median_cm": 1.258933944062611,
+     "final_p90_cm": 3.245316655379619,
+     "final_within_2cm": 0.7757437070938215
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.8096989876260052,
+     "raw_p90_cm": 4.464730715009627,
+     "final_median_cm": 1.8096989876260052,
+     "final_p90_cm": 4.464730715009627,
+     "final_within_2cm": 0.5639810426540285
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 2.530884282648218,
+     "raw_p90_cm": 4.868294914831033,
+     "final_median_cm": 2.530884282648218,
+     "final_p90_cm": 4.868294914831033,
+     "final_within_2cm": 0.3333333333333333
+    }
+   ]
+  },
+  {
+   "label": "卷帘快门 读出 30 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 30,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0555120675557355,
+     "raw_p90_cm": 2.9275981791712202,
+     "final_median_cm": 1.0555120675557355,
+     "final_p90_cm": 2.9275981791712202,
+     "final_within_2cm": 0.793233082706767
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.3870904969601856,
+     "raw_p90_cm": 3.352910528901345,
+     "final_median_cm": 1.3870904969601856,
+     "final_p90_cm": 3.352910528901345,
+     "final_within_2cm": 0.7276887871853547
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 2.2460904734849865,
+     "raw_p90_cm": 4.6935331066708645,
+     "final_median_cm": 2.2460904734849865,
+     "final_p90_cm": 4.6935331066708645,
+     "final_within_2cm": 0.43601895734597157
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 3.553486001018501,
+     "raw_p90_cm": 6.095588244653622,
+     "final_median_cm": 3.553486001018501,
+     "final_p90_cm": 6.095588244653622,
+     "final_within_2cm": 0.12380952380952381
+    }
+   ]
+  },
+  {
+   "label": "曝光 1 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 1,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0303821816031529,
+     "raw_p90_cm": 2.9179166269071835,
+     "final_median_cm": 1.0303821816031529,
+     "final_p90_cm": 2.9179166269071835,
+     "final_within_2cm": 0.8007518796992481
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1013340007502437,
+     "raw_p90_cm": 3.2303870765615894,
+     "final_median_cm": 1.1013340007502437,
+     "final_p90_cm": 3.2303870765615894,
+     "final_within_2cm": 0.7929061784897025
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2209310286579618,
+     "raw_p90_cm": 3.9925094094297493,
+     "final_median_cm": 1.2209310286579618,
+     "final_p90_cm": 3.9925094094297493,
+     "final_within_2cm": 0.7369668246445498
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.133975086867744,
+     "raw_p90_cm": 3.5344987331315516,
+     "final_median_cm": 1.133975086867744,
+     "final_p90_cm": 3.5344987331315516,
+     "final_within_2cm": 0.7571428571428571
+    }
+   ]
+  },
+  {
+   "label": "曝光 2 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0261892498418281,
+     "raw_p90_cm": 2.932222802296267,
+     "final_median_cm": 1.0261892498418281,
+     "final_p90_cm": 2.932222802296267,
+     "final_within_2cm": 0.8021616541353384
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1149931324958655,
+     "raw_p90_cm": 3.2882170792881964,
+     "final_median_cm": 1.1149931324958655,
+     "final_p90_cm": 3.2882170792881964,
+     "final_within_2cm": 0.7929061784897025
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2423767572343514,
+     "raw_p90_cm": 4.131616259875288,
+     "final_median_cm": 1.2423767572343514,
+     "final_p90_cm": 4.131616259875288,
+     "final_within_2cm": 0.7251184834123223
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2671965192309749,
+     "raw_p90_cm": 3.7345363149686963,
+     "final_median_cm": 1.2671965192309749,
+     "final_p90_cm": 3.7345363149686963,
+     "final_within_2cm": 0.719047619047619
+    }
+   ]
+  },
+  {
+   "label": "曝光 5 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 5,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0341397047039023,
+     "raw_p90_cm": 2.9612501182652538,
+     "final_median_cm": 1.0341397047039023,
+     "final_p90_cm": 2.9612501182652538,
+     "final_within_2cm": 0.8007518796992481
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2243706343925367,
+     "raw_p90_cm": 3.3443410253552663,
+     "final_median_cm": 1.2243706343925367,
+     "final_p90_cm": 3.3443410253552663,
+     "final_within_2cm": 0.7803203661327232
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.4837359232033398,
+     "raw_p90_cm": 4.540824748604283,
+     "final_median_cm": 1.4837359232033398,
+     "final_p90_cm": 4.540824748604283,
+     "final_within_2cm": 0.6398104265402843
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.7857524778301868,
+     "raw_p90_cm": 4.789093858484361,
+     "final_median_cm": 1.7857524778301868,
+     "final_p90_cm": 4.789093858484361,
+     "final_within_2cm": 0.5571428571428572
+    }
+   ]
+  },
+  {
+   "label": "曝光 10 ms",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 10,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0748612794893835,
+     "raw_p90_cm": 2.9786606106682845,
+     "final_median_cm": 1.0748612794893835,
+     "final_p90_cm": 2.9786606106682845,
+     "final_within_2cm": 0.7890037593984962
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.372565623947159,
+     "raw_p90_cm": 3.860954111352473,
+     "final_median_cm": 1.372565623947159,
+     "final_p90_cm": 3.860954111352473,
+     "final_within_2cm": 0.7036613272311213
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.9819539508989756,
+     "raw_p90_cm": 5.615333238051691,
+     "final_median_cm": 1.9819539508989756,
+     "final_p90_cm": 5.615333238051691,
+     "final_within_2cm": 0.5023696682464455
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 2.5354731606117955,
+     "raw_p90_cm": 8.430382832258168,
+     "final_median_cm": 2.5354731606117955,
+     "final_p90_cm": 8.430382832258168,
+     "final_within_2cm": 0.36666666666666664
+    }
+   ]
+  },
+  {
+   "label": "30 fps 现管线（门限2cm/帧 + q=0.3）",
+   "config": {
+    "fps": 30,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "median",
+    "gate_m": 0.02
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 0.7166353383458647,
+     "raw_median_cm": 1.0261892498418281,
+     "raw_p90_cm": 2.932222802296267,
+     "final_median_cm": 0.540916954280601,
+     "final_p90_cm": 1.1013405628388333,
+     "final_within_2cm": 0.9842622950819672
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 0.5,
+     "raw_median_cm": 1.1149931324958655,
+     "raw_p90_cm": 3.2882170792881964,
+     "final_median_cm": 1.027253241701082,
+     "final_p90_cm": 2.0693809945082995,
+     "final_within_2cm": 0.8924485125858124
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 0.25118483412322273,
+     "raw_median_cm": 1.2423767572343514,
+     "raw_p90_cm": 4.131616259875288,
+     "final_median_cm": 1.3436355129715825,
+     "final_p90_cm": 2.9409367747769313,
+     "final_within_2cm": 0.6886792452830188
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 0.1,
+     "raw_median_cm": 1.2671965192309749,
+     "raw_p90_cm": 3.7345363149686963,
+     "final_median_cm": 1.141251349273162,
+     "final_p90_cm": 3.2136796727573484,
+     "final_within_2cm": 0.6666666666666666
+    }
+   ]
+  },
+  {
+   "label": "60 fps 现管线（门限2cm/帧 + q=0.3）",
+   "config": {
+    "fps": 60,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "median",
+    "gate_m": 0.02
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 4247,
+     "kept_frac": 0.7442900871203202,
+     "raw_median_cm": 1.0349030977780942,
+     "raw_p90_cm": 2.993218789971282,
+     "final_median_cm": 0.4193631861911308,
+     "final_p90_cm": 0.9519828772033562,
+     "final_within_2cm": 0.9835495096488454
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 1765,
+     "kept_frac": 0.6419263456090651,
+     "raw_median_cm": 1.1285416953116305,
+     "raw_p90_cm": 3.495460344754517,
+     "final_median_cm": 0.8525953417699804,
+     "final_p90_cm": 2.225673913591634,
+     "final_within_2cm": 0.8746690203000883
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 861,
+     "kept_frac": 0.4808362369337979,
+     "raw_median_cm": 1.1895126850088502,
+     "raw_p90_cm": 3.682393754780945,
+     "final_median_cm": 1.6619993951091094,
+     "final_p90_cm": 4.027338984204905,
+     "final_within_2cm": 0.6183574879227053
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 437,
+     "kept_frac": 0.32494279176201374,
+     "raw_median_cm": 1.3567358650754173,
+     "raw_p90_cm": 3.8712598445183257,
+     "final_median_cm": 2.526458432490238,
+     "final_p90_cm": 5.268740369318879,
+     "final_within_2cm": 0.352112676056338
+    }
+   ]
+  },
+  {
+   "label": "90 fps 现管线（门限2cm/帧 + q=0.3）",
+   "config": {
+    "fps": 90,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "median",
+    "gate_m": 0.02
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 6357,
+     "kept_frac": 0.758376592732421,
+     "raw_median_cm": 1.016780222699366,
+     "raw_p90_cm": 2.8832209967460187,
+     "final_median_cm": 0.36297612246263106,
+     "final_p90_cm": 0.8233552902795429,
+     "final_within_2cm": 0.9852727649865173
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 2682,
+     "kept_frac": 0.6748695003728561,
+     "raw_median_cm": 1.1506103912528396,
+     "raw_p90_cm": 3.343115241397327,
+     "final_median_cm": 0.8037871911938211,
+     "final_p90_cm": 2.243567446306421,
+     "final_within_2cm": 0.8740331491712707
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 1261,
+     "kept_frac": 0.56304520222046,
+     "raw_median_cm": 1.1946334441320499,
+     "raw_p90_cm": 3.693177952126716,
+     "final_median_cm": 1.5995637703077006,
+     "final_p90_cm": 4.108515334105355,
+     "final_within_2cm": 0.6056338028169014
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 676,
+     "kept_frac": 0.41420118343195267,
+     "raw_median_cm": 1.3900045103567886,
+     "raw_p90_cm": 3.7240095691485737,
+     "final_median_cm": 2.7602879852032887,
+     "final_p90_cm": 5.572741589494254,
+     "final_within_2cm": 0.32142857142857145
+    }
+   ]
+  },
+  {
+   "label": "120 fps 现管线（门限2cm/帧 + q=0.3）",
+   "config": {
+    "fps": 120,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "median",
+    "gate_m": 0.02
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 8485,
+     "kept_frac": 0.7534472598703594,
+     "raw_median_cm": 1.0303667666483047,
+     "raw_p90_cm": 2.9876899586330348,
+     "final_median_cm": 0.3384937256568655,
+     "final_p90_cm": 0.7441138386708296,
+     "final_within_2cm": 0.9865477866416393
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 3558,
+     "kept_frac": 0.7001124227093873,
+     "raw_median_cm": 1.1127296397198867,
+     "raw_p90_cm": 3.3586912330556724,
+     "final_median_cm": 0.7244099244862505,
+     "final_p90_cm": 2.173009660951496,
+     "final_within_2cm": 0.8799678843837816
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 1702,
+     "kept_frac": 0.6269095182138661,
+     "raw_median_cm": 1.2052557650662192,
+     "raw_p90_cm": 3.429417394989842,
+     "final_median_cm": 1.5735737260294647,
+     "final_p90_cm": 4.055560899243352,
+     "final_within_2cm": 0.6176194939081537
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 896,
+     "kept_frac": 0.47544642857142855,
+     "raw_median_cm": 1.3261554299655829,
+     "raw_p90_cm": 3.8855416025461427,
+     "final_median_cm": 2.534556817805412,
+     "final_p90_cm": 5.538878172278099,
+     "final_within_2cm": 0.3591549295774648
+    }
+   ]
+  },
+  {
+   "label": "30 fps 新管线（匀加速预测门限2cm + RTS q=30）",
+   "config": {
+    "fps": 30,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "quad",
+    "gate_m": 0.02,
+    "rts_q": 30.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 0.6141917293233082,
+     "raw_median_cm": 1.0261892498418281,
+     "raw_p90_cm": 2.932222802296267,
+     "final_median_cm": 0.6164392693693902,
+     "final_p90_cm": 1.2840941132529753,
+     "final_within_2cm": 0.9762815608263198
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 0.528604118993135,
+     "raw_median_cm": 1.1149931324958655,
+     "raw_p90_cm": 3.2882170792881964,
+     "final_median_cm": 0.7094893165962441,
+     "final_p90_cm": 1.458353994851616,
+     "final_within_2cm": 0.9567099567099567
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 0.33886255924170616,
+     "raw_median_cm": 1.2423767572343514,
+     "raw_p90_cm": 4.131616259875288,
+     "final_median_cm": 0.8257509056106991,
+     "final_p90_cm": 1.7801618162041517,
+     "final_within_2cm": 0.9300699300699301
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 0.13333333333333333,
+     "raw_median_cm": 1.2671965192309749,
+     "raw_p90_cm": 3.7345363149686963,
+     "final_median_cm": 1.1650306694772294,
+     "final_p90_cm": 2.3159925962608447,
+     "final_within_2cm": 0.8571428571428571
+    }
+   ]
+  },
+  {
+   "label": "30 fps 只平滑不剔点（RTS q=30）",
+   "config": {
+    "fps": 30,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "rts_q": 30.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0261892498418281,
+     "raw_p90_cm": 2.932222802296267,
+     "final_median_cm": 0.7588814464225531,
+     "final_p90_cm": 2.098416544807324,
+     "final_within_2cm": 0.8890977443609023
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1149931324958655,
+     "raw_p90_cm": 3.2882170792881964,
+     "final_median_cm": 0.8737215445189586,
+     "final_p90_cm": 2.808827986292729,
+     "final_within_2cm": 0.8306636155606407
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2423767572343514,
+     "raw_p90_cm": 4.131616259875288,
+     "final_median_cm": 1.2971621745666133,
+     "final_p90_cm": 3.4687074562143017,
+     "final_within_2cm": 0.7440758293838863
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2671965192309749,
+     "raw_p90_cm": 3.7345363149686963,
+     "final_median_cm": 1.7725501674992448,
+     "final_p90_cm": 3.8604366614031194,
+     "final_within_2cm": 0.5619047619047619
+    }
+   ]
+  },
+  {
+   "label": "30 fps 新管线（匀加速预测门限2cm + RTS q=300）",
+   "config": {
+    "fps": 30,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "quad",
+    "gate_m": 0.02,
+    "rts_q": 300.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 0.6141917293233082,
+     "raw_median_cm": 1.0261892498418281,
+     "raw_p90_cm": 2.932222802296267,
+     "final_median_cm": 0.7212873103392292,
+     "final_p90_cm": 1.5245226648379284,
+     "final_within_2cm": 0.9617444529456771
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 0.528604118993135,
+     "raw_median_cm": 1.1149931324958655,
+     "raw_p90_cm": 3.2882170792881964,
+     "final_median_cm": 0.7708310992582926,
+     "final_p90_cm": 1.5929052404773947,
+     "final_within_2cm": 0.9502164502164502
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 0.33886255924170616,
+     "raw_median_cm": 1.2423767572343514,
+     "raw_p90_cm": 4.131616259875288,
+     "final_median_cm": 0.8379197525440307,
+     "final_p90_cm": 1.6776682034056571,
+     "final_within_2cm": 0.951048951048951
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 0.13333333333333333,
+     "raw_median_cm": 1.2671965192309749,
+     "raw_p90_cm": 3.7345363149686963,
+     "final_median_cm": 1.1790178385552659,
+     "final_p90_cm": 1.7849498590071475,
+     "final_within_2cm": 0.9285714285714286
+    }
+   ]
+  },
+  {
+   "label": "30 fps 只平滑不剔点（RTS q=300）",
+   "config": {
+    "fps": 30,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "rts_q": 300.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0261892498418281,
+     "raw_p90_cm": 2.932222802296267,
+     "final_median_cm": 0.8821884270587128,
+     "final_p90_cm": 2.435508330778487,
+     "final_within_2cm": 0.8486842105263158
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1149931324958655,
+     "raw_p90_cm": 3.2882170792881964,
+     "final_median_cm": 0.9694270873847867,
+     "final_p90_cm": 2.905633590645011,
+     "final_within_2cm": 0.8249427917620137
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2423767572343514,
+     "raw_p90_cm": 4.131616259875288,
+     "final_median_cm": 1.0795598288928656,
+     "final_p90_cm": 3.491567831500681,
+     "final_within_2cm": 0.7440758293838863
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2671965192309749,
+     "raw_p90_cm": 3.7345363149686963,
+     "final_median_cm": 1.3600070805137743,
+     "final_p90_cm": 3.1243994338480405,
+     "final_within_2cm": 0.7238095238095238
+    }
+   ]
+  },
+  {
+   "label": "60 fps 新管线（匀加速预测门限2cm + RTS q=30）",
+   "config": {
+    "fps": 60,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "quad",
+    "gate_m": 0.02,
+    "rts_q": 30.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 4247,
+     "kept_frac": 0.6237344007534731,
+     "raw_median_cm": 1.0349030977780942,
+     "raw_p90_cm": 2.993218789971282,
+     "final_median_cm": 0.5008792669139761,
+     "final_p90_cm": 1.0407454248144365,
+     "final_within_2cm": 0.9920724801812004
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 1765,
+     "kept_frac": 0.5569405099150142,
+     "raw_median_cm": 1.1285416953116305,
+     "raw_p90_cm": 3.495460344754517,
+     "final_median_cm": 0.6306893507702296,
+     "final_p90_cm": 1.2725402890235133,
+     "final_within_2cm": 0.982706002034588
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 861,
+     "kept_frac": 0.4831591173054588,
+     "raw_median_cm": 1.1895126850088502,
+     "raw_p90_cm": 3.682393754780945,
+     "final_median_cm": 0.7952745382075941,
+     "final_p90_cm": 1.6667340061505962,
+     "final_within_2cm": 0.9350961538461539
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 437,
+     "kept_frac": 0.41876430205949655,
+     "raw_median_cm": 1.3567358650754173,
+     "raw_p90_cm": 3.8712598445183257,
+     "final_median_cm": 1.0407084353616662,
+     "final_p90_cm": 2.155196442412852,
+     "final_within_2cm": 0.8743169398907104
+    }
+   ]
+  },
+  {
+   "label": "60 fps 只平滑不剔点（RTS q=30）",
+   "config": {
+    "fps": 60,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "rts_q": 30.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 4247,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0349030977780942,
+     "raw_p90_cm": 2.993218789971282,
+     "final_median_cm": 0.6598040509493875,
+     "final_p90_cm": 1.7925497435626725,
+     "final_within_2cm": 0.9248881563456558
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 1765,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1285416953116305,
+     "raw_p90_cm": 3.495460344754517,
+     "final_median_cm": 0.8206349004619214,
+     "final_p90_cm": 2.1339025131733598,
+     "final_within_2cm": 0.8827195467422096
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 861,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1895126850088502,
+     "raw_p90_cm": 3.682393754780945,
+     "final_median_cm": 1.0433853619886482,
+     "final_p90_cm": 2.605100934864993,
+     "final_within_2cm": 0.8141695702671312
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 437,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.3567358650754173,
+     "raw_p90_cm": 3.8712598445183257,
+     "final_median_cm": 1.4395101460187678,
+     "final_p90_cm": 3.2823934955261156,
+     "final_within_2cm": 0.6979405034324943
+    }
+   ]
+  },
+  {
+   "label": "60 fps 新管线（匀加速预测门限2cm + RTS q=300）",
+   "config": {
+    "fps": 60,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "quad",
+    "gate_m": 0.02,
+    "rts_q": 300.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 4247,
+     "kept_frac": 0.6237344007534731,
+     "raw_median_cm": 1.0349030977780942,
+     "raw_p90_cm": 2.993218789971282,
+     "final_median_cm": 0.6032631171826863,
+     "final_p90_cm": 1.2679068223923022,
+     "final_within_2cm": 0.9818799546998868
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 1765,
+     "kept_frac": 0.5569405099150142,
+     "raw_median_cm": 1.1285416953116305,
+     "raw_p90_cm": 3.495460344754517,
+     "final_median_cm": 0.6978887701156739,
+     "final_p90_cm": 1.4018029997127428,
+     "final_within_2cm": 0.9715157680569685
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 861,
+     "kept_frac": 0.4831591173054588,
+     "raw_median_cm": 1.1895126850088502,
+     "raw_p90_cm": 3.682393754780945,
+     "final_median_cm": 0.7490353958619467,
+     "final_p90_cm": 1.5682139929324022,
+     "final_within_2cm": 0.9447115384615384
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 437,
+     "kept_frac": 0.41876430205949655,
+     "raw_median_cm": 1.3567358650754173,
+     "raw_p90_cm": 3.8712598445183257,
+     "final_median_cm": 0.8386726669212432,
+     "final_p90_cm": 1.7368290637318187,
+     "final_within_2cm": 0.9453551912568307
+    }
+   ]
+  },
+  {
+   "label": "60 fps 只平滑不剔点（RTS q=300）",
+   "config": {
+    "fps": 60,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "rts_q": 300.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 4247,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0349030977780942,
+     "raw_p90_cm": 2.993218789971282,
+     "final_median_cm": 0.7739891401711236,
+     "final_p90_cm": 2.1448851225861096,
+     "final_within_2cm": 0.8865081233812102
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 1765,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1285416953116305,
+     "raw_p90_cm": 3.495460344754517,
+     "final_median_cm": 0.861192995502073,
+     "final_p90_cm": 2.4829280740662822,
+     "final_within_2cm": 0.8470254957507082
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 861,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1895126850088502,
+     "raw_p90_cm": 3.682393754780945,
+     "final_median_cm": 0.9508995830099343,
+     "final_p90_cm": 2.762445803775629,
+     "final_within_2cm": 0.8234610917537747
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 437,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.3567358650754173,
+     "raw_p90_cm": 3.8712598445183257,
+     "final_median_cm": 1.1005136194231804,
+     "final_p90_cm": 2.9094660659674054,
+     "final_within_2cm": 0.7848970251716247
+    }
+   ]
+  },
+  {
+   "label": "120 fps 新管线（匀加速预测门限2cm + RTS q=30）",
+   "config": {
+    "fps": 120,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "quad",
+    "gate_m": 0.02,
+    "rts_q": 30.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 8485,
+     "kept_frac": 0.6273423688862699,
+     "raw_median_cm": 1.0303667666483047,
+     "raw_p90_cm": 2.9876899586330348,
+     "final_median_cm": 0.40701025977561656,
+     "final_p90_cm": 0.7925291442341411,
+     "final_within_2cm": 0.9986849520946834
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 3558,
+     "kept_frac": 0.5711073636874648,
+     "raw_median_cm": 1.1127296397198867,
+     "raw_p90_cm": 3.3586912330556724,
+     "final_median_cm": 0.4882386195064956,
+     "final_p90_cm": 0.9731552899790176,
+     "final_within_2cm": 0.9916338582677166
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 1702,
+     "kept_frac": 0.5681551116333725,
+     "raw_median_cm": 1.2052557650662192,
+     "raw_p90_cm": 3.429417394989842,
+     "final_median_cm": 0.6537841316102224,
+     "final_p90_cm": 1.4152649616888944,
+     "final_within_2cm": 0.9741468459152016
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 896,
+     "kept_frac": 0.49776785714285715,
+     "raw_median_cm": 1.3261554299655829,
+     "raw_p90_cm": 3.8855416025461427,
+     "final_median_cm": 0.9567121557355434,
+     "final_p90_cm": 2.1238868819903245,
+     "final_within_2cm": 0.8834080717488789
+    }
+   ]
+  },
+  {
+   "label": "120 fps 只平滑不剔点（RTS q=30）",
+   "config": {
+    "fps": 120,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "rts_q": 30.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 8485,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0303667666483047,
+     "raw_p90_cm": 2.9876899586330348,
+     "final_median_cm": 0.5667964138503965,
+     "final_p90_cm": 1.4907611588147125,
+     "final_within_2cm": 0.9575721862109605
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 3558,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1127296397198867,
+     "raw_p90_cm": 3.3586912330556724,
+     "final_median_cm": 0.6743483541378021,
+     "final_p90_cm": 1.7567207727068588,
+     "final_within_2cm": 0.9283305227655987
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 1702,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2052557650662192,
+     "raw_p90_cm": 3.429417394989842,
+     "final_median_cm": 0.8060472679006493,
+     "final_p90_cm": 2.262923495544404,
+     "final_within_2cm": 0.8789659224441834
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 896,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.3261554299655829,
+     "raw_p90_cm": 3.8855416025461427,
+     "final_median_cm": 1.1636832876562686,
+     "final_p90_cm": 2.6205613215145847,
+     "final_within_2cm": 0.7912946428571429
+    }
+   ]
+  },
+  {
+   "label": "120 fps 新管线（匀加速预测门限2cm + RTS q=300）",
+   "config": {
+    "fps": 120,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "quad",
+    "gate_m": 0.02,
+    "rts_q": 300.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 8485,
+     "kept_frac": 0.6273423688862699,
+     "raw_median_cm": 1.0303667666483047,
+     "raw_p90_cm": 2.9876899586330348,
+     "final_median_cm": 0.5005963349133418,
+     "final_p90_cm": 1.0149651174629701,
+     "final_within_2cm": 0.9934247604734172
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 3558,
+     "kept_frac": 0.5711073636874648,
+     "raw_median_cm": 1.1127296397198867,
+     "raw_p90_cm": 3.3586912330556724,
+     "final_median_cm": 0.5383742230668305,
+     "final_p90_cm": 1.0818547166912724,
+     "final_within_2cm": 0.9911417322834646
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 1702,
+     "kept_frac": 0.5681551116333725,
+     "raw_median_cm": 1.2052557650662192,
+     "raw_p90_cm": 3.429417394989842,
+     "final_median_cm": 0.601932044226916,
+     "final_p90_cm": 1.363207240152773,
+     "final_within_2cm": 0.9772492244053774
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 896,
+     "kept_frac": 0.49776785714285715,
+     "raw_median_cm": 1.3261554299655829,
+     "raw_p90_cm": 3.8855416025461427,
+     "final_median_cm": 0.7423032082965689,
+     "final_p90_cm": 1.7060540012738463,
+     "final_within_2cm": 0.9349775784753364
+    }
+   ]
+  },
+  {
+   "label": "120 fps 只平滑不剔点（RTS q=300）",
+   "config": {
+    "fps": 120,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 0.0,
+    "readout_ms": 0.0,
+    "exposure_ms": 2.0,
+    "gate": "none",
+    "gate_m": 0.02,
+    "rts_q": 300.0
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 8485,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.0303667666483047,
+     "raw_p90_cm": 2.9876899586330348,
+     "final_median_cm": 0.6505920360221457,
+     "final_p90_cm": 1.7839047676415194,
+     "final_within_2cm": 0.9222156747200942
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 3558,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.1127296397198867,
+     "raw_p90_cm": 3.3586912330556724,
+     "final_median_cm": 0.7112663096939005,
+     "final_p90_cm": 2.0326237285523128,
+     "final_within_2cm": 0.8968521641371557
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 1702,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.2052557650662192,
+     "raw_p90_cm": 3.429417394989842,
+     "final_median_cm": 0.7599985381613393,
+     "final_p90_cm": 2.2068268619863427,
+     "final_within_2cm": 0.8836662749706228
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 896,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.3261554299655829,
+     "raw_p90_cm": 3.8855416025461427,
+     "final_median_cm": 0.9298928986968349,
+     "final_p90_cm": 2.4380771826106367,
+     "final_within_2cm": 0.8404017857142857
+    }
+   ]
+  },
+  {
+   "label": "反例：两颗独立卷帘 USB 30fps 软同步 曝光10ms（只三角化）",
+   "config": {
+    "fps": 30.0,
+    "baseline": 0.09,
+    "hfov_deg": 100.0,
+    "sync_ms": 15,
+    "readout_ms": 25,
+    "exposure_ms": 10,
+    "gate": "none",
+    "gate_m": 0.02,
+    "smooth": false
+   },
+   "bins": [
+    {
+     "bin": "≈0.15 m/s（慢）",
+     "n": 2128,
+     "kept_frac": 1.0,
+     "raw_median_cm": 1.219447475577676,
+     "raw_p90_cm": 3.161424816852016,
+     "final_median_cm": 1.219447475577676,
+     "final_p90_cm": 3.161424816852016,
+     "final_within_2cm": 0.7504699248120301
+    },
+    {
+     "bin": "≈0.5 m/s",
+     "n": 874,
+     "kept_frac": 1.0,
+     "raw_median_cm": 2.166063779346475,
+     "raw_p90_cm": 5.293813575996284,
+     "final_median_cm": 2.166063779346475,
+     "final_p90_cm": 5.293813575996284,
+     "final_within_2cm": 0.45194508009153317
+    },
+    {
+     "bin": "≈1 m/s（快）",
+     "n": 422,
+     "kept_frac": 1.0,
+     "raw_median_cm": 4.401066500653926,
+     "raw_p90_cm": 9.875100306542167,
+     "final_median_cm": 4.401066500653926,
+     "final_p90_cm": 9.875100306542167,
+     "final_within_2cm": 0.13270142180094788
+    },
+    {
+     "bin": "≈2 m/s（很快）",
+     "n": 210,
+     "kept_frac": 1.0,
+     "raw_median_cm": 6.808115407523657,
+     "raw_p90_cm": 17.31289207680676,
+     "final_median_cm": 6.808115407523657,
+     "final_p90_cm": 17.31289207680676,
+     "final_within_2cm": 0.023809523809523808
+    }
+   ]
+  }
+ ]
+}

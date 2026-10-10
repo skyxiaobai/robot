@@ -10,9 +10,9 @@
 1. 左右手轨迹一致性。用上一帧手腕的位置认人，而不是只信这一帧的标签。
 2. 时序平滑。只把高置信的观测送进滤波器。One Euro 是默认；也可以换成
    常速度卡尔曼。缺测帧先留空，不拿预测值冒充观测。
-3. 补洞。两头都有观测、中间连续缺测不超过 ``max_gap`` 帧时，线性插值。
-   这些帧写 ``filled=True``，置信度写成 ``filled_confidence``（默认 0）。
-   QC 看到 ``filled`` 或低于 0.5 的置信度，都不会把这帧当成跟踪成功。
+3. 补洞。两头都有观测、中间缺测不超过 ``max_gap_s`` 秒（默认 5/30 秒，30 fps 下仍是 5 帧）时线性插值。
+   ``gap_unit="frames"`` 恢复按帧数的旧行为。补上的帧写 ``filled=True``，置信度写成
+   ``filled_confidence``（默认 0）。QC 看到 ``filled`` 或低于 0.5 的置信度，都不会把这帧当成跟踪成功。
 4. 固定手型。在这一段的高置信帧上，对每段骨头取稳健中位数，再按骨架把
    关节重摆到这个长度。手腕不动。这是「这个人的手有多长」，一段视频算一次。
 
@@ -64,6 +64,8 @@ class RefineParams(object):
         kalman_meas_std=0.02,
         gap_fill=False,
         max_gap=5,
+        max_gap_s=None,
+        gap_unit="seconds",
         confidence_min=0.5,
         filled_confidence=0.0,
         fixed_shape=False,
@@ -71,6 +73,7 @@ class RefineParams(object):
         lr_margin_m=0.02,
         lr_max_match_m=0.35,
         track_memory_frames=15,
+        track_memory_s=None,
         fps=30.0,
         mano_length_fn=None,
         n_betas=10,
@@ -86,8 +89,13 @@ class RefineParams(object):
             raise ValueError("卡尔曼的噪声标准差必须为正")
         if int(max_gap) < 0:
             raise ValueError("max_gap 不能为负")
+        if max_gap_s is not None and float(max_gap_s) < 0.0:
+            raise ValueError("max_gap_s 不能为负")
         if float(fps) <= 0.0:
             raise ValueError("fps 必须为正")
+        gap_unit = str(gap_unit or "seconds")
+        if gap_unit not in ("seconds", "frames"):
+            raise ValueError("gap_unit 只能是 seconds 或 frames")
         self.smooth = smooth
         self.min_cutoff = float(min_cutoff)
         self.beta = float(beta)
@@ -96,6 +104,9 @@ class RefineParams(object):
         self.kalman_meas_std = float(kalman_meas_std)
         self.gap_fill = bool(gap_fill)
         self.max_gap = int(max_gap)
+        # 帧数默认按 30 fps 换成秒，这样 60 fps 补的是同样长的时间，不是更短的 5 帧。
+        self.max_gap_s = (float(max_gap) / 30.0) if max_gap_s is None else float(max_gap_s)
+        self.gap_unit = gap_unit
         self.confidence_min = float(confidence_min)
         self.filled_confidence = float(filled_confidence)
         self.fixed_shape = bool(fixed_shape)
@@ -103,6 +114,7 @@ class RefineParams(object):
         self.lr_margin_m = float(lr_margin_m)
         self.lr_max_match_m = float(lr_max_match_m)
         self.track_memory_frames = int(track_memory_frames)
+        self.track_memory_s = (float(track_memory_frames) / 30.0) if track_memory_s is None else float(track_memory_s)
         self.fps = float(fps)
         self.mano_length_fn = mano_length_fn
         self.n_betas = int(n_betas)
@@ -122,6 +134,8 @@ class RefineParams(object):
             "kalman_meas_std": self.kalman_meas_std,
             "gap_fill": self.gap_fill,
             "max_gap": self.max_gap,
+            "max_gap_s": self.max_gap_s,
+            "gap_unit": self.gap_unit,
             "confidence_min": self.confidence_min,
             "filled_confidence": self.filled_confidence,
             "fixed_shape": self.fixed_shape,
@@ -129,6 +143,7 @@ class RefineParams(object):
             "lr_margin_m": self.lr_margin_m,
             "lr_max_match_m": self.lr_max_match_m,
             "track_memory_frames": self.track_memory_frames,
+            "track_memory_s": self.track_memory_s,
             "fps": self.fps,
             "mano_betas": self.mano_length_fn is not None,
         }
@@ -223,16 +238,20 @@ def _swap_frame(left, right, left_conf, right_conf, index):
     right_conf[index] = left_score
 
 
-def _track_wrist(track, frame_index, memory):
+def _track_wrist(track, frame_index, memory, now=None, memory_s=None):
     if track is None:
         return None
     wrist, seen = track
+    if memory_s is not None and now is not None:
+        if float(now) - float(seen) > float(memory_s):
+            return None
+        return wrist
     if frame_index - int(seen) > int(memory):
         return None
     return wrist
 
 
-def enforce_left_right(left, right, left_conf, right_conf, observed_left, observed_right, params):
+def enforce_left_right(left, right, left_conf, right_conf, observed_left, observed_right, params, timestamps=None):
     """按手腕轨迹把对调的左右标签换回来。返回交换标记。"""
     left = np.array(left, copy=True)
     right = np.array(right, copy=True)
@@ -240,6 +259,9 @@ def enforce_left_right(left, right, left_conf, right_conf, observed_left, observ
     right_conf = np.array(right_conf, copy=True)
     swapped_left = np.zeros(left.shape[0], dtype=bool)
     swapped_right = np.zeros(right.shape[0], dtype=bool)
+    use_time = params.gap_unit != "frames" and timestamps is not None
+    memory_s = params.track_memory_s if use_time else None
+    times = None if timestamps is None else np.asarray(timestamps, dtype=np.float64)
     tracks = {"left": None, "right": None}
     for index in range(left.shape[0]):
         have = {}
@@ -249,8 +271,9 @@ def enforce_left_right(left, right, left_conf, right_conf, observed_left, observ
             have["right"] = right[index, 0].copy()
         if not have:
             continue
+        now = None if times is None else float(times[index])
         current = {
-            side: _track_wrist(tracks[side], index, params.track_memory_frames)
+            side: _track_wrist(tracks[side], index, params.track_memory_frames, now=now, memory_s=memory_s)
             for side in ("left", "right")
         }
         if len(have) == 2 and current["left"] is not None and current["right"] is not None:
@@ -286,7 +309,8 @@ def enforce_left_right(left, right, left_conf, right_conf, observed_left, observ
                 have = {side: wrist}
         for side in ("left", "right"):
             if side in have:
-                tracks[side] = (have[side], index)
+                seen = float(times[index]) if use_time else index
+                tracks[side] = (have[side], seen)
     return left, right, left_conf, right_conf, swapped_left, swapped_right
 
 
@@ -422,12 +446,19 @@ def _smooth_joints(joints, observed, timestamps, params):
     return out
 
 
-def fill_gaps(joints, observed, max_gap):
-    """在观测之间线性补上不超过 ``max_gap`` 的缺测。开头和结尾不外推。"""
+def fill_gaps(joints, observed, max_gap, timestamps=None, max_gap_s=None):
+    """在观测之间线性补上短缺口。开头和结尾不外推。
+
+    只传 ``max_gap`` 时按帧数（旧行为）。同时给出 ``timestamps`` 和 ``max_gap_s`` 时，
+    按缺测时长（秒）判断，同一段物理时间在 30 fps 和 60 fps 下补得一样。
+    """
     out = np.array(joints, copy=True)
     filled = np.zeros(out.shape[0], dtype=bool)
-    if max_gap <= 0:
+    if max_gap_s is None and max_gap <= 0:
         return out, filled
+    if max_gap_s is not None and max_gap_s <= 0:
+        return out, filled
+    times = None if timestamps is None else np.asarray(timestamps, dtype=np.float64)
     count = out.shape[0]
     index = 0
     while index < count:
@@ -440,7 +471,14 @@ def fill_gaps(joints, observed, max_gap):
         end = index
         gap = end - start
         left = start - 1
-        if left < 0 or end >= count or gap > int(max_gap):
+        if left < 0 or end >= count:
+            continue
+        if times is not None and max_gap_s is not None:
+            span = float(times[end] - times[left])
+            missing = span - span / float(gap + 1)
+            if missing > float(max_gap_s) + 1e-9:
+                continue
+        elif gap > int(max_gap):
             continue
         for joint in range(JOINTS):
             before = out[left, joint]
@@ -556,7 +594,11 @@ def _temporal(joints, observed, timestamps, params):
     else:
         base = _smooth_joints(joints, observed, timestamps, params)
     if params.gap_fill:
-        filled_joints, filled = fill_gaps(base, observed, params.max_gap)
+        if params.gap_unit == "frames":
+            filled_joints, filled = fill_gaps(base, observed, params.max_gap)
+        else:
+            filled_joints, filled = fill_gaps(
+                base, observed, params.max_gap, timestamps=timestamps, max_gap_s=params.max_gap_s)
     else:
         filled_joints = base
         filled = np.zeros(joints.shape[0], dtype=bool)
@@ -613,6 +655,7 @@ def refine_hands(
     if params.lr_consistency:
         left, right, left_conf, right_conf, swapped_left, swapped_right = enforce_left_right(
             left, right, left_conf, right_conf, observed_left, observed_right, params,
+            timestamps=times,
         )
         observed_left = _frame_observed(left, left_conf, params)
         observed_right = _frame_observed(right, right_conf, params)

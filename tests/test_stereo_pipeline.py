@@ -262,3 +262,32 @@ class ValidateSessionTest(unittest.TestCase):
                 else:
                     self.assertFalse(r["ok"], fault)
                     self.assertTrue(any(needle in e for e in r["errors"]), (fault, r["errors"]))
+
+    def test_exposure_lock_is_checked(self):
+        from validate_session import validate
+        with tempfile.TemporaryDirectory() as tmp:
+            s = self._session(tmp)
+            missing = validate(s)
+            self.assertTrue(missing["ok"], missing["errors"])
+            self.assertTrue(any("曝光" in w for w in missing["warnings"]))
+            (s / "metadata.json").write_text(json.dumps({
+                "episode_id": "test/sess", "fps": 30, "exposure_locked": False, "auto_exposure": True,
+                "exposure_time_s": 0.010,
+            }), encoding="utf-8")
+            (s / "stereo").mkdir(exist_ok=True)
+            n = 10
+            (s / "stereo" / "exposure.csv").write_text(
+                "frame_index,left_exposure_s,right_exposure_s\n" + "".join(
+                    "%d,0.010,0.010\n" % i for i in range(n)), encoding="utf-8")
+            bad = validate(s)
+            self.assertFalse(bad["ok"])
+            self.assertTrue(any("曝光" in e for e in bad["errors"]), bad["errors"])
+            meta = json.loads((s / "metadata.json").read_text(encoding="utf-8"))
+            meta.update(exposure_locked=True, auto_exposure=False, exposure_time_s=0.002)
+            (s / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+            (s / "stereo" / "exposure.csv").write_text(
+                "frame_index,left_exposure_s,right_exposure_s\n" + "".join(
+                    "%d,0.002,0.002\n" % i for i in range(n)), encoding="utf-8")
+            good = validate(s)
+            self.assertTrue(good["ok"], good["errors"])
+            self.assertAlmostEqual(good["facts"]["exposure_ms"]["max"], 2.0, places=3)

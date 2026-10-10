@@ -12,8 +12,37 @@ flowchart LR
 ## 0. 装机（30 分钟）
 
 - [ ] 双目和 IMU 固定在**同一块硬板**上，拧紧，之后不再拆（拆了要重新标定）。
-- [ ] 向卖家确认基线（目标 8–10 cm）和镜头视场（约 100°）。
-- [ ] 主控能同时录两路 + IMU，帧率稳定 30 fps（或 60）。
+- [ ] 向卖家确认基线（目标 8–10 cm）、镜头视场（约 100°）、每目分辨率和帧率、能否锁定曝光、走 USB3 还是 USB2（问题清单见 `docs/headcam_stereo_bom.md`）。
+- [ ] 主控能同时录两路 + IMU。快动作用 **60 fps**；30 fps 可以先跑通，但快手会丢掉更多帧（见 `docs/hot3d_stereo/fast_motion.md`）。
+
+插上双目后，对**每个**视频节点做下面三项（模组如果只出一个拼接设备，就查这一个节点，并确认拼接后能拆成两目）：
+
+```bash
+# 这个节点支持的分辨率和帧率。期望每目 ≥1280×800 且能到 60 fps；拼接输出则是 2560×800 一类。
+v4l2-ctl -d /dev/video0 --list-formats-ext
+v4l2-ctl -d /dev/video2 --list-formats-ext   # 有第二个节点再查；没有就跳过
+
+# USB 速度。5000M（或 10000M）是 USB3；480M 是 USB2，原始 1280×800×2 @60 fps 不够。
+lsusb -t
+```
+
+- [ ] 每个要录的节点都列出了目标分辨率，并且该分辨率下帧率 ≥60（至少有一档 60）。
+- [ ] `lsusb -t` 里这颗设备的速度是 5000M 或更高，不是 480M。
+- [ ] 左右（或拼接画面的左右半幅）分辨率一致。
+
+关掉自动曝光并锁定在 ≤2 ms（最多 5 ms）。UVC 的 `exposure_absolute` 多数以 100 µs 为单位，所以 2 ms = 20；以 `--all` 里的说明为准，锁完用 `validate_session.py` 看写进文件的秒数，不要只看寄存器的整数。
+
+```bash
+v4l2-ctl -d /dev/video0 --all          # 先看 exposure_auto / exposure_absolute 的取值说明
+v4l2-ctl -d /dev/video0 -c exposure_auto=1          # 1 = 手动（V4L2_EXPOSURE_MANUAL）
+v4l2-ctl -d /dev/video0 -c exposure_absolute=20     # 常见单位 100 µs，20 = 2 ms
+v4l2-ctl -d /dev/video0 -C exposure_auto -C exposure_absolute
+# 有第二个节点就对 /dev/video2 再做一遍，两目锁成同一个值
+```
+
+- [ ] `exposure_auto` 是手动，改场景亮度时画面亮度会变（自动曝光没在偷偷拉长曝光）。
+- [ ] 录制程序把锁定值写进 `metadata.json` 的 `exposure_locked=true`、`auto_exposure=false`、`exposure_time_s`（秒），并把每一帧的曝光写进 `stereo/exposure.csv`（`frame_index,left_exposure_s,right_exposure_s`）。
+- [ ] `validate_session.py` 里曝光最大值 ≤5 ms；超过 2 ms 会警告，快手不要用。
 
 ## 1. 同步测试（左右是否同时曝光）
 

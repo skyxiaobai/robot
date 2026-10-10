@@ -31,7 +31,8 @@ class RGBDParams(object):
 
     def __init__(self, min_conf=2, hand_band_m=0.10, near_percentile=10.0, patch=1, joint_offset_m=0.01,
                  min_joints=8, depth_range_m=(0.25, 1.5), max_fit_residual_m=0.02, scale_range=(0.75, 1.33),
-                 palm_range_m=(0.05, 0.15), min_conf_frac=0.3, max_pose_jump_m=0.10, max_pose_jump_deg=20.0):
+                 palm_range_m=(0.05, 0.15), min_conf_frac=0.3, max_pose_jump_m=0.10, max_pose_jump_deg=20.0,
+                 pose_jump_unit="seconds", max_pose_speed_mps=3.0, max_pose_ang_speed_dps=600.0):
         self.min_conf = int(min_conf)            # Record3D：0 低 / 1 中 / 2 高
         self.hand_band_m = float(hand_band_m)    # 近层之后多厚还算手
         self.near_percentile = float(near_percentile)
@@ -45,6 +46,13 @@ class RGBDParams(object):
         self.min_conf_frac = float(min_conf_frac)
         self.max_pose_jump_m = float(max_pose_jump_m)
         self.max_pose_jump_deg = float(max_pose_jump_deg)
+        # 0.10 m / 帧、20° / 帧是按 30 fps 定的。默认改成 3 m/s 和 600 °/s，换帧率判决不变。
+        # pose_jump_unit="frames" 恢复按帧的旧门限。
+        self.pose_jump_unit = str(pose_jump_unit or "seconds")
+        if self.pose_jump_unit not in ("seconds", "frames"):
+            raise ValueError("pose_jump_unit 只能是 seconds 或 frames")
+        self.max_pose_speed_mps = float(max_pose_speed_mps)
+        self.max_pose_ang_speed_dps = float(max_pose_ang_speed_dps)
 
     def to_dict(self):
         return dict(self.__dict__)
@@ -133,14 +141,24 @@ def depth_hand(hand, depth, conf, image_size, K, p, mono_override=None):
     return out
 
 
-def pose_jumps(poses, max_m, max_deg):
-    """ARKit 跟踪状态 Record3D 不导出，用相邻帧位姿跳变代替：超过阈值的帧记 True。"""
+def pose_jumps(poses, max_m, max_deg, timestamps=None):
+    """ARKit 跟踪状态 Record3D 不导出，用相邻帧位姿跳变代替：超过阈值的帧记 True。
+
+    ``timestamps`` 省略时，``max_m`` 是米/帧、``max_deg`` 是度/帧（旧行为）。
+    给出时间戳（秒）时，这两个数是米/秒和度/秒，同一段头动在 30 fps 和 60 fps 下结论一样。
+    """
     bad = np.zeros(len(poses), dtype=bool)
+    times = None if timestamps is None else np.asarray(timestamps, dtype=float)
     for i in range(1, len(poses)):
         a, b = np.asarray(poses[i - 1]), np.asarray(poses[i])
-        dt = np.linalg.norm(b[:3, 3] - a[:3, 3])
+        dist = float(np.linalg.norm(b[:3, 3] - a[:3, 3]))
         c = np.clip((np.trace(a[:3, :3].T @ b[:3, :3]) - 1) / 2, -1, 1)
-        if dt > max_m or np.degrees(np.arccos(c)) > max_deg:
+        ang = float(np.degrees(np.arccos(c)))
+        if times is not None:
+            dt = max(float(times[i] - times[i - 1]), 1e-6)
+            dist /= dt
+            ang /= dt
+        if dist > max_m or ang > max_deg:
             bad[i] = True
     return bad
 
@@ -204,7 +222,10 @@ def make_session_builder(rgbd_params=None):
         fps = float(info["metadata"]["fps"])
         ts = ch._read_timestamps(info["timestamps_path"], n, fps) if info["timestamps_path"] else [i / fps for i in range(n)]
         poses = associate_camera_poses(ts, info["slam_path"])[0]
-        jumps = pose_jumps(poses, rp.max_pose_jump_m, rp.max_pose_jump_deg)
+        if rp.pose_jump_unit == "frames":
+            jumps = pose_jumps(poses, rp.max_pose_jump_m, rp.max_pose_jump_deg)
+        else:
+            jumps = pose_jumps(poses, rp.max_pose_speed_mps, rp.max_pose_ang_speed_dps, timestamps=ts)
         size = (int(info["calib"]["image_width"]), int(info["calib"]["image_height"]))
         K = info["calib"]["K_left"]
 
