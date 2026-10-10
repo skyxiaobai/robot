@@ -1,0 +1,17 @@
+﻿方案,项目,型号,数量,单价下限CNY,单价上限CNY,价格状态,来源,备注
+A,双目全局快门模组,DECXIN OV9281 USB3.0 双目 720P 黑白 硬件同帧同步(选75°无畸变版),1,298,298,已核实,https://pingjia.taobao.com/dnNIL3l3U2tmem8zaHd0eWs5ZGVOUT09.html ; https://item.jd.com/10165101802239.html,"UVC免驱,单路输出左右拼接帧;基线需向卖家确认(目标6-10cm)"
+A,RGB 彩色相机,USB UVC 720p/1080p 广角(OV5640/OV2710类),1,50,100,估算(沿用spec v10),淘宝搜索,软件时间戳与双目对齐(误差约10-30ms)
+A,主控SoC,Orange Pi 3B RK3566 2GB(创客价199/官方229),1,199,229,"已核实(官方公告价,2023)",http://www.orangepi.cn/html/news/news-details/news27.html,"USB3.0接双目,USB2.0接RGB;H.264硬编码;NPU 0.8TOPS"
+A,IMU,ICM-42688-P 6轴 模块(SPI/I2C),1,20,45,估算,淘宝搜索,≥200Hz;用GPIO中断+单调时钟打时间戳
+A,存储,microSD 128GB U3 A2,1,50,90,估算,京东搜索,双目720p+RGB H.264约1-2GB/10分钟
+A,电池,18650 x2 + 5V/3A 升压UPS板(带电量显示),1,60,110,估算,淘宝搜索,"整机约5-8W,2节3000mAh约2-3小时"
+A,头戴支架,运动头带+3D打印相机/IMU刚性支架,1,30,60,估算,淘宝/自印,相机与IMU必须刚性固定在同一块板上
+A,线材/标定,USB3短线、杜邦线、A3棋盘格/ChArUco标定板打印,1,20,50,估算,淘宝搜索,"标定板贴硬板,用Kalibr做相机-IMU标定"
+B,双目全局快门模组,DECXIN OV9281 USB3.0 双目 720P 黑白 硬件同步,1,298,298,已核实,https://pingjia.taobao.com/dnNIL3l3U2tmem8zaHd0eWs5ZGVOUT09.html,同A
+B,RGB 彩色相机,USB UVC 1080p 广角 M12 镜头,1,80,120,估算,淘宝搜索,"画质更好,便于语言标注/训练图像"
+B,主控SoC,Orange Pi 3B RK3566 4GB(创客价249/官方279),1,249,279,"已核实(官方公告价,2023)",http://www.orangepi.cn/html/news/news-details/news27.html,"内存更足,可边采边跑轻量检测"
+B,IMU,"BMI088 6轴(低噪声,VIO常用)",1,40,70,估算,淘宝搜索,振动鲁棒性优于消费级IMU
+B,存储,microSD 128GB U3 A2,1,50,90,估算,京东搜索,
+B,电池,18650 x2 + 5V/3A UPS板,1,60,110,估算,淘宝搜索,
+B,头戴支架,头带+3D打印支架+铝条加固(防基线形变),1,30,60,估算,淘宝/自印,
+B,线材/标定,短线+ChArUco铝基标定板(A4),1,30,50,估算,淘宝搜索,"铝基标定板更平,标定更准"

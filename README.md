@@ -2,6 +2,7 @@
 
 > 本仓库沉淀「**机器人模仿学习训练管线 + 头戴式数据采集设备**」的完整分析、规格与采购依据。
 > 训练用基准：LeRobot ACT（pusht）+ robomimic BC-RNN（MimicGen Square）。
+> 第一次看这个仓库，先读 [`docs/PROGRESS.md`](docs/PROGRESS.md)：一张图、做到哪一步、下一步是什么。
 
 ## 训练管线（现状）
 
@@ -86,10 +87,12 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 
 | 文档 | 内容 |
 |---|---|
-| `docs/ANALYSIS_PROCESS.md` | **全部分析过程记录**（推导、调研、评审修正，建议从这读起） |
+| `docs/PROGRESS.md` | **项目进度**（流水线图、时间线、已有实验数字、待办）。建议第一次从这里读 |
+| `docs/ANALYSIS_PROCESS.md` | **全部分析过程记录**（推导、调研、评审修正） |
 | `docs/headcam_data_spec.md`（v10） | 头戴设备规格：v9 的世界系手部标签与语言分段；v10 增加四级标注、产出率 QC、覆盖词表 |
 | `docs/gap_analysis.md` | 开放数据下载 → 统一格式 → QC → 覆盖 → 标注 → LeRobot → 缩放律：已有、缺失、优先级 |
-| `docs/headcam_bom.csv` | 采购清单（**当前为单目方案，双目版待更新**）：15 列证据链版（提供的数据/格式标准/数据契约/依据/采购原因），Excel 可直接打开 |
+| `docs/headcam_bom.csv` | 采购清单（**单目方案，留作对照**）：15 列证据链版（提供的数据/格式标准/数据契约/依据/采购原因），Excel 可直接打开 |
+| `docs/headcam_stereo_bom.md` / `docs/headcam_stereo_bom.csv` | **1000 元内双目采购清单**（推荐方案 A 约 727–982 元）。说明见 md，明细见 csv |
 | `docs/twostage_pretrain_finetune_plan.md` | 两段式训练方案评估（早期版本写的是合成预训练 → 头戴真实微调；当前路线改为 EgoDex 第一视角预训练 → 头戴微调，见上文速览） |
 | `scripts/build_headcam_bom.py` | BOM 生成脚本（可复现再生成 CSV） |
 | `scripts/scaling_law.py` | 对数直线和饱和幂律都拟合，R² 更高的作为默认。多种子画均值和标准差。无输入则跳过 |
@@ -122,7 +125,7 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 - **数据先筛再用**：自动 QC 能算出可用于训练的比例（产出率），覆盖报告能指出哪些环境、物体、任务或动作还没采到，`scripts/egodata/` 已实现。
 - **先用开放数据预训练**：EgoDex（第一视角、带世界系手部位姿）→ 统一格式 → QC → LeRobot v3.0 → 线性 BC / ACT，并用 `scripts/scaling_law.py` 画数据量和效果的缩放曲线（见 `notebooks/egodex_act_scaling_colab.ipynb`）。
 - **两段式训练**：先用 EgoDex 这类第一视角人手数据预训练，再用自有头戴数据微调。旧的 Square/pusht 是第三视角机械臂或 2D 仿真，只用来验证训练框架，不能直接迁移到头戴人手数据。
-- **成本（以 `docs/headcam_bom.csv` 为准）**：现有 BOM 仍是单目方案，A 档约 370–555 元，B 档（换 AR0234 全局快门）约 700–945 元。BOM 中的双目选项（OAK-D-LR，或双 AR0234 + 外部触发 + RK3566）标价 ≥1500–3000 元，超过 1000 元预算。**双目版 BOM 还没整理，待更新。**
+- **成本**：单目旧表仍在 `docs/headcam_bom.csv`（A 档约 370–555 元，B 档换 AR0234 全局快门约 700–945 元；表内双目可选项 OAK-D-LR 或双 AR0234 + 外部触发 + RK3566，标价 ≥1500–3000 元）。**1000 元内双目清单**在 `docs/headcam_stereo_bom.md`：推荐方案 A（OV9281 硬件同步双目 + Orange Pi 3B）合计约 727–982 元。方案 B 约 837–1077 元，只有按低价买才可能压在 1000 元内。
 - **数据量（规格附录的参考值，不是本仓库的实测结果）**：已有预训练底座时，每个任务约需 50–150 条用于微调；从零训练约需 500–1000 条。
 
 ## 目录说明
