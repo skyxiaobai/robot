@@ -122,6 +122,7 @@ flowchart LR
 | 2026-10-10 | [#21](https://github.com/skyxiaobai/robot/pull/21) | 记下 HOT3D Quest3 双目手腕评测（中位 1.22 cm，单目 2.71 cm），采购改为向卖家要 8–10 cm 基线和约 100° 镜头。 |
 | 2026-10-10 | [#22](https://github.com/skyxiaobai/robot/pull/22) | 一条命令跑通双目手部管线，并加上 HOT3D 适配器、假录制器、会话校验，以及整体架构和到货第一天文档。 |
 | 2026-10-10 | [#23](https://github.com/skyxiaobai/robot/pull/23) | 刚体对齐手腕、2 cm 速度门限和 RTS 平滑写入管线；立体门限丢掉的帧改记标注覆盖，不再用 20% 坏帧把整段拒绝掉。 |
+| 2026-10-10 | [#25](https://github.com/skyxiaobai/robot/pull/25) | 没测到的手腕不再当成「保持不动」来学：导出 `action_valid`，训练损失按手屏蔽，质检和导出摘要报告有效动作比例。 |
 
 ---
 
