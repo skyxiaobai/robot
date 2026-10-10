@@ -72,7 +72,7 @@
 - `annotation`：四级标注。EgoDex 只填环境和整段任务，子任务和分手指令是空数组
 - `coverage`：归一后的环境、原始物体名、粗类别、任务名、动作类型
 
-21 点对照写在 `scripts/egodata/egodex.py`：手腕用 `leftHand`/`rightHand`，食指尖用 `*IndexFingerTip`，拇指用 Knuckle → IntermediateBase → IntermediateTip → Tip。这是 ARKit 名字到 MediaPipe 的近似，不是逐点解剖注册。
+21 点对照写在 `scripts/egodata/egodex.py`：手腕用 `leftHand`/`rightHand`，食指尖用 `*IndexFingerTip`，拇指用 Knuckle → IntermediateBase → IntermediateTip → Tip。这是 ARKit 名字到 MediaPipe 的近似，不是逐点解剖注册。`Hand` 在前臂上，比 MediaPipe 腕点更靠肘；`ThumbKnuckle` 也不是拇指 CMC。比较误差时用 `EGODEX_NONCORRESPONDING_JOINTS`（0 和 1）把这两点排除。
 
 ## 4. LeRobot 导出和预训练（已接上）
 

@@ -5,7 +5,13 @@
 （https://github.com/rolpotamias/WiLoR）。两者都要 MANO 的右手模型。
 MANO 是马普所的非商业学术许可，权重不能放进这个仓库。拿文件的步骤见
 ``MANO_LICENSE``。没有 GPU、也没有这些权重时，用 MediaPipe Hands：CPU
-能跑，不需要 MANO，给出的三维不是公制相机系，要靠双目三角化把尺度补上。
+能跑，不需要 MANO。单目三维不是公制相机系，默认只把手腕放在 0.55 m 的
+深度先验上；公制尺度要靠双目三角化。
+
+mediapipe>=0.10.30 去掉了 ``mp.solutions``。后端改用 Tasks ``HandLandmarker``
+（下载 ``hand_landmarker.task``）。无头环境可能缺 libEGL / libGLESv2：原生库
+在导入时就会加载它们，CPU delegate 只决定推理不走 GPU。旧的
+``mp.solutions.hands`` 还在时作为退路。
 
 相机系关节再乘 SLAM 的 ``T_world_cam`` 才是规格 §7.1 的世界系标签。
 没有轨迹文件时位姿是单位阵，此时坐标仍在相机系，不能当成已经完成的世界系。
@@ -41,6 +47,12 @@ export WILOR_CONFIG=/绝对路径/model_config.yaml
 
 JOINTS = 21
 _SIGMA_PX = 2.0
+DEFAULT_WRIST_DEPTH_M = 0.55
+HAND_LANDMARKER_URL = (
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+    "hand_landmarker/float16/1/hand_landmarker.task"
+)
+_X_TIE_PX = 1e-3
 
 
 def hamer_missing():
@@ -631,6 +643,7 @@ def _confidence_vector(value):
 
 
 def _keep_hand(slot, joints, keypoints, confidence):
+    """同一侧只留更高分的一只。两只手被标成同一侧时，先用 ``_place_detections`` 按图像 x 拆开。"""
     score = float(np.nanmean(confidence))
     previous = slot.get("_score", -1.0)
     if score < previous:
@@ -639,6 +652,35 @@ def _keep_hand(slot, joints, keypoints, confidence):
     slot["keypoints_2d"] = None if keypoints is None else np.asarray(keypoints, dtype=np.float64)
     slot["confidence"] = [float(value) for value in np.asarray(confidence, dtype=float).reshape(-1)]
     slot["_score"] = score
+
+
+def _split_same_side(side, group):
+    """同一标签的两只手：图像 x 小的是左手，大的是右手。x 分不开时高分留在原标签。"""
+    ordered = sorted(group, key=lambda item: (item["wrist_x"], -item["score"]))
+    span = float(ordered[-1]["wrist_x"] - ordered[0]["wrist_x"])
+    if span <= _X_TIE_PX:
+        ranked = sorted(enumerate(group), key=lambda pair: (-pair[1]["score"], pair[0]))
+        other = "left" if side == "right" else "right"
+        assigned = []
+        for index, (_, item) in enumerate(ranked):
+            assigned.append((side if index == 0 else other, item))
+        return assigned
+    return [("left", ordered[0]), ("right", ordered[-1])]
+
+
+def _place_detections(prediction, detections):
+    groups = {}
+    for item in detections:
+        groups.setdefault(item["side"], []).append(item)
+    assigned = []
+    for side, group in groups.items():
+        if len(group) == 1:
+            assigned.append((side, group[0]))
+        else:
+            assigned.extend(_split_same_side(side, group))
+    for side, item in assigned:
+        _keep_hand(prediction[side], item["joints"], item["keypoints"], item["confidence"])
+    return prediction
 
 
 class HandPoseBackend(object):
@@ -657,13 +699,33 @@ class MediaPipeHandsBackend(HandPoseBackend):
     """CPU 回退。``world_landmarks`` 相对手心，不是公制相机系。
 
     MediaPipe 默认把输入当成自拍镜像。头戴相机朝前、画面不镜像，所以左右对调。
-    手腕放在主点射线上的名义深度，供没有右目时仍能输出 21 点；有右目时由三角化替换。
+    单目没有米制深度：手腕放在主点射线上的深度先验 ``wrist_depth_m``（默认 0.55 m），
+    只为没有右目时仍能输出 21 点。公制深度要靠双目三角化，不能把这个先验当成真值。
+    EgoDex 手腕深度中位大约 0.29 m，沿用 0.55 m 会把相机系手腕拉开大约一倍。
+
+    mediapipe>=0.10.30（Python 3.13 / 当前 Colab 只能装到这些版本）已经去掉
+    ``mp.solutions``。这里优先用 Tasks ``HandLandmarker``，并下载
+    ``hand_landmarker.task``。无头机器加载原生库时可能缺 ``libEGL.so.1``
+    或 ``libGLESv2.so.2``（CPU delegate 也避不开这次加载）：安装
+    libgl1、libegl1、libgles2、libglib2.0-0。推理默认
+    ``delegate='cpu'``（``BaseOptions.Delegate.CPU``）。Tasks 初始化失败
+    且旧的 ``mp.solutions.hands`` 还在时，退回旧接口。
     """
 
     name = "mediapipe"
 
-    def __init__(self):
-        self._hands = None
+    def __init__(self, wrist_depth_m=DEFAULT_WRIST_DEPTH_M, model_path=None, delegate=None):
+        if float(wrist_depth_m) <= 0.0:
+            raise ValueError("手腕深度先验必须为正，单位米")
+        if delegate is None:
+            delegate = os.environ.get("MEDIAPIPE_HAND_DELEGATE", "cpu")
+        delegate = str(delegate).lower()
+        if delegate not in ("cpu", "gpu"):
+            raise ValueError("MediaPipe delegate 只能是 cpu 或 gpu")
+        self.wrist_depth_m = float(wrist_depth_m)
+        self.model_path = model_path
+        self.delegate = delegate
+        self._runner = None
 
     def available(self):
         return mediapipe_available()
@@ -672,40 +734,228 @@ class MediaPipeHandsBackend(HandPoseBackend):
         if not self.available():
             raise RuntimeError("未安装 MediaPipe。CPU 回退可执行 pip install mediapipe，不需要 MANO 许可。")
         import mediapipe as mp
-        if self._hands is None:
-            self._hands = mp.solutions.hands.Hands(
-                static_image_mode=True,
-                max_num_hands=2,
-                model_complexity=1,
-                min_detection_confidence=0.5,
-            )
         image = np.asarray(image_rgb)
         if image.dtype != np.uint8:
             image = np.clip(image, 0, 255).astype(np.uint8)
         if image.ndim != 3 or image.shape[2] != 3:
             raise ValueError("MediaPipe 需要 RGB 图像")
-        results = self._hands.process(image)
-        prediction = empty_prediction()
-        if not results.multi_hand_landmarks:
-            return prediction
+        if self._runner is None:
+            self._runner = open_mediapipe_detector(
+                mp, model_path=self.model_path, delegate=self.delegate,
+            )
+        kind, detector = self._runner
         height, width = image.shape[:2]
-        world = results.multi_hand_world_landmarks or [None] * len(results.multi_hand_landmarks)
-        handed = results.multi_handedness or []
-        for landmarks, world_landmarks, hand_label in zip(results.multi_hand_landmarks, world, handed):
-            label = hand_label.classification[0].label
-            score = float(hand_label.classification[0].score)
-            side = "right" if label == "Left" else "left"
-            joints, keypoints = _lift_mediapipe(landmarks.landmark, world_landmarks, width, height, calib)
-            confidence = np.full(JOINTS, score)
-            for index, point in enumerate(landmarks.landmark):
-                visibility = getattr(point, "visibility", None)
-                if visibility is not None:
-                    confidence[index] = float(visibility) * score
-            _keep_hand(prediction[side], joints, keypoints, confidence)
-        return prediction
+        if kind == "tasks":
+            result = detector.detect(_tasks_image(mp, image))
+            return prediction_from_tasks_result(result, width, height, calib, self.wrist_depth_m)
+        results = detector.process(image)
+        return prediction_from_solutions_result(results, width, height, calib, self.wrist_depth_m)
 
 
-def _lift_mediapipe(landmarks, world_landmarks, width, height, calib, depth=0.55):
+def _tasks_image(mp, image):
+    return mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(image))
+
+
+def _has_tasks_api(mp):
+    tasks = getattr(mp, "tasks", None)
+    vision = getattr(tasks, "vision", None)
+    return (
+        getattr(vision, "HandLandmarker", None) is not None
+        and getattr(vision, "HandLandmarkerOptions", None) is not None
+        and getattr(tasks, "BaseOptions", None) is not None
+    )
+
+
+def _has_solutions_api(mp):
+    solutions = getattr(mp, "solutions", None)
+    hands = getattr(solutions, "hands", None)
+    return getattr(hands, "Hands", None) is not None
+
+
+def choose_mediapipe_api(has_tasks, has_solutions):
+    """有 Tasks 就用 Tasks。只有旧的 ``mp.solutions.hands`` 时才退回去。"""
+    if has_tasks:
+        return "tasks"
+    if has_solutions:
+        return "solutions"
+    raise RuntimeError(
+        mediapipe_tasks_failure_message(RuntimeError("没有 HandLandmarker，也没有 mp.solutions.hands"))
+    )
+
+
+def mediapipe_tasks_failure_message(exc):
+    return (
+        "MediaPipe Tasks HandLandmarker 初始化失败（%s）。"
+        "mediapipe>=0.10.30 已去掉 mp.solutions，需要 Tasks API。"
+        "无头环境经常缺少 libEGL.so.1 或 libGLESv2.so.2：安装 libgl1、libegl1、libgles2、libglib2.0-0。"
+        "CPU delegate（默认 delegate='cpu'，或环境变量 MEDIAPIPE_HAND_DELEGATE=cpu）"
+        "只让推理不走 GPU，不能代替这两份动态库。"
+        "模型可放到 MEDIAPIPE_HAND_LANDMARKER。若本机仍有 mp.solutions.hands，会自动退回旧接口。"
+        % exc
+    )
+
+
+def ensure_hand_landmarker_model(path=None):
+    """返回本地 ``hand_landmarker.task``。没有文件时从官方地址下载到缓存。"""
+    if path is not None:
+        candidate = Path(path)
+        if not candidate.is_file():
+            raise FileNotFoundError("找不到 HandLandmarker 模型：%s" % candidate)
+        return candidate
+    env = os.environ.get("MEDIAPIPE_HAND_LANDMARKER")
+    if env:
+        candidate = Path(env)
+        if candidate.is_file():
+            return candidate
+    cache_root = Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
+    cache = cache_root / "robot" / "hand_landmarker.task"
+    if cache.is_file() and cache.stat().st_size > 0:
+        return cache
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    import urllib.request
+    request = urllib.request.Request(HAND_LANDMARKER_URL, headers={"User-Agent": "robot-hand-pose"})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        payload = response.read()
+    temporary = cache.with_suffix(".task.partial")
+    temporary.write_bytes(payload)
+    temporary.replace(cache)
+    return cache
+
+
+def _create_tasks_landmarker(mp, model_path, delegate):
+    base = mp.tasks.BaseOptions
+    chosen = base.Delegate.CPU if delegate == "cpu" else base.Delegate.GPU
+    options = mp.tasks.vision.HandLandmarkerOptions(
+        base_options=base(model_asset_path=str(model_path), delegate=chosen),
+        running_mode=mp.tasks.vision.RunningMode.IMAGE,
+        num_hands=2,
+        min_hand_detection_confidence=0.5,
+        min_hand_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+    return mp.tasks.vision.HandLandmarker.create_from_options(options)
+
+
+def _create_solutions_hands(mp):
+    return mp.solutions.hands.Hands(
+        static_image_mode=True,
+        max_num_hands=2,
+        model_complexity=1,
+        min_detection_confidence=0.5,
+    )
+
+
+def open_mediapipe_detector(mp, model_path=None, delegate="cpu"):
+    """返回 ``(kind, detector)``。Tasks 创建失败且旧接口还在时退回 solutions。"""
+    delegate_name = str(delegate or "cpu").lower()
+    if delegate_name not in ("cpu", "gpu"):
+        raise ValueError("MediaPipe delegate 只能是 cpu 或 gpu")
+    has_tasks = _has_tasks_api(mp)
+    has_solutions = _has_solutions_api(mp)
+    kind = choose_mediapipe_api(has_tasks, has_solutions)
+    if kind == "tasks":
+        try:
+            resolved = ensure_hand_landmarker_model(model_path)
+            return "tasks", _create_tasks_landmarker(mp, resolved, delegate_name)
+        except Exception as exc:
+            if not has_solutions:
+                raise RuntimeError(mediapipe_tasks_failure_message(exc)) from exc
+    return "solutions", _create_solutions_hands(mp)
+
+
+def _flipped_side(label):
+    text = str(label or "").strip().lower()
+    if text.startswith("left"):
+        return "right"
+    if text.startswith("right"):
+        return "left"
+    return "left"
+
+
+def _landmark_confidence(landmarks, score, trust_visibility):
+    confidence = np.full(JOINTS, float(score))
+    if not trust_visibility:
+        return confidence
+    for index, point in enumerate(landmarks):
+        if index >= JOINTS:
+            break
+        visibility = getattr(point, "visibility", None)
+        if visibility is not None:
+            confidence[index] = float(visibility) * float(score)
+    return confidence
+
+
+def _world_points(world_landmarks):
+    if world_landmarks is None:
+        return None
+    points = world_landmarks.landmark if hasattr(world_landmarks, "landmark") else world_landmarks
+    if points is None:
+        return None
+    return np.array([[point.x, point.y, point.z] for point in points], dtype=np.float64)
+
+
+def prediction_from_mediapipe_hands(labeled_hands, width, height, calib, wrist_depth_m, trust_visibility=False):
+    detections = []
+    for label, score, landmarks, world in labeled_hands:
+        joints, keypoints = _lift_mediapipe(
+            landmarks, world, width, height, calib, depth=wrist_depth_m,
+        )
+        detections.append({
+            "side": _flipped_side(label),
+            "score": float(score),
+            "wrist_x": float(keypoints[0, 0]),
+            "joints": joints,
+            "keypoints": keypoints,
+            "confidence": _landmark_confidence(landmarks, score, trust_visibility),
+        })
+    return _place_detections(empty_prediction(), detections)
+
+
+def _iter_solutions_hands(results):
+    landmarks_list = getattr(results, "multi_hand_landmarks", None) or []
+    if not landmarks_list:
+        return
+    world_list = getattr(results, "multi_hand_world_landmarks", None) or [None] * len(landmarks_list)
+    handed = getattr(results, "multi_handedness", None) or []
+    for index, landmarks in enumerate(landmarks_list):
+        label, score = "Left", 0.0
+        if index < len(handed) and handed[index] is not None:
+            classification = handed[index].classification[0]
+            label = classification.label
+            score = float(classification.score)
+        world = world_list[index] if index < len(world_list) else None
+        yield label, score, landmarks.landmark, world
+
+
+def _iter_tasks_hands(result):
+    landmarks_list = getattr(result, "hand_landmarks", None) or []
+    if not landmarks_list:
+        return
+    world_list = getattr(result, "hand_world_landmarks", None) or [None] * len(landmarks_list)
+    handed_list = getattr(result, "handedness", None) or []
+    for index, landmarks in enumerate(landmarks_list):
+        label, score = "Left", 0.0
+        if index < len(handed_list) and handed_list[index]:
+            category = handed_list[index][0]
+            label = getattr(category, "category_name", None) or getattr(category, "display_name", "Left")
+            score = float(getattr(category, "score", 0.0))
+        world = world_list[index] if index < len(world_list) else None
+        yield label, score, landmarks, world
+
+
+def prediction_from_solutions_result(results, width, height, calib, wrist_depth_m):
+    return prediction_from_mediapipe_hands(
+        list(_iter_solutions_hands(results)), width, height, calib, wrist_depth_m, trust_visibility=True,
+    )
+
+
+def prediction_from_tasks_result(result, width, height, calib, wrist_depth_m):
+    return prediction_from_mediapipe_hands(
+        list(_iter_tasks_hands(result)), width, height, calib, wrist_depth_m, trust_visibility=False,
+    )
+
+
+def _lift_mediapipe(landmarks, world_landmarks, width, height, calib, depth=DEFAULT_WRIST_DEPTH_M):
     if calib is not None:
         intrinsic = np.asarray(calib["K_left"], dtype=np.float64)
         fx, fy, cx, cy = intrinsic[0, 0], intrinsic[1, 1], intrinsic[0, 2], intrinsic[1, 2]
@@ -719,9 +969,9 @@ def _lift_mediapipe(landmarks, world_landmarks, width, height, calib, depth=0.55
         (wrist_uv[1] - cy) * depth / fy,
         depth,
     ])
-    if world_landmarks is not None:
-        relative = np.array([[point.x, point.y, point.z] for point in world_landmarks.landmark], dtype=np.float64)
-        relative = relative - relative[0]
+    relative_world = _world_points(world_landmarks)
+    if relative_world is not None:
+        relative = relative_world - relative_world[0]
     else:
         relative = project_pinhole_inverse(keypoints, fx, fy, cx, cy, depth) - wrist
     return wrist + relative, keypoints
@@ -889,6 +1139,7 @@ def _fill_prediction(prediction, backend, out, batch, cam_full, focal, scores):
     joints_batch = out["pred_keypoints_3d"].detach().cpu().numpy()
     rights = batch["right"].detach().cpu().numpy()
     width_height = batch["img_size"].detach().cpu().numpy()
+    detections = []
     for index in range(joints_batch.shape[0]):
         image_shape = (int(width_height[index][1]), int(width_height[index][0]))
         joints_cam, keypoints = backend._camera_joints(
@@ -897,7 +1148,15 @@ def _fill_prediction(prediction, backend, out, batch, cam_full, focal, scores):
         )
         side = "right" if float(rights[index]) >= 0.5 else "left"
         score = 1.0 if scores is None or len(scores) <= index else float(scores[index])
-        _keep_hand(prediction[side], joints_cam, keypoints, np.full(JOINTS, score))
+        detections.append({
+            "side": side,
+            "score": score,
+            "wrist_x": float(keypoints[0, 0]),
+            "joints": joints_cam,
+            "keypoints": keypoints,
+            "confidence": np.full(JOINTS, score),
+        })
+    _place_detections(prediction, detections)
 
 
 class WiLoRBackend(_ManoFamilyBackend):
@@ -983,13 +1242,262 @@ class WiLoRBackend(_ManoFamilyBackend):
         self._detector.to(self._device)
 
 
-def get_backend(name):
+def get_backend(name, wrist_depth_m=DEFAULT_WRIST_DEPTH_M):
     key = (name or "mediapipe").lower()
     if key == "mediapipe":
-        return MediaPipeHandsBackend()
+        return MediaPipeHandsBackend(wrist_depth_m=wrist_depth_m)
     if key == "hamer":
         return HaMeRBackend()
     if key == "wilor":
         return WiLoRBackend()
     raise ValueError("未知手部后端 %s，可选 mediapipe、hamer、wilor" % name)
+
+
+def _coerce_joints(value):
+    if value is None:
+        return None
+    if isinstance(value, np.ndarray) and value.shape == (JOINTS, 3) and value.dtype != object:
+        return np.asarray(value, dtype=np.float64)
+    array = np.full((JOINTS, 3), np.nan, dtype=np.float64)
+    for index, point in enumerate(value):
+        if point is None:
+            continue
+        coords = list(point)
+        if len(coords) != 3 or any(coord is None for coord in coords):
+            continue
+        array[index] = coords
+    return array
+
+
+def _inside_image(uv, width, height):
+    return bool(np.isfinite(uv).all() and 0.0 <= float(uv[0]) < width and 0.0 <= float(uv[1]) < height)
+
+
+def _gt_hand_visible(joints, uv, width, height, confidence, min_visible_fraction):
+    if joints is None or not np.isfinite(joints[0]).all():
+        return False
+    if confidence is not None and float(confidence) < 0.5:
+        return False
+    if not _inside_image(uv[0], width, height):
+        return False
+    inside = 0
+    for index in range(JOINTS):
+        if _inside_image(uv[index], width, height):
+            inside += 1
+    return inside / float(JOINTS) >= float(min_visible_fraction)
+
+
+def _pred_arrays(pred, intrinsic):
+    if pred is None:
+        return None, None
+    joints = _coerce_joints(pred.get("joints_cam"))
+    keypoints = pred.get("keypoints_2d")
+    uv = None
+    if keypoints is not None:
+        array = np.asarray(keypoints, dtype=np.float64)
+        if array.shape == (JOINTS, 2):
+            uv = array
+    if uv is None and joints is not None:
+        uv = project_pinhole(joints, intrinsic)
+    if joints is None or uv is None or not np.isfinite(joints[0]).all() or not np.isfinite(uv[0]).all():
+        return None, None
+    return joints, uv
+
+
+def _best_assignment(cost):
+    from itertools import permutations
+    gt_count, pred_count = cost.shape
+    if gt_count == 0 or pred_count == 0:
+        return []
+    best = None
+    if gt_count <= pred_count:
+        for choice in permutations(range(pred_count), gt_count):
+            total = float(sum(cost[index, choice[index]] for index in range(gt_count)))
+            pairs = [(index, choice[index]) for index in range(gt_count)]
+            if best is None or total < best[0]:
+                best = (total, pairs)
+    else:
+        for choice in permutations(range(gt_count), pred_count):
+            total = float(sum(cost[choice[index], index] for index in range(pred_count)))
+            pairs = [(choice[index], index) for index in range(pred_count)]
+            if best is None or total < best[0]:
+                best = (total, pairs)
+    return best[1]
+
+
+def _mean_joint_distance(left, right, excluded):
+    errors = []
+    for index in range(JOINTS):
+        if index in excluded:
+            continue
+        if not np.isfinite(left[index]).all() or not np.isfinite(right[index]).all():
+            continue
+        errors.append(float(np.linalg.norm(left[index] - right[index])))
+    if not errors:
+        return float("nan")
+    return float(np.mean(errors))
+
+
+def _root_relative_error(gt, pred, excluded):
+    if not np.isfinite(gt[0]).all() or not np.isfinite(pred[0]).all():
+        return float("nan")
+    errors = []
+    for index in range(1, JOINTS):
+        if index in excluded:
+            continue
+        if not np.isfinite(gt[index]).all() or not np.isfinite(pred[index]).all():
+            continue
+        delta = (gt[index] - gt[0]) - (pred[index] - pred[0])
+        errors.append(float(np.linalg.norm(delta)))
+    if not errors:
+        return float("nan")
+    return float(np.mean(errors))
+
+
+def _finite_values(values):
+    return [float(value) for value in values if np.isfinite(value)]
+
+
+def _median(values):
+    finite = _finite_values(values)
+    if not finite:
+        return float("nan")
+    return float(np.median(finite))
+
+
+def _mean(values):
+    finite = _finite_values(values)
+    if not finite:
+        return float("nan")
+    return float(np.mean(finite))
+
+
+def evaluate_hand_frames(samples, exclude_joints=(), match_px=250.0, min_visible_fraction=0.75):
+    """把预测和相机系真值按手腕 2D 匹配，汇总检出、左右交换和误差。
+
+    ``samples`` 里每一帧要有 ``K``、``width``、``height``、``gt``、``pred``。
+    GT 可见：置信度未知或 ≥0.5，手腕在画面内，且至少 75% 的关节在画面内。
+    匹配距离默认 250 px。``exclude_joints`` 从 2D 和相对根关节 3D 的平均里拿掉
+    （EgoDex 的 Hand / ThumbKnuckle 用 ``(0, 1)``）。手腕位置误差仍用第 0 点。
+    尺度是每个 ``episode_id``、每只真值手一个最小二乘系数，作用在相机系手腕上。
+    """
+    excluded = tuple(int(index) for index in exclude_joints)
+    gt_visible = 0
+    matched = 0
+    swaps = 0
+    px_errors = []
+    relative_errors = []
+    wrist_errors = []
+    groups = {}
+    matched_wrists = []
+    for sample in samples:
+        intrinsic = np.asarray(sample["K"], dtype=np.float64)
+        width = int(sample["width"])
+        height = int(sample["height"])
+        episode_id = sample.get("episode_id", "")
+        confidence_map = sample.get("gt_confidence") or {}
+        gt_items = []
+        pred_items = []
+        for side in ("left", "right"):
+            gt = _coerce_joints(sample["gt"].get(side))
+            if gt is not None:
+                uv = project_pinhole(gt, intrinsic)
+                if _gt_hand_visible(gt, uv, width, height, confidence_map.get(side), min_visible_fraction):
+                    gt_items.append({"side": side, "joints": gt, "uv": uv})
+            joints, uv = _pred_arrays(sample["pred"].get(side), intrinsic)
+            if joints is not None:
+                pred_items.append({"side": side, "joints": joints, "uv": uv})
+        gt_visible += len(gt_items)
+        if not gt_items or not pred_items:
+            continue
+        cost = np.zeros((len(gt_items), len(pred_items)), dtype=np.float64)
+        for gt_index, gt_item in enumerate(gt_items):
+            for pred_index, pred_item in enumerate(pred_items):
+                cost[gt_index, pred_index] = float(np.linalg.norm(gt_item["uv"][0] - pred_item["uv"][0]))
+        for gt_index, pred_index in _best_assignment(cost):
+            if cost[gt_index, pred_index] > float(match_px):
+                continue
+            gt_item = gt_items[gt_index]
+            pred_item = pred_items[pred_index]
+            matched += 1
+            if gt_item["side"] != pred_item["side"]:
+                swaps += 1
+            px_errors.append(_mean_joint_distance(gt_item["uv"], pred_item["uv"], excluded))
+            relative_errors.append(_root_relative_error(gt_item["joints"], pred_item["joints"], excluded))
+            wrist_errors.append(float(np.linalg.norm(gt_item["joints"][0] - pred_item["joints"][0])))
+            key = (episode_id, gt_item["side"])
+            groups.setdefault(key, []).append((pred_item["joints"][0], gt_item["joints"][0]))
+            matched_wrists.append((key, pred_item["joints"][0], gt_item["joints"][0]))
+    scales = {}
+    for key, pairs in groups.items():
+        pred = np.stack([item[0] for item in pairs])
+        truth = np.stack([item[1] for item in pairs])
+        denom = float(np.sum(pred * pred))
+        numer = float(np.sum(pred * truth))
+        scales[key] = 1.0 if denom < 1e-12 else numer / denom
+    scaled_errors = []
+    for key, pred_wrist, gt_wrist in matched_wrists:
+        scaled_errors.append(float(np.linalg.norm(scales[key] * pred_wrist - gt_wrist)))
+    return {
+        "gt_visible": gt_visible,
+        "matched": matched,
+        "detection_rate": (float(matched) / float(gt_visible)) if gt_visible else float("nan"),
+        "swap_rate": (float(swaps) / float(matched)) if matched else float("nan"),
+        "px_error_median": _median(px_errors),
+        "px_error_mean": _mean(px_errors),
+        "root_relative_m_median": _median(relative_errors),
+        "wrist_error_m_median": _median(wrist_errors),
+        "wrist_error_scaled_m_median": _median(scaled_errors),
+        "scale_median": _median(list(scales.values())),
+        "exclude_joints": excluded,
+    }
+
+
+def _format_number(value, pattern):
+    if value is None or not np.isfinite(value):
+        return "n/a"
+    return pattern % float(value)
+
+
+def _format_percent(value):
+    if value is None or not np.isfinite(value):
+        return "n/a"
+    return "%.1f%%" % (100.0 * float(value))
+
+
+def format_hand_eval_report(report):
+    """把 ``evaluate_hand_frames`` 的结果写成可直接打印的中文摘要。"""
+    excluded = tuple(report.get("exclude_joints") or ())
+    if excluded:
+        header = "排除关节 %s" % ", ".join(str(index) for index in excluded)
+    else:
+        header = "全部关节"
+    return "\n".join([
+        header,
+        "检出率 %s（GT 可见 %d，匹配 %d）" % (
+            _format_percent(report["detection_rate"]),
+            int(report["gt_visible"]),
+            int(report["matched"]),
+        ),
+        "左右交换率 %s" % _format_percent(report["swap_rate"]),
+        "2D 误差 中位 %s px，均值 %s px" % (
+            _format_number(report["px_error_median"], "%.1f"),
+            _format_number(report["px_error_mean"], "%.1f"),
+        ),
+        "相对根关节 3D 误差 中位 %s cm" % _format_number(
+            None if not np.isfinite(report["root_relative_m_median"]) else report["root_relative_m_median"] * 100.0,
+            "%.2f",
+        ),
+        "手腕误差 无尺度对齐 中位 %s cm；每段每手尺度对齐 中位 %s cm（尺度中位 %s）" % (
+            _format_number(
+                None if not np.isfinite(report["wrist_error_m_median"]) else report["wrist_error_m_median"] * 100.0,
+                "%.2f",
+            ),
+            _format_number(
+                None if not np.isfinite(report["wrist_error_scaled_m_median"]) else report["wrist_error_scaled_m_median"] * 100.0,
+                "%.2f",
+            ),
+            _format_number(report["scale_median"], "%.2f"),
+        ),
+    ])
 

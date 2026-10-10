@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """合成双目：已知三维点投影到左右相机，检查三角化、尺度和世界系。"""
+import inspect
 import json
 import math
+import os
+import re
 import sys
 import tempfile
 import unittest
@@ -13,21 +16,35 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import convert_headcam  # noqa: E402
+import egodata.egodex as egodex  # noqa: E402
+from egodata.egodex import EGODEX_NONCORRESPONDING_JOINTS  # noqa: E402
 from egodata.qc import qc_episode  # noqa: E402
 from egodata.schema import validate_episode  # noqa: E402
+from headcam import hand_pose  # noqa: E402
 from headcam.hand_pose import (  # noqa: E402
+    DEFAULT_WRIST_DEPTH_M,
+    HAND_LANDMARKER_URL,
     HaMeRBackend,
     MediaPipeHandsBackend,
     WiLoRBackend,
     apply_scale,
     associate_camera_poses,
+    choose_mediapipe_api,
     correct_monocular_with_stereo,
+    ensure_hand_landmarker_model,
     estimate_scale,
+    evaluate_hand_frames,
+    format_hand_eval_report,
     get_backend,
     hamer_available,
     load_calibration,
     mean_wrist_error_m,
     mediapipe_available,
+    mediapipe_tasks_failure_message,
+    open_mediapipe_detector,
+    prediction_from_mediapipe_hands,
+    prediction_from_solutions_result,
+    prediction_from_tasks_result,
     project_pinhole,
     transform_points,
     world_to_camera,
@@ -412,6 +429,595 @@ class LibraryProjectorAgreesTest(unittest.TestCase):
         own = _project_independent(truth, calib["K_left"])
         library = project_pinhole(truth, calib["K_left"])
         self.assertTrue(np.allclose(own, library))
+
+
+def _mark(x, y, z=0.0, visibility=None):
+    point = type("Lm", (), {})()
+    point.x = float(x)
+    point.y = float(y)
+    point.z = float(z)
+    if visibility is not None:
+        point.visibility = float(visibility)
+    return point
+
+
+def _grid(x, y, z=0.0, visibility=None):
+    return [_mark(x, y, z, visibility) for _ in range(21)]
+
+
+def _blank_prediction_sides(prediction):
+    return prediction["left"]["joints_cam"] is None and prediction["right"]["joints_cam"] is None
+
+
+class _RecordingLandmarker(object):
+    options = None
+
+    @staticmethod
+    def create_from_options(options):
+        _RecordingLandmarker.options = options
+        return "tasks-detector"
+
+
+class _BoomLandmarker(object):
+    @staticmethod
+    def create_from_options(options):
+        raise OSError("libGLESv2.so.2: cannot open shared object file")
+
+
+class _Delegate(object):
+    CPU = "CPU"
+    GPU = "GPU"
+
+
+class _BaseOptions(object):
+    Delegate = _Delegate
+
+    def __init__(self, model_asset_path=None, delegate=None):
+        self.model_asset_path = model_asset_path
+        self.delegate = delegate
+
+
+class _RunningMode(object):
+    IMAGE = "IMAGE"
+
+
+class _HandOptions(object):
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
+class _HandsApi(object):
+    calls = []
+
+    def Hands(self, **kwargs):
+        _HandsApi.calls.append(kwargs)
+        return "solutions-detector"
+
+
+class _Solutions(object):
+    hands = _HandsApi()
+
+
+def _tasks_module(landmarker):
+    vision = type("Vision", (), {})()
+    vision.HandLandmarker = landmarker
+    vision.HandLandmarkerOptions = _HandOptions
+    vision.RunningMode = _RunningMode
+    tasks = type("Tasks", (), {})()
+    tasks.BaseOptions = _BaseOptions
+    tasks.vision = vision
+    return tasks
+
+
+def _fake_mp(landmarker=None, with_solutions=True):
+    module = type("Mp", (), {})()
+    if landmarker is not None:
+        module.tasks = _tasks_module(landmarker)
+    if with_solutions:
+        module.solutions = _Solutions()
+    return module
+
+
+class MediaPipeApiTest(unittest.TestCase):
+    def test_choose_prefers_tasks_and_falls_back_to_solutions(self):
+        self.assertEqual(choose_mediapipe_api(True, True), "tasks")
+        self.assertEqual(choose_mediapipe_api(True, False), "tasks")
+        self.assertEqual(choose_mediapipe_api(False, True), "solutions")
+        with self.assertRaises(RuntimeError):
+            choose_mediapipe_api(False, False)
+
+    def test_tasks_detector_uses_cpu_delegate_by_default(self):
+        _RecordingLandmarker.options = None
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "hand_landmarker.task"
+            model.write_bytes(b"model")
+            kind, detector = open_mediapipe_detector(_fake_mp(_RecordingLandmarker), model_path=model)
+        self.assertEqual((kind, detector), ("tasks", "tasks-detector"))
+        self.assertEqual(_RecordingLandmarker.options.base_options.delegate, "CPU")
+        self.assertEqual(_RecordingLandmarker.options.num_hands, 2)
+        self.assertEqual(_RecordingLandmarker.options.running_mode, "IMAGE")
+
+    def test_gpu_delegate_is_selectable(self):
+        _RecordingLandmarker.options = None
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "hand_landmarker.task"
+            model.write_bytes(b"model")
+            open_mediapipe_detector(
+                _fake_mp(_RecordingLandmarker, with_solutions=False),
+                model_path=model,
+                delegate="gpu",
+            )
+        self.assertEqual(_RecordingLandmarker.options.base_options.delegate, "GPU")
+
+    def test_tasks_init_failure_falls_back_to_solutions(self):
+        _HandsApi.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "hand_landmarker.task"
+            model.write_bytes(b"model")
+            kind, detector = open_mediapipe_detector(_fake_mp(_BoomLandmarker), model_path=model)
+        self.assertEqual((kind, detector), ("solutions", "solutions-detector"))
+        self.assertTrue(_HandsApi.calls)
+        self.assertTrue(_HandsApi.calls[-1]["static_image_mode"])
+        self.assertEqual(_HandsApi.calls[-1]["max_num_hands"], 2)
+
+    def test_tasks_init_failure_without_legacy_explains_headless_setup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model = Path(tmp) / "hand_landmarker.task"
+            model.write_bytes(b"model")
+            with self.assertRaises(RuntimeError) as caught:
+                open_mediapipe_detector(
+                    _fake_mp(_BoomLandmarker, with_solutions=False),
+                    model_path=model,
+                )
+        message = str(caught.exception)
+        self.assertIn("libGLESv2", message)
+        self.assertIn("CPU", message)
+        self.assertIn("libGLESv2", mediapipe_tasks_failure_message(OSError("libGLESv2.so.2")))
+
+    def test_solutions_used_when_tasks_is_missing(self):
+        _HandsApi.calls = []
+        kind, detector = open_mediapipe_detector(_fake_mp(landmarker=None), model_path=None)
+        self.assertEqual((kind, detector), ("solutions", "solutions-detector"))
+
+    def test_cached_task_model_is_not_redownloaded(self):
+        self.assertIn("hand_landmarker.task", HAND_LANDMARKER_URL)
+        self.assertTrue(HAND_LANDMARKER_URL.startswith("https://storage.googleapis.com/"))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "hand_landmarker.task"
+            path.write_bytes(b"abc")
+            self.assertEqual(ensure_hand_landmarker_model(path), path)
+            previous = os.environ.get("MEDIAPIPE_HAND_LANDMARKER")
+            os.environ["MEDIAPIPE_HAND_LANDMARKER"] = str(path)
+            try:
+                self.assertEqual(ensure_hand_landmarker_model(), path)
+            finally:
+                if previous is None:
+                    os.environ.pop("MEDIAPIPE_HAND_LANDMARKER", None)
+                else:
+                    os.environ["MEDIAPIPE_HAND_LANDMARKER"] = previous
+
+    def test_backend_depth_prior_is_configurable(self):
+        previous = os.environ.pop("MEDIAPIPE_HAND_DELEGATE", None)
+        try:
+            self.assertAlmostEqual(DEFAULT_WRIST_DEPTH_M, 0.55)
+            backend = MediaPipeHandsBackend(wrist_depth_m=0.29)
+            self.assertAlmostEqual(backend.wrist_depth_m, 0.29)
+            self.assertEqual(backend.delegate, "cpu")
+            with self.assertRaises(ValueError):
+                MediaPipeHandsBackend(wrist_depth_m=0.0)
+            with self.assertRaises(ValueError):
+                MediaPipeHandsBackend(delegate="tpu")
+            os.environ["MEDIAPIPE_HAND_DELEGATE"] = "gpu"
+            self.assertEqual(MediaPipeHandsBackend().delegate, "gpu")
+            routed = get_backend("mediapipe", wrist_depth_m=0.4)
+            self.assertAlmostEqual(routed.wrist_depth_m, 0.4)
+        finally:
+            if previous is None:
+                os.environ.pop("MEDIAPIPE_HAND_DELEGATE", None)
+            else:
+                os.environ["MEDIAPIPE_HAND_DELEGATE"] = previous
+
+    def test_docs_cover_gles_cpu_delegate_and_stereo_metric_depth(self):
+        text = (hand_pose.__doc__ or "") + "\n" + (MediaPipeHandsBackend.__doc__ or "")
+        self.assertIn("libGLESv2", text)
+        self.assertIn("CPU", text)
+        self.assertIn("双目", text)
+        self.assertIn("0.55", text)
+
+    def test_duplicate_handedness_keeps_both_hands_by_image_x(self):
+        # 两只手都被标成 Left。自拍翻转后都会进 right，旧逻辑只留高分的那只。
+        prediction = prediction_from_mediapipe_hands(
+            [
+                ("Left", 0.95, _grid(0.2, 0.5), None),
+                ("Left", 0.55, _grid(0.8, 0.5), None),
+            ],
+            width=100,
+            height=80,
+            calib=None,
+            wrist_depth_m=0.55,
+        )
+        self.assertIsNotNone(prediction["left"]["joints_cam"])
+        self.assertIsNotNone(prediction["right"]["joints_cam"])
+        self.assertLess(
+            prediction["left"]["keypoints_2d"][0, 0],
+            prediction["right"]["keypoints_2d"][0, 0],
+        )
+        self.assertAlmostEqual(prediction["left"]["keypoints_2d"][0, 0], 20.0)
+        self.assertAlmostEqual(prediction["right"]["keypoints_2d"][0, 0], 80.0)
+
+    def test_tied_image_x_gives_the_labeled_side_to_the_higher_score(self):
+        prediction = prediction_from_mediapipe_hands(
+            [
+                ("Left", 0.9, _grid(0.5, 0.25), None),
+                ("Left", 0.4, _grid(0.5, 0.75), None),
+            ],
+            width=100,
+            height=80,
+            calib=None,
+            wrist_depth_m=0.55,
+        )
+        # Left 翻转后的标签是 right。x 相同，高分留在 right，低分改到另一侧。
+        self.assertAlmostEqual(prediction["right"]["keypoints_2d"][0, 1], 20.0)
+        self.assertAlmostEqual(prediction["left"]["keypoints_2d"][0, 1], 60.0)
+
+    def test_distinct_labels_stay_on_their_flipped_sides(self):
+        prediction = prediction_from_mediapipe_hands(
+            [
+                ("Left", 0.9, _grid(0.2, 0.5), None),
+                ("Right", 0.9, _grid(0.8, 0.5), None),
+            ],
+            width=100,
+            height=80,
+            calib=None,
+            wrist_depth_m=0.4,
+        )
+        self.assertAlmostEqual(prediction["right"]["keypoints_2d"][0, 0], 20.0)
+        self.assertAlmostEqual(prediction["left"]["keypoints_2d"][0, 0], 80.0)
+
+    def test_depth_prior_and_intrinsics_set_the_monocular_wrist(self):
+        prediction = prediction_from_mediapipe_hands(
+            [("Right", 0.8, _grid(0.75, 0.5), None)],
+            width=100,
+            height=80,
+            calib={"K_left": _K(fx=50.0, cx=50.0, cy=40.0)},
+            wrist_depth_m=0.29,
+        )
+        wrist = prediction["left"]["joints_cam"][0]
+        self.assertAlmostEqual(wrist[2], 0.29, places=6)
+        self.assertAlmostEqual(wrist[0], (75.0 - 50.0) * 0.29 / 50.0, places=6)
+        self.assertIsNone(prediction["right"]["joints_cam"])
+
+    def test_world_landmarks_are_added_relative_to_the_wrist(self):
+        world = _grid(0.0, 0.0, 0.0)
+        world[8] = _mark(0.02, -0.01, 0.03)
+        prediction = prediction_from_mediapipe_hands(
+            [("Right", 0.8, _grid(0.5, 0.5), world)],
+            width=64,
+            height=64,
+            calib=None,
+            wrist_depth_m=0.4,
+        )
+        joints = prediction["left"]["joints_cam"]
+        self.assertAlmostEqual(joints[0, 2], 0.4, places=6)
+        self.assertAlmostEqual(joints[8, 0] - joints[0, 0], 0.02, places=6)
+        self.assertAlmostEqual(joints[8, 1] - joints[0, 1], -0.01, places=6)
+
+    def test_tasks_result_ignores_zero_visibility(self):
+        landmarks = _grid(0.5, 0.5, visibility=0.0)
+        result = type("Result", (), {})()
+        result.hand_landmarks = [landmarks]
+        result.hand_world_landmarks = [None]
+        category = type("Cat", (), {})()
+        category.category_name = "Right"
+        category.score = 0.8
+        result.handedness = [[category]]
+        prediction = prediction_from_tasks_result(result, 32, 32, None, 0.55)
+        self.assertIsNotNone(prediction["left"]["joints_cam"])
+        self.assertAlmostEqual(float(np.mean(prediction["left"]["confidence"])), 0.8, places=6)
+
+    def test_solutions_result_scales_confidence_by_visibility(self):
+        landmarks = type("Container", (), {})()
+        landmarks.landmark = _grid(0.5, 0.5, visibility=0.5)
+        handed = type("Handed", (), {})()
+        handed.classification = [type("Cls", (), {"label": "Left", "score": 0.8})()]
+        results = type("Results", (), {})()
+        results.multi_hand_landmarks = [landmarks]
+        results.multi_hand_world_landmarks = [None]
+        results.multi_handedness = [handed]
+        prediction = prediction_from_solutions_result(results, 32, 32, None, 0.55)
+        self.assertIsNotNone(prediction["right"]["joints_cam"])
+        self.assertAlmostEqual(float(np.mean(prediction["right"]["confidence"])), 0.4, places=6)
+
+    def test_empty_detector_results_have_no_hands(self):
+        solutions = type("Results", (), {})()
+        solutions.multi_hand_landmarks = None
+        solutions.multi_hand_world_landmarks = None
+        solutions.multi_handedness = None
+        self.assertTrue(_blank_prediction_sides(prediction_from_solutions_result(solutions, 8, 8, None, 0.55)))
+        tasks = type("Result", (), {})()
+        tasks.hand_landmarks = []
+        tasks.hand_world_landmarks = []
+        tasks.handedness = []
+        self.assertTrue(_blank_prediction_sides(prediction_from_tasks_result(tasks, 8, 8, None, 0.55)))
+
+
+def _spread_hand(wrist):
+    wrist = np.asarray(wrist, dtype=np.float64)
+    joints = np.zeros((21, 3), dtype=np.float64)
+    for index in range(21):
+        joints[index] = wrist + np.array([0.004 * (index % 5 - 2), 0.003 * (index // 5), 0.0])
+    joints[0] = wrist
+    return joints
+
+
+def _pred(joints, keypoints):
+    return {"joints_cam": np.asarray(joints, dtype=np.float64), "keypoints_2d": np.asarray(keypoints, dtype=np.float64)}
+
+
+def _eval_sample(gt, pred, K, width, height, confidence=None, episode_id="ep"):
+    if confidence is None:
+        confidence = {"left": 0.99, "right": 0.99}
+    return {
+        "episode_id": episode_id,
+        "width": width,
+        "height": height,
+        "K": K,
+        "gt": gt,
+        "gt_confidence": confidence,
+        "pred": pred,
+    }
+
+
+class EgoDexHandEvalTest(unittest.TestCase):
+    def test_hand_and_thumb_knuckle_are_not_mediapipe_joints(self):
+        self.assertEqual(EGODEX_NONCORRESPONDING_JOINTS, (0, 1))
+        source = inspect.getsource(egodex)
+        self.assertIn("前臂", source)
+        self.assertIn("ThumbKnuckle", source)
+
+    def test_close_wrist_is_detected_and_same_side_is_not_a_swap(self):
+        intrinsic = _K(fx=50.0, cx=40.0, cy=30.0)
+        gt = _spread_hand([0.0, 0.0, 1.0])
+        keypoints = _project_independent(gt, intrinsic)
+        report = evaluate_hand_frames([
+            _eval_sample(
+                {"left": gt, "right": None},
+                {"left": _pred(gt, keypoints), "right": None},
+                intrinsic, 80, 60,
+            ),
+        ])
+        self.assertEqual(report["gt_visible"], 1)
+        self.assertEqual(report["matched"], 1)
+        self.assertAlmostEqual(report["detection_rate"], 1.0)
+        self.assertAlmostEqual(report["swap_rate"], 0.0)
+        self.assertAlmostEqual(report["px_error_median"], 0.0, places=4)
+        self.assertAlmostEqual(report["root_relative_m_median"], 0.0, places=6)
+
+    def test_pixel_error_follows_episode_intrinsics(self):
+        intrinsic = _K(fx=80.0, cx=40.0, cy=30.0)
+        gt = _spread_hand([0.02, 0.0, 1.0])
+        keypoints = _project_independent(gt, intrinsic)
+        keypoints = keypoints + np.array([3.0, -4.0])
+        report = evaluate_hand_frames([
+            _eval_sample(
+                {"left": gt, "right": None},
+                {"left": _pred(gt, keypoints), "right": None},
+                intrinsic, 200, 120,
+            ),
+        ])
+        self.assertAlmostEqual(report["px_error_median"], 5.0, places=4)
+        wider = _K(fx=1920.0, cx=40.0, cy=30.0)
+        mismatched = evaluate_hand_frames([
+            _eval_sample(
+                {"left": gt, "right": None},
+                {"left": _pred(gt, keypoints), "right": None},
+                wider, 200, 120,
+            ),
+        ])
+        self.assertGreater(mismatched["px_error_median"], 20.0)
+
+    def test_wrist_beyond_match_distance_is_a_miss(self):
+        intrinsic = _K(fx=100.0, cx=50.0, cy=50.0)
+        gt = _spread_hand([0.0, 0.0, 1.0])
+        keypoints = _project_independent(gt, intrinsic)
+        keypoints = keypoints + np.array([300.0, 0.0])
+        report = evaluate_hand_frames([
+            _eval_sample(
+                {"left": gt, "right": None},
+                {"left": _pred(gt, keypoints), "right": None},
+                intrinsic, 500, 200,
+            ),
+        ], match_px=250.0)
+        self.assertEqual(report["gt_visible"], 1)
+        self.assertEqual(report["matched"], 0)
+        self.assertAlmostEqual(report["detection_rate"], 0.0)
+        self.assertTrue(math.isnan(report["swap_rate"]))
+
+    def test_opposite_side_match_counts_as_a_swap(self):
+        intrinsic = _K(fx=100.0, cx=80.0, cy=40.0)
+        left = _spread_hand([-0.1, 0.0, 1.0])
+        right = _spread_hand([0.15, 0.0, 1.0])
+        crossed = _eval_sample(
+            {"left": left, "right": right},
+            {
+                "left": _pred(left, _project_independent(right, intrinsic)),
+                "right": _pred(right, _project_independent(left, intrinsic)),
+            },
+            intrinsic, 200, 100,
+        )
+        report = evaluate_hand_frames([crossed])
+        self.assertEqual(report["matched"], 2)
+        self.assertAlmostEqual(report["swap_rate"], 1.0)
+        correct = _eval_sample(
+            {"left": left, "right": None},
+            {"left": _pred(left, _project_independent(left, intrinsic)), "right": None},
+            intrinsic, 200, 100,
+        )
+        swapped = _eval_sample(
+            {"left": left, "right": None},
+            {"left": None, "right": _pred(left, _project_independent(left, intrinsic))},
+            intrinsic, 200, 100,
+        )
+        mixed = evaluate_hand_frames([correct, swapped])
+        self.assertEqual(mixed["matched"], 2)
+        self.assertAlmostEqual(mixed["swap_rate"], 0.5)
+
+    def test_low_confidence_and_partial_visibility_are_not_gt_visible(self):
+        intrinsic = _K(fx=50.0, cx=50.0, cy=40.0)
+        visible = _spread_hand([0.0, 0.0, 1.0])
+        mostly_out = visible.copy()
+        mostly_out[5:] = [2.0, 0.0, 1.0]
+        wrist_out = visible.copy()
+        wrist_out[0] = [2.0, 0.0, 1.0]
+        keypoints = np.zeros((21, 2))
+        low = evaluate_hand_frames([
+            _eval_sample(
+                {"left": visible, "right": None},
+                {"left": _pred(visible, keypoints), "right": None},
+                intrinsic, 100, 80,
+                confidence={"left": 0.4, "right": 0.99},
+            ),
+        ])
+        self.assertEqual(low["gt_visible"], 0)
+        unknown = evaluate_hand_frames([
+            _eval_sample(
+                {"left": visible, "right": None},
+                {"left": _pred(visible, _project_independent(visible, intrinsic)), "right": None},
+                intrinsic, 100, 80,
+                confidence={"left": None, "right": None},
+            ),
+        ])
+        self.assertEqual(unknown["gt_visible"], 1)
+        self.assertAlmostEqual(unknown["detection_rate"], 1.0)
+        hidden = evaluate_hand_frames([
+            _eval_sample({"left": mostly_out, "right": wrist_out}, {"left": None, "right": None}, intrinsic, 100, 80),
+        ])
+        self.assertEqual(hidden["gt_visible"], 0)
+
+    def test_exclude_hand_and_thumb_knuckle_from_joint_errors(self):
+        intrinsic = _K(fx=100.0, cx=50.0, cy=40.0)
+        gt = _spread_hand([0.0, 0.0, 1.0])
+        pred_joints = gt.copy()
+        pred_joints[1, 0] += 0.05
+        keypoints = _project_independent(gt, intrinsic)
+        keypoints[0] = [50.0, 80.0]
+        keypoints[1] = [90.0, 40.0]
+        sample = _eval_sample(
+            {"left": gt, "right": None},
+            {"left": _pred(pred_joints, keypoints), "right": None},
+            intrinsic, 100, 80,
+        )
+        full = evaluate_hand_frames([sample])
+        dropped = evaluate_hand_frames([sample], exclude_joints=EGODEX_NONCORRESPONDING_JOINTS)
+        self.assertAlmostEqual(full["root_relative_m_median"], 0.05 / 20.0, places=6)
+        self.assertAlmostEqual(dropped["root_relative_m_median"], 0.0, places=6)
+        self.assertGreater(full["px_error_median"], 1.0)
+        self.assertAlmostEqual(dropped["px_error_median"], 0.0, places=4)
+        self.assertEqual(dropped["exclude_joints"], (0, 1))
+
+    def test_one_scale_per_episode_hand_aligns_the_wrist(self):
+        intrinsic = _K(fx=100.0, cx=50.0, cy=40.0)
+        samples = []
+        for pred_z, gt_z in ((0.40, 0.20), (0.80, 0.20)):
+            gt = _spread_hand([0.0, 0.0, gt_z])
+            pred_joints = _spread_hand([0.0, 0.0, pred_z])
+            samples.append(_eval_sample(
+                {"left": gt, "right": None},
+                {"left": _pred(pred_joints, _project_independent(gt, intrinsic)), "right": None},
+                intrinsic, 100, 80,
+                episode_id="clip",
+            ))
+        report = evaluate_hand_frames(samples)
+        self.assertAlmostEqual(report["scale_median"], 0.3, places=5)
+        self.assertAlmostEqual(report["wrist_error_m_median"], 0.4, places=5)
+        self.assertAlmostEqual(report["wrist_error_scaled_m_median"], 0.06, places=5)
+        pure = _spread_hand([0.02, -0.01, 0.29])
+        mono = pure * (0.55 / 0.29)
+        aligned = evaluate_hand_frames([
+            _eval_sample(
+                {"left": pure, "right": None},
+                {"left": _pred(mono, _project_independent(pure, intrinsic)), "right": None},
+                intrinsic, 200, 120,
+            ),
+        ])
+        self.assertAlmostEqual(aligned["scale_median"], 0.29 / 0.55, places=4)
+        self.assertAlmostEqual(aligned["wrist_error_scaled_m_median"], 0.0, places=4)
+        self.assertGreater(aligned["wrist_error_m_median"], 0.2)
+        shifted = pure.copy()
+        shifted[:, 2] += 0.2
+        relative = evaluate_hand_frames([
+            _eval_sample(
+                {"left": pure, "right": None},
+                {"left": _pred(shifted, _project_independent(pure, intrinsic)), "right": None},
+                intrinsic, 200, 120,
+            ),
+        ])
+        self.assertAlmostEqual(relative["root_relative_m_median"], 0.0, places=5)
+        self.assertAlmostEqual(relative["wrist_error_m_median"], 0.2, places=5)
+
+    def test_format_names_detection_swap_pixels_and_scale(self):
+        text = format_hand_eval_report({
+            "gt_visible": 4,
+            "matched": 2,
+            "detection_rate": 0.5,
+            "swap_rate": 0.066,
+            "px_error_median": 40.0,
+            "px_error_mean": 47.1,
+            "root_relative_m_median": 0.0844,
+            "wrist_error_m_median": 0.281,
+            "wrist_error_scaled_m_median": 0.0396,
+            "scale_median": 0.53,
+            "exclude_joints": (),
+        })
+        self.assertIn("检出率", text)
+        self.assertIn("50.0%", text)
+        self.assertIn("左右交换", text)
+        self.assertIn("6.6%", text)
+        self.assertIn("40.0", text)
+        self.assertIn("8.44", text)
+        self.assertIn("28.10", text)
+        self.assertIn("3.96", text)
+        self.assertIn("0.53", text)
+        excluded = format_hand_eval_report({
+            "gt_visible": 0,
+            "matched": 0,
+            "detection_rate": float("nan"),
+            "swap_rate": float("nan"),
+            "px_error_median": float("nan"),
+            "px_error_mean": float("nan"),
+            "root_relative_m_median": float("nan"),
+            "wrist_error_m_median": float("nan"),
+            "wrist_error_scaled_m_median": float("nan"),
+            "scale_median": float("nan"),
+            "exclude_joints": (0, 1),
+        })
+        self.assertIn("0", excluded)
+        self.assertIn("1", excluded)
+        self.assertIn("n/a", excluded)
+
+
+class ColabEgoDexEvalNotebookTest(unittest.TestCase):
+    def test_last_cell_uses_intrinsics_all_frames_and_joint_metrics(self):
+        notebook = json.loads((ROOT / "notebooks" / "headcam_hand_pose_colab.ipynb").read_text(encoding="utf-8"))
+        code = [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
+        source = "".join(code[-1]["source"])
+        markdown = [cell for cell in notebook["cells"] if cell["cell_type"] == "markdown"]
+        prose = "".join(markdown[-1]["source"])
+        self.assertIn("camera_intrinsic", source)
+        self.assertIn("K_left", source)
+        self.assertIn("evaluate_hand_frames", source)
+        self.assertIn("format_hand_eval_report", source)
+        self.assertIn("EGODEX_NONCORRESPONDING_JOINTS", source)
+        self.assertIn("exclude_joints", source)
+        self.assertIn("num_frames", source)
+        self.assertRegex(source, r"predict\([\s\S]*calib\s*=")
+        self.assertIsNone(re.search(r"MAX_FRAMES\s*=\s*20", source))
+        self.assertNotIn("range(20", source)
+        self.assertGreaterEqual(source.count("evaluate_hand_frames"), 2)
+        self.assertIn("736", prose)
+        self.assertIn("双目", prose)
+        self.assertIn("Hand", prose)
+        self.assertIn("libGLESv2", prose)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,10 @@
 没有 ``confidences`` 组时，手腕置信度记为未知（JSON 里是 null），不当成 0。
 未知表示「源数据没写这个通道」：关节齐全就算这只手可用，QC 只靠投影判断出画。
 读到了低于 0.5 的数字才算低置信。
+
+21 点按 MediaPipe 的顺序排列，但 EgoDex 的 ``Hand`` 在前臂上，比 MediaPipe
+腕点更靠近肘；``ThumbKnuckle`` 也不是拇指 CMC。这两点见
+``EGODEX_NONCORRESPONDING_JOINTS``，比较误差时可以排除。
 """
 from pathlib import Path
 
@@ -32,6 +36,10 @@ from egodata.schema import (
 EGODEX_FPS = 30.0
 
 # MediaPipe 21 点 ← EgoDex / ARKit 关节名（不含左右前缀）。
+# 下标 0 的 Hand、下标 1 的 ThumbKnuckle 和 MediaPipe 不是同一个解剖点：
+# EgoDex 的 Hand 在前臂上，比 MediaPipe 腕横纹更靠近肘；
+# ThumbKnuckle 是拇指掌骨根，不是 MediaPipe 的拇指 CMC。
+# 和 MediaPipe 比误差时把这两点排除，见 EGODEX_NONCORRESPONDING_JOINTS。
 _JOINT_SUFFIXES = (
     "Hand",
     "ThumbKnuckle",
@@ -55,6 +63,9 @@ _JOINT_SUFFIXES = (
     "LittleFingerIntermediateTip",
     "LittleFingerTip",
 )
+
+# 上面元组里和 MediaPipe 对不上的下标：0 = Hand（前臂），1 = ThumbKnuckle。
+EGODEX_NONCORRESPONDING_JOINTS = (0, 1)
 
 
 def _text(value):

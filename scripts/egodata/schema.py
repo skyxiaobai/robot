@@ -7,7 +7,9 @@ import numpy as np
 
 SCHEMA_VERSION = "1.0"
 
-# 与 MediaPipe Hands 的 21 点顺序一致。EgoDex 的关节名更细，适配器只取能对上的点。
+# 与 MediaPipe Hands 的 21 点顺序一致。EgoDex 的 Hand / ThumbKnuckle
+# 只是按这个顺序摆进来，解剖上并不等于腕点和拇指 CMC，见
+# egodex.EGODEX_NONCORRESPONDING_JOINTS。
 MEDIAPIPE_21 = (
     "wrist",
     "thumb_cmc",
