@@ -1,0 +1,654 @@
+{
+ "params": {
+  "max_reproj_px": 10.0,
+  "joint_reproj_px": 15.0,
+  "min_joints": 15,
+  "depth_range_m": [
+   0.1,
+   1.2
+  ],
+  "palm_range_m": [
+   0.05,
+   0.15
+  ],
+  "smooth": "one_euro",
+  "min_cutoff": 3.0,
+  "beta": 50.0,
+  "gap_fill": true,
+  "max_gap": 5,
+  "fixed_shape": false,
+  "consistency": true
+ },
+ "backend": "wilor",
+ "yield": 0.25,
+ "raw_frames": 600,
+ "usable_frames": 150,
+ "episodes": 4,
+ "accepted_episodes": 1,
+ "bad_frames_by_reason": {
+  "hands_out_of_frame": 57,
+  "view_drift": 0,
+  "blur": 13,
+  "staged_static": 31,
+  "stereo_one_view": 113,
+  "stereo_inconsistent": 48,
+  "stereo_filled": 50
+ },
+ "bad_frames_only_this_reason": {
+  "hands_out_of_frame": 0,
+  "view_drift": 0,
+  "blur": 8,
+  "staged_static": 2,
+  "stereo_one_view": 58,
+  "stereo_inconsistent": 24,
+  "stereo_filled": 23
+ },
+ "eval_all": {
+  "gt_hand_frames": 1200,
+  "before_check": {
+   "n": 989,
+   "median_cm": 1.265261732664584,
+   "p90_cm": 4.834398997219591,
+   "mean_cm": 3.1756907024654923,
+   "within_2cm": 0.7148634984833164
+  },
+  "mono_same_hands": {
+   "n": 989,
+   "median_cm": 2.5911198305998835,
+   "p90_cm": 6.191214245028972,
+   "mean_cm": 4.506804959351067,
+   "within_2cm": 0.34580384226491406
+  },
+  "after_check": {
+   "n": 941,
+   "median_cm": 1.2368427464460314,
+   "p90_cm": 3.970820222636436,
+   "mean_cm": 2.606305788318206,
+   "within_2cm": 0.7343251859723698
+  },
+  "after_check_raw_tri": {
+   "n": 941,
+   "median_cm": 1.2368427464460314,
+   "p90_cm": 3.970820222636436,
+   "mean_cm": 2.606305788318206,
+   "within_2cm": 0.7343251859723698
+  },
+  "rejected_by_reason": {
+   "few_joints": {
+    "n": 22,
+    "median_cm": 3.668825834154486,
+    "p90_cm": 37.60836807149279,
+    "mean_cm": 17.937728935923435,
+    "within_2cm": 0.36363636363636365
+   },
+   "palm": {
+    "n": 24,
+    "median_cm": 6.975489389884357,
+    "p90_cm": 36.9723104251557,
+    "mean_cm": 10.560006022897602,
+    "within_2cm": 0.2916666666666667
+   },
+   "reproj": {
+    "n": 2,
+    "median_cm": 20.07708839554064,
+    "p90_cm": 34.853424985670316,
+    "mean_cm": 20.07708839554064,
+    "within_2cm": 0.5
+   }
+  },
+  "final_measured": {
+   "n": 908,
+   "median_cm": 1.3003926074730041,
+   "p90_cm": 3.758440508873052,
+   "mean_cm": 2.518685332047078,
+   "within_2cm": 0.7422907488986784
+  },
+  "final_filled": {
+   "n": 54,
+   "median_cm": 1.2219383004523487,
+   "p90_cm": 36.87236837000047,
+   "mean_cm": 6.775595018160273,
+   "within_2cm": 0.6666666666666666
+  },
+  "status_counts": {
+   "one_view": 134,
+   "ok": 941,
+   "palm": 24,
+   "none": 77,
+   "few_joints": 22,
+   "reproj": 2
+  }
+ },
+ "sessions": [
+  {
+   "session": "clip-000000",
+   "frames": 150,
+   "qc": {
+    "episode_id": "hot3d/quest3/clip-000000",
+    "num_frames": 150,
+    "fps": 30.0,
+    "duration_s": 5.0,
+    "accepted": true,
+    "bad_frames": 23,
+    "bad_fraction": 0.15333333333333332,
+    "flags": {
+     "hands_out_of_frame": 1,
+     "view_drift": 0,
+     "blur": 0,
+     "staged_static": 0,
+     "stereo_one_view": 16,
+     "stereo_inconsistent": 2,
+     "stereo_filled": 6
+    },
+    "flags_only_reason": {
+     "hands_out_of_frame": 0,
+     "view_drift": 0,
+     "blur": 0,
+     "staged_static": 0,
+     "stereo_one_view": 14,
+     "stereo_inconsistent": 2,
+     "stereo_filled": 5
+    },
+    "reasons": []
+   },
+   "eval": {
+    "gt_hand_frames": 300,
+    "before_check": {
+     "n": 261,
+     "median_cm": 1.139553619839243,
+     "p90_cm": 2.418369077391514,
+     "mean_cm": 1.4711888936354998,
+     "within_2cm": 0.8390804597701149
+    },
+    "mono_same_hands": {
+     "n": 261,
+     "median_cm": 1.7386324594564486,
+     "p90_cm": 3.0262467156177175,
+     "mean_cm": 2.3698843350303713,
+     "within_2cm": 0.5593869731800766
+    },
+    "after_check": {
+     "n": 259,
+     "median_cm": 1.139553619839243,
+     "p90_cm": 2.397101810854417,
+     "mean_cm": 1.4646409007016272,
+     "within_2cm": 0.8416988416988417
+    },
+    "after_check_raw_tri": {
+     "n": 259,
+     "median_cm": 1.139553619839243,
+     "p90_cm": 2.397101810854417,
+     "mean_cm": 1.4646409007016272,
+     "within_2cm": 0.8416988416988417
+    },
+    "rejected_by_reason": {
+     "few_joints": {
+      "n": 1,
+      "median_cm": 3.669507545506376,
+      "p90_cm": 3.669507545506376,
+      "mean_cm": 3.669507545506376,
+      "within_2cm": 0.0
+     },
+     "palm": {
+      "n": 1,
+      "median_cm": 0.9688004116376489,
+      "p90_cm": 0.9688004116376489,
+      "mean_cm": 0.9688004116376489,
+      "within_2cm": 1.0
+     }
+    },
+    "final_measured": {
+     "n": 254,
+     "median_cm": 1.2727090328246486,
+     "p90_cm": 2.3267109659319876,
+     "mean_cm": 1.4405056478619074,
+     "within_2cm": 0.84251968503937
+    },
+    "final_filled": {
+     "n": 6,
+     "median_cm": 2.1964693522851473,
+     "p90_cm": 5.233121797471149,
+     "mean_cm": 2.823197795894387,
+     "within_2cm": 0.3333333333333333
+    },
+    "status_counts": {
+     "one_view": 17,
+     "ok": 259,
+     "palm": 1,
+     "none": 22,
+     "few_joints": 1
+    }
+   },
+   "jitter": {
+    "left": {
+     "before_smoothing": {
+      "n": 147,
+      "median_mm": 7.9952652193952085
+     },
+     "after_smoothing": {
+      "n": 147,
+      "median_mm": 5.294968652562887
+     }
+    },
+    "right": {
+     "before_smoothing": {
+      "n": 82,
+      "median_mm": 6.954653336165845
+     },
+     "after_smoothing": {
+      "n": 82,
+      "median_mm": 5.113441704845597
+     }
+    }
+   }
+  },
+  {
+   "session": "clip-000300",
+   "frames": 150,
+   "qc": {
+    "episode_id": "hot3d/quest3/clip-000300",
+    "num_frames": 150,
+    "fps": 30.0,
+    "duration_s": 5.0,
+    "accepted": false,
+    "bad_frames": 82,
+    "bad_fraction": 0.5466666666666666,
+    "flags": {
+     "hands_out_of_frame": 50,
+     "view_drift": 0,
+     "blur": 3,
+     "staged_static": 31,
+     "stereo_one_view": 58,
+     "stereo_inconsistent": 15,
+     "stereo_filled": 22
+    },
+    "flags_only_reason": {
+     "hands_out_of_frame": 0,
+     "view_drift": 0,
+     "blur": 1,
+     "staged_static": 2,
+     "stereo_one_view": 14,
+     "stereo_inconsistent": 0,
+     "stereo_filled": 6
+    },
+    "reasons": [
+     "hands_out_of_frame",
+     "blur",
+     "staged_static",
+     "stereo_one_view",
+     "stereo_inconsistent",
+     "stereo_filled"
+    ]
+   },
+   "eval": {
+    "gt_hand_frames": 300,
+    "before_check": {
+     "n": 182,
+     "median_cm": 0.956988194566436,
+     "p90_cm": 37.39932661470116,
+     "mean_cm": 8.81001998044419,
+     "within_2cm": 0.7472527472527473
+    },
+    "mono_same_hands": {
+     "n": 182,
+     "median_cm": 3.5344797775025576,
+     "p90_cm": 41.88073619453231,
+     "mean_cm": 11.71869068515197,
+     "within_2cm": 0.11538461538461539
+    },
+    "after_check": {
+     "n": 167,
+     "median_cm": 0.8801970259385281,
+     "p90_cm": 36.704657135400915,
+     "mean_cm": 6.209845947514224,
+     "within_2cm": 0.8143712574850299
+    },
+    "after_check_raw_tri": {
+     "n": 167,
+     "median_cm": 0.8801970259385281,
+     "p90_cm": 36.704657135400915,
+     "mean_cm": 6.209845947514224,
+     "within_2cm": 0.8143712574850299
+    },
+    "rejected_by_reason": {
+     "few_joints": {
+      "n": 10,
+      "median_cm": 37.03520808956429,
+      "p90_cm": 38.07871237338567,
+      "mean_cm": 37.464214625515396,
+      "within_2cm": 0.0
+     },
+     "palm": {
+      "n": 4,
+      "median_cm": 37.205615640419,
+      "p90_cm": 40.53563503732628,
+      "mean_cm": 38.29742695440257,
+      "within_2cm": 0.0
+     },
+     "reproj": {
+      "n": 1,
+      "median_cm": 38.54750913320273,
+      "p90_cm": 38.54750913320273,
+      "mean_cm": 38.54750913320273,
+      "within_2cm": 0.0
+     }
+    },
+    "final_measured": {
+     "n": 152,
+     "median_cm": 0.9091084122539881,
+     "p90_cm": 37.0242706863628,
+     "mean_cm": 6.059528277616669,
+     "within_2cm": 0.8092105263157895
+    },
+    "final_filled": {
+     "n": 25,
+     "median_cm": 1.29277242273166,
+     "p90_cm": 37.374267143836036,
+     "mean_cm": 12.629158194081446,
+     "within_2cm": 0.68
+    },
+    "status_counts": {
+     "one_view": 78,
+     "ok": 167,
+     "none": 40,
+     "palm": 4,
+     "few_joints": 10,
+     "reproj": 1
+    }
+   },
+   "jitter": {
+    "left": {
+     "before_smoothing": {
+      "n": 67,
+      "median_mm": 6.213916297714442
+     },
+     "after_smoothing": {
+      "n": 67,
+      "median_mm": 3.955607770043331
+     }
+    },
+    "right": {
+     "before_smoothing": {
+      "n": 45,
+      "median_mm": 10.328477280431898
+     },
+     "after_smoothing": {
+      "n": 45,
+      "median_mm": 3.8992159256611223
+     }
+    }
+   }
+  },
+  {
+   "session": "clip-000700",
+   "frames": 150,
+   "qc": {
+    "episode_id": "hot3d/quest3/clip-000700",
+    "num_frames": 150,
+    "fps": 30.0,
+    "duration_s": 5.0,
+    "accepted": false,
+    "bad_frames": 32,
+    "bad_fraction": 0.21333333333333335,
+    "flags": {
+     "hands_out_of_frame": 5,
+     "view_drift": 0,
+     "blur": 0,
+     "staged_static": 0,
+     "stereo_one_view": 6,
+     "stereo_inconsistent": 19,
+     "stereo_filled": 16
+    },
+    "flags_only_reason": {
+     "hands_out_of_frame": 0,
+     "view_drift": 0,
+     "blur": 0,
+     "staged_static": 0,
+     "stereo_one_view": 1,
+     "stereo_inconsistent": 11,
+     "stereo_filled": 8
+    },
+    "reasons": [
+     "hands_out_of_frame",
+     "stereo_one_view",
+     "stereo_inconsistent",
+     "stereo_filled"
+    ]
+   },
+   "eval": {
+    "gt_hand_frames": 300,
+    "before_check": {
+     "n": 294,
+     "median_cm": 1.4131840397167101,
+     "p90_cm": 2.7824073905572746,
+     "mean_cm": 1.6391663043323497,
+     "within_2cm": 0.6938775510204082
+    },
+    "mono_same_hands": {
+     "n": 294,
+     "median_cm": 3.158243453067513,
+     "p90_cm": 5.5034494411201,
+     "mean_cm": 3.42318507235407,
+     "within_2cm": 0.22108843537414966
+    },
+    "after_check": {
+     "n": 275,
+     "median_cm": 1.4260008930380015,
+     "p90_cm": 2.7803212483997295,
+     "mean_cm": 1.6454826882208418,
+     "within_2cm": 0.6909090909090909
+    },
+    "after_check_raw_tri": {
+     "n": 275,
+     "median_cm": 1.4260008930380015,
+     "p90_cm": 2.7803212483997295,
+     "mean_cm": 1.6454826882208418,
+     "within_2cm": 0.6909090909090909
+    },
+    "rejected_by_reason": {
+     "few_joints": {
+      "n": 10,
+      "median_cm": 1.339125328512278,
+      "p90_cm": 2.7788723953279266,
+      "mean_cm": 1.5822680993295097,
+      "within_2cm": 0.7
+     },
+     "palm": {
+      "n": 8,
+      "median_cm": 1.2006263196225762,
+      "p90_cm": 2.6032709878093088,
+      "mean_cm": 1.4972256952257115,
+      "within_2cm": 0.75
+     },
+     "reproj": {
+      "n": 1,
+      "median_cm": 1.6066676578785462,
+      "p90_cm": 1.6066676578785462,
+      "mean_cm": 1.6066676578785462,
+      "within_2cm": 1.0
+     }
+    },
+    "final_measured": {
+     "n": 267,
+     "median_cm": 1.4270221603196565,
+     "p90_cm": 2.479572949936257,
+     "mean_cm": 1.5632589996143784,
+     "within_2cm": 0.7340823970037453
+    },
+    "final_filled": {
+     "n": 17,
+     "median_cm": 0.6535431461203538,
+     "p90_cm": 2.9253951081272245,
+     "mean_cm": 1.0606273642268689,
+     "within_2cm": 0.8235294117647058
+    },
+    "status_counts": {
+     "ok": 275,
+     "few_joints": 10,
+     "one_view": 6,
+     "palm": 8,
+     "reproj": 1
+    }
+   },
+   "jitter": {
+    "left": {
+     "before_smoothing": {
+      "n": 108,
+      "median_mm": 8.765763314096006
+     },
+     "after_smoothing": {
+      "n": 108,
+      "median_mm": 4.12292209584351
+     }
+    },
+    "right": {
+     "before_smoothing": {
+      "n": 134,
+      "median_mm": 14.236148115044552
+     },
+     "after_smoothing": {
+      "n": 134,
+      "median_mm": 6.831585974590061
+     }
+    }
+   }
+  },
+  {
+   "session": "clip-001100",
+   "frames": 150,
+   "qc": {
+    "episode_id": "hot3d/quest3/clip-001100",
+    "num_frames": 150,
+    "fps": 30.0,
+    "duration_s": 5.0,
+    "accepted": false,
+    "bad_frames": 56,
+    "bad_fraction": 0.37333333333333335,
+    "flags": {
+     "hands_out_of_frame": 1,
+     "view_drift": 0,
+     "blur": 10,
+     "staged_static": 0,
+     "stereo_one_view": 33,
+     "stereo_inconsistent": 12,
+     "stereo_filled": 6
+    },
+    "flags_only_reason": {
+     "hands_out_of_frame": 0,
+     "view_drift": 0,
+     "blur": 7,
+     "staged_static": 0,
+     "stereo_one_view": 29,
+     "stereo_inconsistent": 11,
+     "stereo_filled": 4
+    },
+    "reasons": [
+     "hands_out_of_frame",
+     "blur",
+     "stereo_one_view",
+     "stereo_inconsistent",
+     "stereo_filled"
+    ]
+   },
+   "eval": {
+    "gt_hand_frames": 300,
+    "before_check": {
+     "n": 252,
+     "median_cm": 1.4814903504803167,
+     "p90_cm": 6.601402648320072,
+     "mean_cm": 2.664441561845051,
+     "within_2cm": 0.5873015873015873
+    },
+    "mono_same_hands": {
+     "n": 252,
+     "median_cm": 2.1741774469842428,
+     "p90_cm": 5.449740656923519,
+     "mean_cm": 2.7756832435933476,
+     "within_2cm": 0.4365079365079365
+    },
+    "after_check": {
+     "n": 240,
+     "median_cm": 1.4492740992655628,
+     "p90_cm": 5.730181673501922,
+     "mean_cm": 2.431832254292099,
+     "within_2cm": 0.6125
+    },
+    "after_check_raw_tri": {
+     "n": 240,
+     "median_cm": 1.4492740992655628,
+     "p90_cm": 5.730181673501922,
+     "mean_cm": 2.431832254292099,
+     "within_2cm": 0.6125
+    },
+    "rejected_by_reason": {
+     "few_joints": {
+      "n": 1,
+      "median_cm": 0.49570179636017986,
+      "p90_cm": 0.49570179636017986,
+      "mean_cm": 0.49570179636017986,
+      "within_2cm": 1.0
+     },
+     "palm": {
+      "n": 11,
+      "median_cm": 7.809311756198981,
+      "p90_cm": 8.645620470999162,
+      "mean_cm": 7.936711887135348,
+      "within_2cm": 0.0
+     }
+    },
+    "final_measured": {
+     "n": 235,
+     "median_cm": 1.4884457451419748,
+     "p90_cm": 5.779162883235915,
+     "mean_cm": 2.479316578072553,
+     "within_2cm": 0.6
+    },
+    "final_filled": {
+     "n": 6,
+     "median_cm": 1.6459415418740004,
+     "p90_cm": 5.222744307791205,
+     "mean_cm": 2.5305540268992464,
+     "within_2cm": 0.5
+    },
+    "status_counts": {
+     "one_view": 33,
+     "none": 15,
+     "ok": 240,
+     "palm": 11,
+     "few_joints": 1
+    }
+   },
+   "jitter": {
+    "left": {
+     "before_smoothing": {
+      "n": 90,
+      "median_mm": 10.84174026479439
+     },
+     "after_smoothing": {
+      "n": 90,
+      "median_mm": 5.3147448343305745
+     }
+    },
+    "right": {
+     "before_smoothing": {
+      "n": 123,
+      "median_mm": 11.677119298936406
+     },
+     "after_smoothing": {
+      "n": 123,
+      "median_mm": 7.189755817927497
+     }
+    }
+   }
+  }
+ ],
+ "timing_first_run_s": {
+  "backend_s": 1634.5350420475006,
+  "stereo_refine_s": 2.5490939617156982,
+  "qc_s": 0.025994300842285156,
+  "export_s": 1.3131201267242432,
+  "adapter_s": 356.00072383880615,
+  "total_s": 1994.885538816452,
+  "note": "首次运行（含 HOT3D 转换和 WiLoR 推理），CPU 8 核、无 GPU；三角化/平滑/QC/导出用的是 PR19 默认 One Euro，耗时与新参数相同量级"
+ }
+}

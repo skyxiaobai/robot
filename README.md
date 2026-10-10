@@ -97,6 +97,9 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | 文档 | 内容 |
 |---|---|
 | `docs/PROGRESS.md` | **项目进度**（流水线图、时间线、已有实验数字、待办）。建议第一次从这里读 |
+| `docs/PIPELINE_ARCHITECTURE.md` | 整体架构：录制 → 校验 → 标定 → 认手 → 双目 → 世界系 → QC → 标注 → LeRobot → 训练，每步的状态和文件格式 |
+| `docs/stereo_pipeline.md` | 双目一条命令管线 `scripts/run_stereo_pipeline.py` 的用法与 HOT3D 实测 |
+| `docs/hardware_day1_checklist.md` | 硬件到货第一天：同步、标定、首段录制和合格线 |
 | `docs/ANALYSIS_PROCESS.md` | **全部分析过程记录**（推导、调研、评审修正） |
 | `docs/headcam_data_spec.md`（v10） | 头戴设备规格：v9 的世界系手部标签与语言分段；v10 增加四级标注、产出率 QC、覆盖词表 |
 | `docs/gap_analysis.md` | 开放数据下载 → 统一格式 → QC → 覆盖 → 标注 → LeRobot → 缩放律：已有、缺失、优先级 |
