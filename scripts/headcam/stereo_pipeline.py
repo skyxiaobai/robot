@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 from egodata.coverage import normalize_environment
-from egodata.schema import SCHEMA_VERSION, save_episode, validate_episode
+from egodata.schema import SCHEMA_VERSION, empty_interaction, save_episode, validate_episode
 from headcam.hand_pose import (
     JOINTS,
     associate_camera_poses,
@@ -500,6 +500,7 @@ def build_stereo_episode(info, views, params):
         "camera_intrinsic": np.asarray(calib["K_left"], dtype=float).tolist(),
         "camera_poses": [p.tolist() for p in poses],
         "hands": hands,
+        **empty_interaction(num_frames),
         "annotation": {
             "environment": {"name": normalize_environment(environment_raw), "detail": environment_raw,
                             "source": "metadata" if environment_raw else "missing"},

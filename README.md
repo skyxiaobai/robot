@@ -19,7 +19,7 @@
 
 ## 开放数据集上的质检与覆盖（还没有自有头戴设备时）
 
-规格 v10（`docs/headcam_data_spec.md` §8）定义了四级标注、产出率和覆盖词表。差距分析在 `docs/gap_analysis.md`。当前能跑通的是 EgoDex 测试集（带 ARKit 世界系手部位姿）的抽样，不是 pusht。
+规格 v11（`docs/headcam_data_spec.md` §8–§9）定义了四级标注、产出率、覆盖词表，以及物体 6DoF、接触和抓取。新手说明在 [`docs/contact_grasp.md`](docs/contact_grasp.md)。差距分析在 `docs/gap_analysis.md`。当前能跑通的是 EgoDex 测试集（带 ARKit 世界系手部位姿）的抽样，不是 pusht。EgoDex 没有物体位姿，这几列的有效掩码是 0。
 
 依赖：`pip install numpy h5py pyarrow pandas`。导出和线性 BC 还要本机有 `ffmpeg`。
 
@@ -101,7 +101,8 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | `docs/stereo_pipeline.md` | 双目一条命令管线 `scripts/run_stereo_pipeline.py` 的用法与 HOT3D 实测 |
 | `docs/hardware_day1_checklist.md` | 硬件到货第一天：同步、标定、首段录制和合格线 |
 | `docs/ANALYSIS_PROCESS.md` | **全部分析过程记录**（推导、调研、评审修正） |
-| `docs/headcam_data_spec.md`（v10） | 头戴设备规格：v9 的世界系手部标签与语言分段；v10 增加四级标注、产出率 QC、覆盖词表 |
+| `docs/headcam_data_spec.md`（v11） | 头戴设备规格：v9 的世界系手部标签与语言分段；v10 四级标注、产出率 QC、覆盖词表；v11 物体 6DoF、接触和抓取 |
+| `docs/contact_grasp.md` | 物体位姿、接触和抓取的新手说明。合成夹具上的精确率/召回率写在这里；HOT3D 真实片段待补 |
 | `docs/gap_analysis.md` | 开放数据下载 → 统一格式 → QC → 覆盖 → 标注 → LeRobot → 缩放律：已有、缺失、优先级 |
 | `docs/headcam_bom.csv` | 采购清单（**单目方案，留作对照**）：15 列证据链版（提供的数据/格式标准/数据契约/依据/采购原因），Excel 可直接打开 |
 | `docs/headcam_stereo_bom.md` / `docs/headcam_stereo_bom.csv` | **1000 元内双目采购清单**（推荐方案 A 约 727–982 元）。说明见 md，明细见 csv。下单向卖家要 8–10 cm 基线，镜头选约 100° |
@@ -134,7 +135,7 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 > **当前状态：软件链路已基本就绪，等双目头戴设备做出来后用自采数据验证。**
 
 - **设备是头戴双目**：同步的全局快门双目 + RGB + IMU，并且要做好标定。两个摄像头像人的两只眼睛，用来算出手离相机的真实距离；IMU 配合 SLAM/VIO 算出相机在世界坐标系里的位置和朝向，不只是用来抵消头部晃动（规格 §7.1–§7.2）。
-- **每帧要产出的标签**：21 个手部关节点、世界系手腕 6DoF（位置 + 朝向），以及四级语言标注：环境 → 任务 → 子任务 → 单手指令（规格 v10 §8）。
+- **每帧要产出的标签**：21 个手部关节点、世界系手腕 6DoF（位置 + 朝向），物体 6DoF、接触和抓取四态（规格 v11 §9），以及四级语言标注：环境 → 任务 → 子任务 → 单手指令（规格 v10 §8）。没有物体标注时有效掩码是 0，不要把占位的 0 当成原点或张开。
 - **手部识别用 WiLoR**：在 EgoDex 上和 MediaPipe 对比，WiLoR 约 95% 的帧能认出手（MediaPipe 约 50%），关节误差约 3.5 cm（MediaPipe 约 8 cm）。WiLoR 需要 GPU 和 MANO 权重（非商业许可，不入库）；MediaPipe 只作为 CPU 兜底。
 - **单目算不准距离，所以必须双目**：只用一个摄像头时，手腕位置会差 4–10 cm，目标是 2 cm 以内。`scripts/headcam/` 已实现双目三角化、尺度校正和世界系手腕位姿。
 - **数据先筛再用**：自动 QC 能算出可用于训练的比例（产出率），覆盖报告能指出哪些环境、物体、任务或动作还没采到，`scripts/egodata/` 已实现。
