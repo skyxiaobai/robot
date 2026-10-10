@@ -368,6 +368,16 @@ EgoDex 测试集核对结果（`docs/gap_analysis.md`，2026-10-09）：约 16.1
 
 DexYCB 是第三视角桌面相机、手距约 0.8 m，只测相机系（没有 ARKit 位姿误差）。iPhone 实录精度待测。详见 `docs/iphone_capture_eval.md`。
 
+### 4.8 EgoDex 图像 ACT 对比（Kaggle T4，test 部分 4 个任务，78 条 test episode）
+| 方法 | 累计位移@16 | 累计旋转@16 | ADE |
+|---|---|---|---|
+| 零动作 | 5.56 cm | 15.9° | 3.13 cm |
+| 线性 BC | 6.16 cm | 16.2° | 3.48 cm |
+| ACT 有掩码（3 种子） | 5.37±0.19 cm | 15.1° | 3.17 cm |
+| ACT 无掩码（2 种子） | 5.23±0.17 cm | 14.9° | 3.06 cm |
+
+ACT 只比保持不动略好，掩码效果在种子波动之内。同时修复了 ACT 掩码在 lerobot 0.6.1 中从未生效的 bug。详见 [egodex_act_results.md](egodex_act_results.md)。
+
 ## 5. 决策记录
 
 | 日期 | 决定 | 依据 |
