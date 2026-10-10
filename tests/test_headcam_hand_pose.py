@@ -32,8 +32,9 @@ from headcam.hand_pose import (  # noqa: E402
     cam_crop_to_full,
     install_pyrender_stub,
     intrinsics_for_crop,
-    link_mano_data,
     load_checkpoint_without_renderer,
+    mano_mean_params_path,
+    mediapipe_gl_libraries_missing,
     apply_scale,
     associate_camera_poses,
     choose_mediapipe_api,
@@ -414,9 +415,19 @@ class BackendAvailabilityTest(unittest.TestCase):
 
     @unittest.skipUnless(mediapipe_available(), "mediapipe 未安装")
     def test_mediapipe_blank_frame(self):
-        prediction = MediaPipeHandsBackend().predict(np.zeros((64, 64, 3), dtype=np.uint8))
+        try:
+            prediction = MediaPipeHandsBackend().predict(np.zeros((64, 64, 3), dtype=np.uint8))
+        except Exception as exc:
+            if mediapipe_gl_libraries_missing(exc):
+                self.skipTest("无头环境缺少 libEGL 或 libGLESv2")
+            raise
         self.assertIn("left", prediction)
         self.assertIn("right", prediction)
+
+    def test_missing_gles_is_not_a_hand_pose_failure(self):
+        self.assertTrue(mediapipe_gl_libraries_missing(OSError("libGLESv2.so.2: cannot open shared object file")))
+        self.assertTrue(mediapipe_gl_libraries_missing(RuntimeError("缺少 libEGL.so.1")))
+        self.assertFalse(mediapipe_gl_libraries_missing(RuntimeError("模型没有给出 21 个三维关节")))
 
     @unittest.skipUnless(hamer_available(), "hamer 未安装或缺少 MANO / 权重")
     def test_hamer_blank_frame(self):
@@ -1101,18 +1112,61 @@ class CropCameraIntrinsicsTest(unittest.TestCase):
         self.assertNotAlmostEqual(shifted[0, 0], centered[0, 0], places=3)
         self.assertNotAlmostEqual(shifted[0, 1], centered[0, 1], places=3)
 
-    def test_camera_joints_read_principal_point_from_k(self):
-        backend = WiLoRBackend()
-        joints = np.zeros((21, 3), dtype=np.float64)
-        translation = np.array([0.1, -0.05, 0.5], dtype=np.float64)
-        _, keypoints = backend._camera_joints(
-            joints, 1.0, translation, 736.6, (1080, 1920), principal_point=(900.0, 400.0), focal_y=700.0,
+    def test_keypoints_2d_match_with_and_without_calibration(self):
+        cfg = _CfgNode()
+        cfg.EXTRA = _CfgNode(FOCAL_LENGTH=5000.0)
+        cfg.MODEL = _CfgNode(IMAGE_SIZE=256.0)
+        pred_cam = np.array([[1.2, 0.05, -0.02]], dtype=np.float64)
+        center = np.array([[500.0, 400.0]], dtype=np.float64)
+        box = np.array([220.0], dtype=np.float64)
+        image = np.array([[1920.0, 1080.0]], dtype=np.float64)
+        joints = np.zeros((1, 21, 3), dtype=np.float64)
+        joints[0, 4] = [0.03, -0.02, 0.04]
+        matrix = np.array([[736.6, 0.0, 900.0], [0.0, 710.0, 400.0], [0.0, 0.0, 1.0]])
+
+        class _Tensor:
+            def __init__(self, value):
+                self._value = np.asarray(value, dtype=np.float64)
+
+            def detach(self):
+                return self
+
+            def cpu(self):
+                return self
+
+            def numpy(self):
+                return self._value
+
+            def float(self):
+                return self
+
+        def filled(calib):
+            batch = {
+                "img_size": _Tensor(image),
+                "box_center": _Tensor(center),
+                "box_size": _Tensor(box),
+                "right": _Tensor([1.0]),
+            }
+            cam_metric, cam_pixels, project_focal = hand_pose._full_camera_from_batch(
+                pred_cam, batch, cfg, calib,
+            )
+            prediction = hand_pose.empty_prediction()
+            hand_pose._fill_prediction(
+                prediction, WiLoRBackend(), {"pred_keypoints_3d": _Tensor(joints)}, batch,
+                cam_metric, cam_pixels, project_focal, [0.9],
+            )
+            return prediction["right"]
+
+        without = filled(None)
+        with_k = filled({"K_left": matrix})
+        np.testing.assert_allclose(without["keypoints_2d"], with_k["keypoints_2d"])
+        self.assertGreater(without["joints_cam"][0, 2], 100.0)
+        self.assertLess(with_k["joints_cam"][0, 2], 8.0)
+        self.assertAlmostEqual(
+            without["joints_cam"][0, 2] / with_k["joints_cam"][0, 2], 37500.0 / 736.6, places=3,
         )
-        self.assertAlmostEqual(keypoints[0, 0], 736.6 * (0.1 / 0.5) + 900.0)
-        self.assertAlmostEqual(keypoints[0, 1], 700.0 * (-0.05 / 0.5) + 400.0)
-        _, centered = backend._camera_joints(joints, 1.0, translation, 736.6, (1080, 1920))
-        self.assertAlmostEqual(centered[0, 0], 736.6 * (0.1 / 0.5) + 960.0)
-        self.assertAlmostEqual(centered[0, 1], 736.6 * (-0.05 / 0.5) + 540.0)
+        naive = project_pinhole(with_k["joints_cam"], matrix)
+        self.assertFalse(np.allclose(naive, with_k["keypoints_2d"], atol=1.0))
 
     def test_missing_calibration_keeps_scaled_focal_and_image_center(self):
         cfg = _CfgNode()
@@ -1160,7 +1214,7 @@ class OfficialWeightsAndManoPathTest(unittest.TestCase):
             torch_mod.load(str(official))
         self.assertEqual(torch_mod.calls, [False, "UNSET", False, "UNSET"])
 
-    def test_mano_model_dir_overrides_config_and_links_without_clobber(self):
+    def test_mano_model_dir_overrides_config_without_a_cwd_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             mano = root / "mano"
@@ -1174,11 +1228,6 @@ class OfficialWeightsAndManoPathTest(unittest.TestCase):
             os.environ["MANO_MODEL_DIR"] = str(mano)
             try:
                 os.chdir(work)
-                link = link_mano_data()
-                self.assertTrue(link.is_symlink())
-                self.assertEqual(link.resolve(), mano.resolve())
-                again = link_mano_data()
-                self.assertEqual(os.path.realpath(again), str(mano.resolve()))
                 cfg = _CfgNode()
                 cfg.MANO = _CfgNode(
                     DATA_DIR="./mano_data/",
@@ -1186,9 +1235,12 @@ class OfficialWeightsAndManoPathTest(unittest.TestCase):
                     MEAN_PARAMS="./mano_data/mano_mean_params.npz",
                 )
                 apply_mano_model_dir(cfg)
+                self.assertFalse((work / "mano_data").exists())
+                self.assertFalse((work / "mano_data").is_symlink())
                 self.assertEqual(cfg.MANO.DATA_DIR, str(mano.resolve()))
                 self.assertEqual(cfg.MANO.MODEL_PATH, str(mano.resolve()))
                 self.assertEqual(cfg.MANO.MEAN_PARAMS, str((mano / "mano_mean_params.npz").resolve()))
+                self.assertNotIn("./mano_data", cfg.MANO.MEAN_PARAMS)
                 self.assertTrue(cfg._frozen)
                 seen = {}
 
@@ -1203,26 +1255,81 @@ class OfficialWeightsAndManoPathTest(unittest.TestCase):
                 self.assertEqual(loaded, "model")
                 self.assertFalse(seen["kwargs"]["init_renderer"])
                 self.assertIs(seen["kwargs"]["cfg"], cfg)
+                self.assertFalse((Path.cwd() / "mano_data").exists())
             finally:
                 os.chdir(cwd)
                 if previous is None:
                     os.environ.pop("MANO_MODEL_DIR", None)
                 else:
                     os.environ["MANO_MODEL_DIR"] = previous
-            occupied = root / "occupied"
-            occupied.mkdir()
-            (occupied / "mano_data").mkdir()
-            (occupied / "mano_data" / "keep.txt").write_text("keep", encoding="utf-8")
+
+    def test_mean_params_come_from_wilor_repo_and_are_required(self):
+        import sys
+        import types
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mano = root / "mano"
+            mano.mkdir()
+            (mano / "MANO_RIGHT.pkl").write_bytes(b"pkl")
+            repo = root / "WiLoR"
+            package = repo / "wilor"
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (repo / "mano_data").mkdir()
+            mean_file = repo / "mano_data" / "mano_mean_params.npz"
+            mean_file.write_bytes(b"mean")
+            checkpoint = root / "pretrained" / "wilor_final.ckpt"
+            checkpoint.parent.mkdir()
+            checkpoint.write_bytes(b"ckpt")
+            detector = root / "pretrained" / "detector.pt"
+            detector.write_bytes(b"det")
+            config = root / "pretrained" / "model_config.yaml"
+            config.write_bytes(b"cfg")
+            saved_modules = {name: sys.modules.get(name) for name in ("wilor", "hamer")}
+            env_names = ("MANO_MODEL_DIR", "WILOR_CHECKPOINT", "WILOR_DETECTOR", "WILOR_CONFIG", "HAMER_CHECKPOINT")
+            saved_env = {name: os.environ.get(name) for name in env_names}
+            fake = types.ModuleType("wilor")
+            fake.__file__ = str(package / "__init__.py")
+            sys.modules["wilor"] = fake
+            sys.modules.pop("hamer", None)
             os.environ["MANO_MODEL_DIR"] = str(mano)
-            cwd = os.getcwd()
+            os.environ["WILOR_CHECKPOINT"] = str(checkpoint)
+            os.environ["WILOR_DETECTOR"] = str(detector)
+            os.environ["WILOR_CONFIG"] = str(config)
+            os.environ.pop("HAMER_CHECKPOINT", None)
             try:
-                os.chdir(occupied)
-                kept = link_mano_data()
-                self.assertFalse(kept.is_symlink())
-                self.assertEqual((kept / "keep.txt").read_text(encoding="utf-8"), "keep")
+                found = mano_mean_params_path()
+                self.assertEqual(found, mean_file.resolve())
+                cfg = _CfgNode()
+                cfg.MANO = _CfgNode(
+                    DATA_DIR="./mano_data/",
+                    MODEL_PATH="./mano_data/",
+                    MEAN_PARAMS="./mano_data/mano_mean_params.npz",
+                )
+                apply_mano_model_dir(cfg)
+                self.assertEqual(cfg.MANO.MEAN_PARAMS, str(mean_file.resolve()))
+                self.assertFalse(any("mano_mean_params" in item for item in hand_pose.wilor_missing()))
+                mean_file.unlink()
+                self.assertIsNone(mano_mean_params_path())
+                cfg.MANO.MEAN_PARAMS = "./mano_data/mano_mean_params.npz"
+                apply_mano_model_dir(cfg)
+                self.assertEqual(cfg.MANO.MEAN_PARAMS, str((mano / "mano_mean_params.npz").resolve()))
+                self.assertFalse(str(cfg.MANO.MEAN_PARAMS).startswith("./mano_data"))
+                message = "\n".join(hand_pose.wilor_missing())
+                self.assertIn("mano_mean_params.npz", message)
+                self.assertIn("官方 MANO", message)
+                self.assertNotIn("def link_mano_data", Path(hand_pose.__file__).read_text(encoding="utf-8"))
             finally:
-                os.chdir(cwd)
-                os.environ.pop("MANO_MODEL_DIR", None)
+                for name, module in saved_modules.items():
+                    if module is None:
+                        sys.modules.pop(name, None)
+                    else:
+                        sys.modules[name] = module
+                for name, value in saved_env.items():
+                    if value is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = value
 
     def test_pyrender_stub_covers_renderer_import_surface(self):
         import sys

@@ -28,7 +28,7 @@
 - SLAM：仓库不跑双目加 IMU 的里程计，只读已经算好的 TUM。没有轨迹时坐标留在相机系
 - 标定计算：只读取 Kalibr / OpenCV yaml，不在这里求内参、外参或 IMU 到相机的外参
 - 自动语言标注：按时间切开的子任务和分手指令。转换器仍然留空
-- HaMeR / WiLoR 的权重：MANO 是非商业许可，不入库。没装权重时测试走合成双目，MediaPipe 测试在未安装时跳过。WiLoR / HaMeR 要用 `K_left` 的 fx、fy 和主点；不传时虚拟焦距约 37500 px。Colab GPU 上优先 WiLoR（`ultralytics==8.1.34`，`chumpy` 需要 `--no-build-isolation`）。HaMeR 还要编译 detectron2 和 mmcv。pyrender 只用于可视化
+- HaMeR / WiLoR 的权重：MANO 是非商业许可，不入库。没装权重时测试走合成双目，MediaPipe 测试在未安装时跳过。WiLoR / HaMeR 的公制平移用 `K_left` 的 fx、fy 和主点，二维点仍用虚拟焦距（约 37500 px）。`mano_mean_params.npz` 不在官方 MANO 压缩包里。Colab GPU 上优先 WiLoR（`ultralytics==8.1.34`，`chumpy` 需要 `--no-build-isolation`）。HaMeR 还要编译 detectron2 和 mmcv。pyrender 只用于可视化
 
 ## 1. 逐段对照
 
