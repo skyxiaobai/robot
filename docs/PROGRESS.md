@@ -95,7 +95,7 @@ flowchart LR
 
 ## 3. 时间线
 
-更早的底子不在下面的 PR 里：2026-08-02 放进了训练日志、头戴规格 v8、单目采购表和两段式方案初稿。下面按时间列出已合并的 PR，以及还在审的 #25。已合并条目的时间是合并时间（UTC）的日期；未合并的用开出当天的日期。#2 比 #3 晚几分钟合并，所以表按时间排，不按号码排。
+更早的底子不在下面的 PR 里：2026-08-02 放进了训练日志、头戴规格 v8、单目采购表和两段式方案初稿。下面按时间列出已合并的 PR，以及还在审的 #26。已合并条目的时间是合并时间（UTC）的日期；未合并的用开出当天的日期。#2 比 #3 晚几分钟合并，所以表按时间排，不按号码排。
 
 | 日期 | PR | 一句话 |
 |---|---|---|
@@ -124,7 +124,7 @@ flowchart LR
 | 2026-10-10 | [#23](https://github.com/skyxiaobai/robot/pull/23) | 刚体对齐手腕、2 cm 速度门限和 RTS 平滑写入管线；立体门限丢掉的帧改记标注覆盖，不再用 20% 坏帧把整段拒绝掉。 |
 | 2026-10-10 | [#24](https://github.com/skyxiaobai/robot/pull/24) | 双目手部关联：翻转 TTA（左右两种假设）+ 时序/双目关联 + 去重 + 另一目重裁，HOT3D 标注覆盖 53% → 71%，手腕误差不变。 |
 | 2026-10-10 | [#25](https://github.com/skyxiaobai/robot/pull/25) | 没测到的手腕不再当成「保持不动」来学：导出 `action_valid`，训练损失按手屏蔽，质检和导出摘要报告有效动作比例。 |
-| 2026-10-10 | （待提 PR） | iPhone Pro 采集：Record3D（.r3d / EXR+JPG）转会话目录，激光雷达深度代替三角化，`run_stereo_pipeline.py --iphone` 一条命令；DexYCB 实测手腕中位 1.41 cm（单目同批 2.75 cm），iPhone 仿真 1.51 cm。导出同样带 `action_valid`。 |
+| 2026-10-10 | [#26](https://github.com/skyxiaobai/robot/pull/26) | iPhone Pro 采集：Record3D（.r3d / EXR+JPG）转会话目录，激光雷达深度代替三角化，`run_stereo_pipeline.py --iphone` 一条命令；DexYCB 实测手腕中位 1.41 cm（单目同批 2.75 cm），iPhone 仿真 1.51 cm。导出同样带 `action_valid`。 |
 
 ---
 
