@@ -566,7 +566,7 @@ HOT3D-Clips 的 `<帧号>.objects.json` 里，每个物体有 `T_world_from_obje
 | 抓取召回率 | 1.0（fn 0） | 0.82 |
 | 事件时间差中位数 | 0.05 秒（接触开始差 0.1 秒，抓取事件差 0 秒） | 0–0.07 秒 |
 
-左手整段无效，精确率和召回率没有定义，脚本写成 null，不要当成 0。合成夹具来源：`tests/test_contact_grasp.py` 里的 `synthetic_disagreement`，2026-10-10 在本仓库跑过，关着时间滤波。HOT3D 列来自 `docs/contact_eval/hot3d_report.json`，同样没开滤波；开了滤波的重跑是 **待补**。双目手的数字见 [`contact_grasp.md`](contact_grasp.md)。
+左手整段无效，精确率和召回率没有定义，脚本写成 null，不要当成 0。合成夹具来源：`tests/test_contact_grasp.py` 里的 `synthetic_disagreement`，2026-10-10 在本仓库跑过，关着时间滤波。HOT3D 列来自 `docs/contact_eval/hot3d_report.json`，同样没开滤波；开了滤波的重跑，以及只对事件去抖的停留扫参，见 [`contact_grasp.md`](contact_grasp.md)。双目手的数字也在那里。
 
 ---
 
