@@ -43,8 +43,9 @@ class StereoParams(object):
 
     def __init__(self, max_reproj_px=10.0, joint_reproj_px=15.0, min_joints=15,
                  depth_range_m=(0.10, 1.20), palm_range_m=(0.05, 0.15),
-                 smooth="one_euro", min_cutoff=3.0, beta=50.0, gap_fill=True, max_gap=5, fixed_shape=False,
-                 consistency=True):
+                 smooth="rts", min_cutoff=3.0, beta=50.0, gap_fill=True, max_gap=5, fixed_shape=False,
+                 consistency=True, wrist_mode="rigid_fit", velocity_gate_m=0.02, rts_q=0.3, rts_r=4e-4,
+                 max_median_reproj_px=None, max_offaxis_deg=None):
         self.max_reproj_px = float(max_reproj_px)
         self.joint_reproj_px = float(joint_reproj_px)
         self.min_joints = int(min_joints)
@@ -60,14 +61,26 @@ class StereoParams(object):
         self.max_gap = int(max_gap)
         self.fixed_shape = bool(fixed_shape)
         self.consistency = bool(consistency)
+        # 尾部误差（docs/hot3d_stereo/tail.md）：手腕不用单点三角化，而是把 WiLoR 单目 21 点（带尺度）稳健刚体
+        # 对齐到三角化关节后取对齐后的手腕；世界系手腕先做 2 cm 速度门限剔跳点，再做离线 RTS 平滑。
+        # 这些值在 HOT3D 上按“一段调参、其余三段测试”选出，4 种轮换选到的组合基本一致。
+        # smooth="rts" 时用 RTS 代替 One Euro；wrist_mode="tri" 恢复 PR #22 行为。
+        self.wrist_mode = wrist_mode
+        self.velocity_gate_m = float(velocity_gate_m or 0.0)
+        self.rts_q = float(rts_q)
+        self.rts_r = float(rts_r)
+        # 可选的严格门限（默认关）：换更低产出换更小 p90，曲线见 docs/hot3d_stereo/tail.md
+        self.max_median_reproj_px = max_median_reproj_px
+        self.max_offaxis_deg = max_offaxis_deg
 
     def to_dict(self):
         return dict(self.__dict__)
 
     def refine(self):
-        if self.smooth in (None, "none") and not self.gap_fill and not self.fixed_shape:
+        smooth = "none" if self.smooth == "rts" else self.smooth
+        if smooth in (None, "none") and not self.gap_fill and not self.fixed_shape:
             return None
-        return RefineParams(smooth=self.smooth or "none", min_cutoff=self.min_cutoff, beta=self.beta,
+        return RefineParams(smooth=smooth or "none", min_cutoff=self.min_cutoff, beta=self.beta,
                             gap_fill=self.gap_fill, max_gap=self.max_gap,
                             fixed_shape=self.fixed_shape, lr_consistency=False)
 
@@ -161,6 +174,89 @@ def reprojection_errors(points, uv_left, uv_right, calib):
     return err
 
 
+def _umeyama(src, dst, weights, with_scale=True):
+    w = weights / weights.sum()
+    ms = (w[:, None] * src).sum(0)
+    md = (w[:, None] * dst).sum(0)
+    a, b = src - ms, dst - md
+    u, sv, vt = np.linalg.svd((w[:, None] * b).T @ a)
+    d = np.eye(3)
+    d[2, 2] = np.sign(np.linalg.det(u @ vt))
+    rot = u @ d @ vt
+    var = float((w * (a ** 2).sum(1)).sum())
+    scale = float((sv * np.diag(d)).sum() / var) if with_scale and var > 0 else 1.0
+    return scale, rot, md - scale * rot @ ms
+
+
+def rigid_fit_hand(mono, tri, weights, iters=5, huber_m=0.01):
+    """把单目 21 点（相似变换：旋转+平移+尺度）稳健对齐到三角化关节（Huber IRLS）。
+    返回 (对齐后的 21x3, 残差 RMS 米)；可用关节少于 6 个时返回 (None, None)。"""
+    mono = np.asarray(mono, dtype=float)
+    tri = np.asarray(tri, dtype=float)
+    w0 = np.asarray(weights, dtype=float)
+    ok = np.isfinite(tri).all(1) & np.isfinite(mono).all(1) & (w0 > 0)
+    if ok.sum() < 6:
+        return None, None
+    w = w0.copy()
+    for _ in range(iters):
+        scale, rot, t = _umeyama(mono[ok], tri[ok], w[ok])
+        fit = (scale * (rot @ mono.T)).T + t
+        r = np.linalg.norm(fit - tri, axis=1)
+        w = w0 * np.where(r < huber_m, 1.0, huber_m / np.maximum(r, 1e-9))
+    return fit, float(np.sqrt(np.median(r[ok] ** 2)))
+
+
+def velocity_gate(frames, points, gate_m, window=3, max_frame_gap=6):
+    """离群点：离前后各 ``window`` 个邻居（帧号相差不超过 max_frame_gap）的中位数超过 gate_m 米。返回保留掩码。"""
+    frames = np.asarray(frames)
+    points = np.asarray(points, dtype=float)
+    keep = np.ones(len(frames), dtype=bool)
+    if gate_m <= 0 or len(frames) < 5:
+        return keep
+    for i in range(len(frames)):
+        nb = [j for j in range(max(0, i - window), min(len(frames), i + window + 1))
+              if j != i and abs(frames[j] - frames[i]) <= max_frame_gap]
+        if len(nb) >= 2 and np.linalg.norm(points[i] - np.median(points[nb], 0)) > gate_m:
+            keep[i] = False
+    return keep
+
+
+def rts_smooth(times, points, q=0.3, r=4e-4):
+    """逐轴匀速模型 Kalman + RTS 反向平滑（离线、非因果）。times 秒，可以不等间隔。"""
+    times = np.asarray(times, dtype=float)
+    points = np.asarray(points, dtype=float)
+    n = len(times)
+    if n < 3:
+        return points.copy()
+    out = np.zeros_like(points)
+    for ax in range(points.shape[1]):
+        xs, ps, xp, pp = [], [], [], []
+        x = np.array([points[0, ax], 0.0])
+        p = np.diag([r, 1.0])
+        for i in range(n):
+            if i > 0:
+                dt = max(times[i] - times[i - 1], 1e-6)
+                f = np.array([[1.0, dt], [0.0, 1.0]])
+                qm = q * np.array([[dt ** 3 / 3, dt ** 2 / 2], [dt ** 2 / 2, dt]])
+                x = f @ x
+                p = f @ p @ f.T + qm
+            xp.append(x.copy())
+            pp.append(p.copy())
+            k = p[:, 0] / (p[0, 0] + r)
+            x = x + k * (points[i, ax] - x[0])
+            p = p - np.outer(k, p[0, :])
+            xs.append(x.copy())
+            ps.append(p.copy())
+        for i in range(n - 2, -1, -1):
+            dt = max(times[i + 1] - times[i], 1e-6)
+            f = np.array([[1.0, dt], [0.0, 1.0]])
+            c = ps[i] @ f.T @ np.linalg.inv(pp[i + 1])
+            xs[i] = xs[i] + c @ (xs[i + 1] - xp[i + 1])
+            ps[i] = ps[i] + c @ (ps[i + 1] - pp[i + 1]) @ c.T
+        out[:, ax] = [v[0] for v in xs]
+    return out
+
+
 def stereo_hand(hand_left_view, hand_right_view, calib, params):
     """一只手一帧。返回 dict：status、joints_cam（左相机系 21x3 或 None）、诊断量。
 
@@ -214,6 +310,18 @@ def stereo_hand(hand_left_view, hand_right_view, calib, params):
             status = "palm"
     elif not np.isfinite(joints[0]).all():
         status = "few_joints"
+    if status == "ok" and params.wrist_mode == "rigid_fit" and out["mono_joints"] is not None:
+        weights = out["confidence"] * np.exp(-0.5 * (np.nan_to_num(err, nan=99.0) / 5.0) ** 2)
+        fit, residual = rigid_fit_hand(out["mono_joints"], tri, weights)
+        if fit is not None:
+            joints = joints.copy()
+            joints[0] = fit[0]
+            out["fit_residual_m"] = residual
+    if status == "ok" and params.max_median_reproj_px is not None and out["reproj_px"] > params.max_median_reproj_px:
+        status = "strict"
+    if status == "ok" and params.max_offaxis_deg is not None and np.isfinite(joints[0]).all():
+        if math.degrees(math.atan2(float(np.linalg.norm(joints[0, :2])), float(joints[0, 2]))) > params.max_offaxis_deg:
+            status = "strict"
     out["status"] = status
     if status == "ok" and np.isfinite(joints[0]).all():
         out["joints_cam"] = joints
@@ -223,6 +331,31 @@ def stereo_hand(hand_left_view, hand_right_view, calib, params):
 
 
 # ---------------------------------------------------------------- episode
+
+def _temporal_wrist(joints, confs, diag, poses, timestamps, params):
+    """世界系手腕：速度门限剔跳点（该手该帧作废，状态记 jump），再 RTS 平滑；整只手按手腕的平滑位移平移。原地修改。"""
+    for side in SIDES:
+        idx = [i for i in range(len(poses)) if np.isfinite(joints[side][i][0]).all()]
+        if not idx:
+            continue
+        world = np.array([transform_points(joints[side][i][:1], poses[i])[0] for i in idx])
+        keep = velocity_gate(idx, world, params.velocity_gate_m)
+        for i, k in zip(idx, keep):
+            if not k:
+                joints[side][i] = np.nan
+                confs[side][i] = np.nan
+                diag[side][i]["status"] = "jump"
+                diag[side][i]["joints_cam"] = None
+        idx = [i for i, k in zip(idx, keep) if k]
+        world = world[keep]
+        if params.smooth != "rts" or len(idx) < 3:
+            continue
+        smoothed = rts_smooth([timestamps[i] for i in idx], world, params.rts_q, params.rts_r)
+        for i, w_new in zip(idx, smoothed):
+            pose = np.asarray(poses[i], dtype=float)
+            delta_cam = pose[:3, :3].T @ (w_new - (pose[:3, :3] @ joints[side][i][0] + pose[:3, 3]))
+            joints[side][i] = joints[side][i] + delta_cam
+
 
 def build_stereo_episode(info, views, params):
     """返回 (episode, diagnostics)。diagnostics 里有逐帧逐手的检查前/后结果。"""
@@ -247,6 +380,9 @@ def build_stereo_episode(info, views, params):
             if result["joints_cam"] is not None:
                 joints[side][index] = result["joints_cam"]
                 confs[side][index] = result["confidence"]
+
+    if params.smooth == "rts" or params.velocity_gate_m > 0:
+        _temporal_wrist(joints, confs, diag, poses, timestamps, params)
 
     refine = params.refine()
     refine_info = None
@@ -411,7 +547,7 @@ def summarize_eval(rows):
 # ---------------------------------------------------------------- 一条命令
 
 def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="local/headcam_stereo",
-                 export=True, backend=None, log=print, export_python=None):
+                 export=True, backend=None, log=print, export_python=None, min_label_coverage=None):
     """跑完整条管线。返回报告字典，同时写 ``out_dir/report.json``。"""
     from egodata.qc import write_yield_reports, yield_report
     from egodata.stereo_qc import qc_stereo_episode
@@ -435,7 +571,10 @@ def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="
         path = out / "episodes" / ("%s.json" % name)
         save_episode(episode, path)
         t0 = time.time()
-        qc = qc_stereo_episode(episode)
+        qc_overrides = {}
+        if min_label_coverage is not None:
+            qc_overrides["min_label_coverage"] = min_label_coverage
+        qc = qc_stereo_episode(episode, **qc_overrides)
         timing["qc_s"] += time.time() - t0
         results.append({k: v for k, v in qc.items() if k != "good_frame_mask"})
         entry = {"session": str(info["session"]), "episode": str(path), "frames": episode["num_frames"],
@@ -447,8 +586,9 @@ def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="
             all_eval_rows.extend(rows)
             entry["eval"] = summarize_eval(rows)
         per_session.append(entry)
-        log("[%s] 帧 %d，QC %s，坏帧 %.0f%%" % (name, episode["num_frames"],
-                                             "通过" if qc["accepted"] else "拒绝", 100 * qc["bad_fraction"]))
+        log("[%s] 帧 %d，QC %s，坏帧 %.0f%%，标注覆盖 %.0f%%" % (
+            name, episode["num_frames"], "通过" if qc["accepted"] else "拒绝",
+            100 * qc["bad_fraction"], 100 * qc["label_coverage"]))
     report = yield_report(results)
     html_path, csv_path = write_yield_reports(report, out / "qc" / "yield.html", out / "qc" / "yield.csv")
     reasons = {}
@@ -458,6 +598,9 @@ def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="
             reasons[k] = reasons.get(k, 0) + v
         for k, v in r["flags_only_reason"].items():
             only[k] = only.get(k, 0) + v
+    dropped_names = ("stereo_one_view", "stereo_inconsistent", "stereo_filled")
+    labeled_frames = sum(r.get("labeled_frames", r["num_frames"]) for r in results)
+    dropped_frames = sum(r.get("dropped_label_frames", 0) for r in results)
     summary = {
         "params": params.to_dict(),
         "backend": backend_name,
@@ -466,8 +609,14 @@ def run_pipeline(sessions, out_dir, params=None, backend_name="wilor", repo_id="
         "usable_frames": report["usable_frames"],
         "episodes": report["episodes"],
         "accepted_episodes": report["accepted_episodes"],
-        "bad_frames_by_reason": reasons,
-        "bad_frames_only_this_reason": only,
+        "bad_frames_by_reason": {k: v for k, v in reasons.items() if k not in dropped_names},
+        "bad_frames_only_this_reason": {k: v for k, v in only.items() if k not in dropped_names},
+        "dropped_labels_by_reason": {k: v for k, v in reasons.items() if k in dropped_names},
+        "dropped_labels_only_this_reason": {k: v for k, v in only.items() if k in dropped_names},
+        "labeled_frames": labeled_frames,
+        "dropped_label_frames": dropped_frames,
+        "label_coverage": 0.0 if report["raw_frames"] == 0 else labeled_frames / float(report["raw_frames"]),
+        "min_label_coverage": results[0]["min_label_coverage"] if results else 0.0,
         "sessions": per_session,
         "timing": timing,
     }
