@@ -97,6 +97,7 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | 文档 | 内容 |
 |---|---|
 | `docs/PROGRESS.md` | **项目进度**（流水线图、时间线、已有实验数字、待办）。建议第一次从这里读 |
+| `docs/retarget_sim.md` | 人手腕重定向到 MuJoCo 抓放：标定、IK、重放和行为克隆。合成与真实 EgoDex 的成功率分两份 JSON，不要混读 |
 | `docs/PIPELINE_ARCHITECTURE.md` | 整体架构：录制 → 校验 → 标定 → 认手 → 双目 → 世界系 → QC → 标注 → LeRobot → 训练，每步的状态和文件格式 |
 | `docs/stereo_pipeline.md` | 双目一条命令管线 `scripts/run_stereo_pipeline.py` 的用法与 HOT3D 实测 |
 | `docs/hardware_day1_checklist.md` | 硬件到货第一天：同步、标定、首段录制和合格线 |

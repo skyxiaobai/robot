@@ -1,0 +1,88 @@
+<mujoco model="franka_like_pick">
+  <!-- CPU 无头可跑的 6 轴串联臂，运动学类似 Franka：底座偏航、肩、肘、三腕，加平行夹爪。
+       不是官方 Panda mesh。手臂不与方块碰撞，只有指垫抓取。 -->
+  <compiler angle="radian"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast" cone="elliptic">
+    <flag warmstart="enable"/>
+  </option>
+  <default>
+    <geom contype="1" conaffinity="1" condim="4" friction="1.0 0.05 0.001"
+          solref="0.01 1" solimp="0.92 0.97 0.001" margin="0.0005"/>
+    <joint damping="1.5" armature="0.02" limited="true"/>
+    <position kp="80" kv="8" forcerange="-40 40"/>
+  </default>
+  <contact>
+    <exclude body1="base" body2="link1"/>
+    <exclude body1="link1" body2="link2"/>
+    <exclude body1="link2" body2="link3"/>
+    <exclude body1="link3" body2="link4"/>
+    <exclude body1="link4" body2="link5"/>
+    <exclude body1="link5" body2="flange"/>
+    <exclude body1="flange" body2="ee"/>
+    <exclude body1="ee" body2="palm"/>
+    <exclude body1="palm" body2="finger_l"/>
+    <exclude body1="palm" body2="finger_r"/>
+  </contact>
+  <worldbody>
+    <geom name="table" type="box" size="0.24 0.32 0.02" pos="0.50 0 0.20" rgba="0.55 0.45 0.35 1" contype="1" conaffinity="3"/>
+    <body name="base" pos="0 0 0">
+      <inertial pos="0 0 0.1" mass="3" diaginertia="0.02 0.02 0.02"/>
+      <geom name="pedestal" type="cylinder" size="0.05 0.16" pos="0 0 0.16" rgba="0.25 0.25 0.25 1" contype="0" conaffinity="0"/>
+      <body name="link1" pos="0 0 0.32">
+        <joint name="j1" type="hinge" axis="0 0 1" range="-2.6 2.6"/>
+        <geom name="g1" type="cylinder" size="0.045 0.04" rgba="0.15 0.35 0.7 1" contype="2" conaffinity="2"/>
+        <body name="link2" pos="0 0 0.05">
+          <joint name="j2" type="hinge" axis="0 1 0" range="-2.4 0.4"/>
+          <geom name="g2" type="capsule" fromto="0 0 0 0.26 0 0" size="0.028" rgba="0.15 0.35 0.7 1" contype="2" conaffinity="2"/>
+          <body name="link3" pos="0.26 0 0">
+            <joint name="j3" type="hinge" axis="0 1 0" range="-0.2 2.8"/>
+            <geom name="g3" type="capsule" fromto="0 0 0 0.22 0 0" size="0.024" rgba="0.2 0.45 0.75 1" contype="2" conaffinity="2"/>
+            <body name="link4" pos="0.22 0 0">
+              <joint name="j4" type="hinge" axis="0 1 0" range="-2.6 2.6"/>
+              <geom name="g4" type="capsule" fromto="0 0 0 0.08 0 0" size="0.02" rgba="0.3 0.5 0.8 1" contype="2" conaffinity="2"/>
+              <body name="link5" pos="0.08 0 0">
+                <joint name="j5" type="hinge" axis="1 0 0" range="-2.8 2.8"/>
+                <geom name="g5" type="capsule" fromto="0 0 0 0.05 0 0" size="0.016" rgba="0.3 0.5 0.8 1" contype="2" conaffinity="2"/>
+                <body name="flange" pos="0.05 0 0">
+                  <joint name="j6" type="hinge" axis="0 0 1" range="-3.0 3.0"/>
+                  <geom name="g6" type="cylinder" size="0.018 0.012" rgba="0.1 0.1 0.1 1" contype="2" conaffinity="2"/>
+                  <body name="ee" pos="0.012 0 0" quat="0 1 0 0">
+                    <site name="grasp" pos="0 0 0.062" size="0.005" rgba="1 0 0 1"/>
+                    <body name="palm" pos="0 0 0.012">
+                      <geom name="palm" type="box" size="0.02 0.014 0.01" mass="0.08" rgba="0.2 0.2 0.2 1" contype="2" conaffinity="0"/>
+                      <body name="finger_l" pos="0 0.016 0.016">
+                        <joint name="grip_l" type="slide" axis="0 1 0" range="0 0.028" damping="0.4"/>
+                        <geom name="pad_l" type="box" size="0.012 0.004 0.018" pos="0 0 0.014"
+                              rgba="0.85 0.3 0.2 1" friction="2.5 0.1 0.01" condim="6" mass="0.02"/>
+                      </body>
+                      <body name="finger_r" pos="0 -0.016 0.016">
+                        <joint name="grip_r" type="slide" axis="0 -1 0" range="0 0.028" damping="0.4"/>
+                        <geom name="pad_r" type="box" size="0.012 0.004 0.018" pos="0 0 0.014"
+                              rgba="0.85 0.3 0.2 1" friction="2.5 0.1 0.01" condim="6" mass="0.02"/>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <body name="cube" pos="0.46 0.0 0.24">
+      <freejoint name="cube_free"/>
+      <geom name="cube" type="box" size="0.018 0.018 0.018" mass="0.05" rgba="0.9 0.75 0.1 1"
+            friction="1.8 0.05 0.01" condim="4"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="a1" joint="j1" kp="140" kv="14" ctrlrange="-2.6 2.6" forcerange="-80 80"/>
+    <position name="a2" joint="j2" kp="160" kv="16" ctrlrange="-2.4 0.4" forcerange="-80 80"/>
+    <position name="a3" joint="j3" kp="120" kv="12" ctrlrange="-0.2 2.8" forcerange="-60 60"/>
+    <position name="a4" joint="j4" kp="60" kv="6" ctrlrange="-2.6 2.6" forcerange="-30 30"/>
+    <position name="a5" joint="j5" kp="30" kv="3" ctrlrange="-2.8 2.8" forcerange="-20 20"/>
+    <position name="a6" joint="j6" kp="20" kv="2" ctrlrange="-3 3" forcerange="-12 12"/>
+    <position name="ag_l" joint="grip_l" kp="60" kv="2" ctrlrange="0 0.028" forcerange="-20 20"/>
+    <position name="ag_r" joint="grip_r" kp="60" kv="2" ctrlrange="0 0.028" forcerange="-20 20"/>
+  </actuator>
+</mujoco>
