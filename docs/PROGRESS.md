@@ -32,8 +32,8 @@ flowchart LR
 |---|---|---|
 | 1 采集 | 未开始 | 会话目录和转换脚本写好了。双目设备还没到手，所以没有自己的录像。 |
 | 2 手部姿态 | 部分完成 | 代码能换 WiLoR、HaMeR 或 MediaPipe，也能做双目三角化。公开的 HOT3D 双目上，手腕中位数 1.22 cm（见第 4.5 节）。自己设备上的误差还没测。双目一条命令管线已在 HOT3D 4 段上端到端跑通（第 4.6 节）。 |
-| 3 质检 QC | 已完成 | 手出画、视线飘、转头太快、停太久，都会被标出来。公开数据和将来的头戴数据用同一套规则。 |
-| 4 转成 LeRobot | 已完成 | 只导出质检通过的片段。动作是「下一小段手腕移动了多少」。 |
+| 3 质检 QC | 已完成 | 手出画、视线飘、转头太快、停太久，都会被标出来。公开数据和将来的头戴数据用同一套规则。报告里同时给出有效动作比例。 |
+| 4 转成 LeRobot | 已完成 | 只导出质检通过的片段。动作是「下一小段手腕移动了多少」。当前帧或下一帧的手腕不是实测时，`action_valid` 标 0，训练损失不算这一步。 |
 | 5 预训练 | 部分完成 | 简单的线性模型在 EgoDex 测试集上跑过，并且看到损失会停住。图像 ACT 的笔记本在，**还没在完整测试集上训完**。 |
 | 6 微调 | 未开始 | 等自己的录像。微调用多少步、真实任务成功率，都还没有数字。 |
 
@@ -75,6 +75,21 @@ flowchart LR
 3. 按 [`docs/hardware_day1_checklist.md`](hardware_day1_checklist.md) 录第一段，先 `scripts/validate_session.py` 校验，再跑 `scripts/run_stereo_pipeline.py --session ...`，看手腕误差离 2 cm 还有多远。这个数现在是 **待补**。整体架构和每一步的状态见 [`docs/PIPELINE_ARCHITECTURE.md`](PIPELINE_ARCHITECTURE.md)。
 4. 设备还在做的时候，可以在 Colab 上把 EgoDex 的 ACT 四档训完（笔记本已写好）。训完后把验证损失填进本文第 4 节。
 5. 自采片段通过质检之后，再谈微调。步数、学习率和真实成功率都还没有，不要把预训练配方里的 `steps: 2000` 当成微调步数。
+
+### 风险清单
+
+缺测的手腕曾经被写成「保持不动」（平移 0、朝向四元数 `0,0,0,1`；开了关节增量时写成 0），训练会把这些占位当成真的静止来学。现在每一行动作多一列 `action_valid`，形状 `(2,)`，左手、右手各一位。只有这一帧和下一帧该手的手腕都是实测，这一位才是 1：坐标有限、不是补出来的帧、逐帧标注状态是空、`none` 或 `ok`、置信度若是数字则不低于 0.5。置信度缺失仍表示未知，这一位可以通过。episode 上如果存了 `good_frame_mask`（或写在 `qc` / `stereo` / `iphone` 里），false 的帧两只手都是 0。占位增量还留在 `action` 里。模糊、视线飘移、摆拍这些质检原因不单独把动作判无效：手腕测到了，动作仍然可以学。`observation.hand_valid` 仍只表示这一帧关节是否齐全。
+
+训练按这个标记算损失。线性模型 `scripts/ego_pretrain_bc.py` 只把有效的那几维放进最小二乘；`--min-valid-fraction` 默认 0，设得更高时，有效步比例不够的窗口不会被抽到。ACT 走 `scripts/ego_act_train.py`：两只手都无效的步并进 LeRobot 的 `action_is_pad`；只有一只手无效时按维屏蔽，另一只手仍算损失。环境变量 `EGO_MIN_VALID_FRACTION` 低于阈值时，这个窗口的动作被清成填充，损失为 0，抽样本身仍会抽到它。旧的 LeRobot 目录没有 `action_valid` 列时，全部当成有效，并警告「数据集没有 action_valid 列，缺测动作按全部有效处理。」
+
+还没消掉的风险：
+
+- 全量 EgoDex（约 16GB）上的有效动作比例没有重跑，记为 **待补**。
+- `--include-hand` 时，手腕是实测但手指没测到，关节增量仍是 0，并且会进损失。默认导出不含关节。
+- 本环境没有安装 LeRobot。ACT 的按手掩码在导入失败时退回原来的 `lerobot-train`，那时没有这层屏蔽。笔记本 `notebooks/egodex_act_scaling_colab.ipynb` 已写成走 `ego_act_train.py`。
+- iPhone 采集已暂停。`hands[side].label_status` 和 `iphone.per_frame` 仍会参与判定，仓库里没有 iPhone 管线去填它们。
+
+合成 EgoDex 小样本（2026-10-10，`python3 scripts/demo_open_dataset_pipeline.py --out /tmp/ego_valid_demo`，再跑 `egodata_qc.py` 和 `ego_to_lerobot.py`）。两条各 30 帧：`egodex/basic_pick_place/0` 置信度 0.99；`egodex/pour/0` 置信度 0.2，手在画面外。质检含被拒绝的那条：产出率 0.500（30/60 帧，拒绝 1/2），`valid_action_ratio` 0.500000，16 步整段有效比例 0.500000，50 步和 100 步为 n/a（动作行只有 29，凑不满窗口，不写成 0）。逐条 CSV：通过的那条有效动作比例 1.000000、16 步窗口 1.000000；被拒绝的那条原因是 `hands_out_of_frame|staged_static`，有效动作比例 0.000000、16 步窗口 0.000000（置信度 0.2，低于 0.5）。导出只保留通过的 1 条、29 帧动作（`/tmp/ego_valid_lerobot/meta/egodata_export.json`）：`valid_action_ratio` 1.0，16 步窗口 1.0，50 和 100 为 null。
 
 ---
 
@@ -284,6 +299,7 @@ Square / pusht 只验证训练框架。本体、视角和动作都跟头戴人�
 - [x] 双目一条命令管线（WiLoR ×2 → 三角化 → 一致性 → 平滑 → 世界系 → QC → LeRobot），HOT3D 上跑通
 - [x] 会话校验脚本和假录制器（HOT3D → 设备格式，含故障注入）
 - [x] 整体架构文档和到货第一天检查清单
+- [x] 缺测手腕不再当成「保持不动」来监督：导出 `action_valid`，线性模型和 ACT 损失按手屏蔽；全量 EgoDex 上的有效动作比例仍待补
 - [ ] 设备端录制程序（按 §7.7 落盘，并写 `stereo/timestamps_lr.csv`）
 - [ ] 用第一批自采数据重新定 QC 阈值。手出画、视线飘移、运动模糊、摆拍或静止仍用 EgoDex 的 20% 坏帧。双目丢掉的标注另报覆盖率，`--min-label-coverage` 默认 0（只报告、不拒绝），这个数是临时的，等自采数据再定。
 - [ ] 买齐并装好双目头戴（方案 A）。下单前向卖家要 8–10 cm 基线，镜头选约 100°

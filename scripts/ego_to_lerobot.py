@@ -42,9 +42,25 @@ def main(argv=None):
         video_size=video_size,
         horizon=args.horizon,
     )
+    def _fmt(value):
+        if value is None:
+            return "n/a"
+        return "%.6f" % float(value)
+
+    chunks = summary.get("valid_full_chunk_ratio") or {}
     print(
-        "episodes %d frames %d horizon %d -> %s"
-        % (summary["episodes"], summary["frames"], summary["horizon"], summary["out"])
+        "episodes %d frames %d horizon %d valid_action_ratio %s "
+        "valid_full_chunk_ratio_16 %s valid_full_chunk_ratio_50 %s valid_full_chunk_ratio_100 %s -> %s"
+        % (
+            summary["episodes"],
+            summary["frames"],
+            summary["horizon"],
+            _fmt(summary.get("valid_action_ratio")),
+            _fmt(chunks.get(16)),
+            _fmt(chunks.get(50)),
+            _fmt(chunks.get(100)),
+            summary["out"],
+        )
     )
     return 0
 

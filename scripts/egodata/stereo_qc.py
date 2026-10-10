@@ -22,6 +22,7 @@
 """
 import numpy as np
 
+from egodata.action_valid import validity_fields
 from egodata.qc import DEFAULTS, _FLAG_LABELS, STEREO_FLAG_LABELS, frame_qc_flags
 
 # 临时值。0 = 报告标注覆盖率，但不因此拒绝片段。等真实设备数据再改。
@@ -93,7 +94,7 @@ def qc_stereo_episode(episode, **overrides):
     if not coverage_ok:
         reasons.append("low_label_coverage")
     kept = ~dropped & ~bad_mask
-    return {
+    result = {
         "episode_id": episode.get("episode_id", ""),
         "num_frames": num_frames,
         "fps": fps,
@@ -110,3 +111,5 @@ def qc_stereo_episode(episode, **overrides):
         "label_coverage": label_coverage,
         "min_label_coverage": min_label_coverage,
     }
+    result.update(validity_fields(episode))
+    return result
