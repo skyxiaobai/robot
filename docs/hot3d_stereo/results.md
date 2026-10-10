@@ -104,4 +104,4 @@ python scripts/plot_hot3d_stereo.py report.json sim.json docs/hot3d_stereo/hot3d
 
 手快速移动（1–2 m/s）时的同步、快门、曝光和帧率要求见 [fast_motion.md](fast_motion.md)。上面表格里“60 fps 可选、全局快门影响很小”是 **慢动作**（手腕中位约 15 cm/s）上的结论。快动作要求曝光锁定 ≤2 ms、最好 60 fps、硬件同步仍必须。
 
-用新的时间门限和 RTS 默认（速度自适应 q≈30–300）重跑本节和 `docs/stereo_pipeline.md` 的慢动作手腕误差 **待补**。已经发表的中位数 1.22 cm 等数字是旧默认下的结果，这里不改。
+用新的时间门限和 RTS 默认（速度自适应 q≈30–300）在完整双目管线上重跑了同一 4 段 Quest3（600 帧，含手部关联）：手腕中位 **1.13 cm**、p90 **2.38 cm**、≤2 cm **85%**，标注覆盖 70.5%，片段 4/4 通过；`--legacy-temporal` 为 1.11 / 2.29 / 87%、覆盖 70.7%。见 [tail.md §5](tail.md)、[fast_motion.md](fast_motion.md)。上面表格里已经发表的中位数 **1.22 cm** 等（stride=3、无关联/门限/平滑的三角化评测）未改，协议不同，不要和管线重跑直接同比。
