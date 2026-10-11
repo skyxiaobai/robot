@@ -1,0 +1,210 @@
+{
+  "title": "Path B · iPhone vs EgoDex vs HOT3D 数据质量对比",
+  "date": "2026-10-11",
+  "hot3d": {
+    "source": "HOT3D Quest3 + WiLoR stereo",
+    "refs": [
+      "docs/hot3d_stereo/results.md",
+      "docs/hot3d_stereo/train_compare_scale.md"
+    ],
+    "detect_left": 0.916,
+    "detect_right": 0.901,
+    "detect_both": 0.86,
+    "wrist_median_cm_stereo": 1.22,
+    "wrist_mean_cm_stereo": 3.2,
+    "wrist_p90_cm_stereo": 3.41,
+    "wrist_median_cm_mono": 2.71,
+    "mpjpe_median_cm_stereo": 2.12,
+    "mpjpe_median_cm_mono": 4.09,
+    "wrist_le2cm_stereo": 0.75,
+    "wrist_le2cm_mono": 0.33,
+    "label_vs_gt_wrist_median_cm_24clips": 1.24,
+    "label_coverage_24clips": 0.79,
+    "has_metric_depth": true,
+    "has_gt": true,
+    "fps_nominal": null,
+    "notes": "真值 MANO；双目三角化。24 clips 扩大后手腕 vs GT 中位 1.24 cm。"
+  },
+  "egodex": {
+    "source": "EgoDex + WiLoR mono",
+    "refs": [
+      "docs/reviv_compare.md",
+      "docs/egodex_act_results.md"
+    ],
+    "detect_rate": 0.976,
+    "detect_rate_loose": 0.984,
+    "mpjpe_root_rel_median_cm": 3.97,
+    "wrist_median_cm_unscaled": 22.3,
+    "wrist_median_cm_scaled": 4.03,
+    "wrist_p90_cm_unscaled": 29.5,
+    "wrist_le2cm_unscaled": 0.0,
+    "has_metric_depth": false,
+    "has_gt": true,
+    "fps_nominal": 30.0,
+    "notes": "单目无米制深度：绝对手腕误差大；相对根/缩放后约 4 cm。"
+  },
+  "iphone": {
+    "source": "iPhone 13 Pro Max + LiDAR (xhey mcap)",
+    "refs": [
+      "outputs/iphone_mcap/run_s2/report.json",
+      "outputs/iphone_mcap/sessions_s2/*/metadata.json",
+      "本地 视频审核_收藏_20260907-1623_详细分析.xlsx（未入库）",
+      "docs/iphone_mcap/results.md"
+    ],
+    "n_clips": 3,
+    "clips": [
+      {
+        "id": 266,
+        "name": "2026-08-22_18-21",
+        "task": "在家做饭 · 备菜到收拾",
+        "duration_s": 856.1,
+        "rgb_fps": 29.988,
+        "depth_fps": 30.0,
+        "rgb_period_med_ms": 33.343,
+        "rgb_period_p95_ms": 33.349,
+        "rgb_period_p99_ms": 33.354,
+        "rgb_max_gap_ms": 66.688,
+        "rgb_frames": 25675,
+        "depth_frames": 25675,
+        "onboard_both_hands": 0.915,
+        "hand_msg_over_rgb": 0.986,
+        "depth_conf_ge1": 0.81,
+        "depth_conf_eq2": 0.699,
+        "imu_hz": 99.85,
+        "pose_hz": 36.34,
+        "wilor_either_short180": 0.867,
+        "wilor_left_short180": 0.8,
+        "wilor_right_short180": 0.633,
+        "wilor_either_full_s2": 0.156,
+        "wilor_left_full_s2": 0.08,
+        "wilor_right_full_s2": 0.14,
+        "label_coverage_s2": 0.9535,
+        "depth_valid_frac_session": 0.792
+      },
+      {
+        "id": 312,
+        "name": "2026-08-24_21-18",
+        "task": "新手首拍 · 随便拍点啥",
+        "duration_s": 928.5,
+        "rgb_fps": 29.985,
+        "depth_fps": 30.0,
+        "rgb_period_med_ms": 33.343,
+        "rgb_period_p95_ms": 33.348,
+        "rgb_period_p99_ms": 33.353,
+        "rgb_max_gap_ms": 100.031,
+        "rgb_frames": 27843,
+        "depth_frames": 27843,
+        "onboard_both_hands": 0.854,
+        "hand_msg_over_rgb": 0.962,
+        "depth_conf_ge1": 0.909,
+        "depth_conf_eq2": 0.846,
+        "imu_hz": 99.86,
+        "pose_hz": 46.96,
+        "wilor_either_short180": 0.906,
+        "wilor_left_short180": 0.844,
+        "wilor_right_short180": 0.55,
+        "wilor_either_full_s2": 0.079,
+        "wilor_left_full_s2": 0.071,
+        "wilor_right_full_s2": 0.07,
+        "label_coverage_s2": 0.9959,
+        "depth_valid_frac_session": 0.908
+      },
+      {
+        "id": 597,
+        "name": "2026-09-05_17-16",
+        "task": "居家整理 · 叠衣收纳",
+        "duration_s": 1327.7,
+        "rgb_fps": 29.916,
+        "depth_fps": 29.9,
+        "rgb_period_med_ms": 33.343,
+        "rgb_period_p95_ms": 33.348,
+        "rgb_period_p99_ms": 33.353,
+        "rgb_max_gap_ms": 1167.002,
+        "rgb_frames": 39720,
+        "depth_frames": 39720,
+        "onboard_both_hands": 0.81,
+        "hand_msg_over_rgb": 0.979,
+        "depth_conf_ge1": 0.891,
+        "depth_conf_eq2": 0.794,
+        "imu_hz": 99.86,
+        "pose_hz": 35.61,
+        "wilor_either_short180": 0.528,
+        "wilor_left_short180": 0.456,
+        "wilor_right_short180": 0.128,
+        "wilor_either_full_s2": 0.28,
+        "wilor_left_full_s2": 0.09,
+        "wilor_right_full_s2": 0.251,
+        "label_coverage_s2": 0.9086,
+        "depth_valid_frac_session": 0.898
+      }
+    ],
+    "onboard_both_hands_mean": 0.8596666666666667,
+    "depth_conf_ge1_mean": 0.8700000000000001,
+    "rgb_fps_mean": 29.962999999999997,
+    "rgb_depth_frame_match": true,
+    "wilor_either_short180_mean": 0.767,
+    "wilor_either_full_s2_mean": 0.17166666666666666,
+    "label_coverage_s2_mean": 0.9526666666666667,
+    "has_metric_depth": true,
+    "has_gt": false,
+    "proxy_gt": {
+      "ref": "docs/iphone_eval/dexycb_summary.json / docs/iphone_capture_eval.md",
+      "setting": "DexYCB 真值手上，用 iPhone 深度分辨率模拟 LiDAR 反投影",
+      "wilor_detect_of_gt": 0.9922928709055877,
+      "wrist_median_cm_rgbd": 1.511,
+      "wrist_p90_cm_rgbd": 2.607,
+      "wrist_le2cm_rgbd": 0.718,
+      "mpjpe_cm_rgbd": 1.809,
+      "wrist_median_cm_mono_same": 2.429,
+      "note": "第三视角桌面相机，不是头戴；只作「RGB-D 融合能到多准」的代理。"
+    },
+    "notes": "采集层：RGB≈30fps 很稳、深度帧数=彩色、ARKit 双手 2D 检出 81–91%。训练层：整段 WiLoR+LiDAR 有效三维手偏低（出画/静止），短窗口更高。无头戴真值；DexYCB iPhone-sim RGB-D 手腕中位 1.51 cm 作代理。"
+  },
+  "summary": {
+    "wrist_error_median_cm": {
+      "HOT3D 双目": 1.22,
+      "HOT3D 单目": 2.71,
+      "iPhone RGB-D\n(DexYCB 代理)": 1.511,
+      "EgoDex WiLoR\n(缩放后)": 4.03,
+      "EgoDex WiLoR\n(绝对/未缩放)": 22.3
+    },
+    "joint_mpjpe_median_cm": {
+      "HOT3D 双目": 2.12,
+      "iPhone RGB-D\n(DexYCB 代理)": 1.809,
+      "EgoDex WiLoR\n(相对根)": 3.97,
+      "HOT3D 单目": 4.09
+    },
+    "hand_detect": {
+      "HOT3D 双目都检出": 0.86,
+      "EgoDex WiLoR": 0.976,
+      "iPhone ARKit 双手2D\n(三段均值)": 0.8596666666666667,
+      "iPhone WiLoR 任一手\n(前180帧均值)": 0.767,
+      "iPhone WiLoR 任一手\n(整段 stride2 均值)": 0.17166666666666666
+    },
+    "depth_coverage": {
+      "iPhone LiDAR conf≥1\n(三段均值)": 0.8700000000000001,
+      "HOT3D 双目标签覆盖\n(24 clips)": 0.79,
+      "EgoDex 米制深度": 0.0
+    },
+    "fps_stability_iphone": {
+      "2026-08-22_18-21": {
+        "rgb_fps": 29.988,
+        "period_med_ms": 33.343,
+        "period_p99_ms": 33.354,
+        "max_gap_ms": 66.688
+      },
+      "2026-08-24_21-18": {
+        "rgb_fps": 29.985,
+        "period_med_ms": 33.343,
+        "period_p99_ms": 33.353,
+        "max_gap_ms": 100.031
+      },
+      "2026-09-05_17-16": {
+        "rgb_fps": 29.916,
+        "period_med_ms": 33.343,
+        "period_p99_ms": 33.353,
+        "max_gap_ms": 1167.002
+      }
+    }
+  }
+}

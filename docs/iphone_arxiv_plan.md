@@ -30,14 +30,22 @@
 
 **一句话目标**：讲清楚「什么样的帧配得上训练」，以及双目/LiDAR/单目差在哪。
 
-| 内容 | 图/表 |
-|---|---|
-| 覆盖率、坏帧原因（模糊、出画、fit、depth） | QC 表 |
-| 手腕深度：WiLoR mono vs LiDAR（修前/修后） | 直方图 |
-| 与 HOT3D 双目标签对比（有真值时） | 中位误差 cm |
-| 时序平滑 / 缺口填充对 ADE 的影响 | 消融 |
+| 内容 | 图/表 | 状态 |
+|---|---|---|
+| iPhone vs EgoDex vs HOT3D 总览 | [`docs/iphone_mcap/quality_compare.md`](iphone_mcap/quality_compare.md) + `quality_*.png` | **已完成**（2026-10-11） |
+| 覆盖率、坏帧原因（模糊、出画、静止） | `outputs/iphone_mcap/run_s2/report.md` | 已有 |
+| 手腕/关节误差：HOT3D 双目 1.22–1.24 cm；DexYCB iPhone-sim RGB-D 1.51 cm；EgoDex WiLoR 相对根 ≈3.97 cm / 绝对手腕 ≈22 cm | `quality_wrist_error.png` | 已有（真机头戴无 GT，用代理） |
+| 检出：ARKit 双手 2D 81–91%；WiLoR 整段有效手偏低 | `quality_hand_detect.png` | 已有 |
+| 深度覆盖 81–91%、RGB=Depth、≈30 fps | `quality_depth_coverage.png` / `quality_fps_stability.png` | 已有 |
+| 手腕深度：WiLoR mono vs LiDAR（修前/修后）直方图 | — | 待补 |
+| 时序平滑 / 缺口填充对 ADE 的影响 | — | 待补（Path A 消融） |
 
-**成功标准**：审稿人能复现「从原始 mcap 到可训练张量」的每一刀。
+**成功标准**：审稿人能复现「从原始 mcap 到可训练张量」的每一刀；质量表能直接进论文 Figure。
+
+**B 节关键数字（给摘要用）**：
+- 采集：3× Pro Max，RGB≈30.0 fps，深度帧数=彩色，LiDAR conf≥1 均值 ≈87%，机载双手 2D 均值 ≈86%。
+- 精度代理：RGB-D 手腕中位 **1.51 cm**（DexYCB iPhone-sim）；HOT3D 双目 **1.24 cm**；EgoDex 单目绝对手腕 **~22 cm**。
+- 诚实披露：整段 WiLoR+LiDAR「任一手有效」均值只有约 **17%**（出画/静止）；短活跃窗约 **77%**。
 
 ---
 
@@ -64,7 +72,7 @@
 ## 近期排期（建议）
 
 1. **本周**：A2–A3 出第一张表（本文档对应的实验）。
-2. **下周**：A 稳定后写 B 的质量图；补更多 iPhone 片段。
+2. **本周**：B 质量对比表已写入 `docs/iphone_mcap/quality_compare.md`；下一步补更多有深度片段 + mono vs LiDAR 直方图。
 3. **再后**：C 的预训练对比；考虑图像 ACT。
 
 ## 复现入口
