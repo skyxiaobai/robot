@@ -41,3 +41,14 @@ MANO_LEFT.pkl
 # WiLoR 加载时可能在当前目录留下指向 MANO_MODEL_DIR 的链接
 mano_data
 /outputs/headcam_demo/
+
+# HF iPhone mirrors (large; local only)
+/data/hf_iphone/zeno_lidar/
+/data/hf_iphone/zeno_phone_sample/
+/data/hf_iphone/zeno_raw/
+/data/hf_iphone/hub_rgb/
+/data/hf_iphone/hub_rgb_imu/
+/data/hf_iphone/unified/
+/data/hf_iphone/logs/
+/outputs/xhey_hf/
+/outputs/xhey_hf_w2/

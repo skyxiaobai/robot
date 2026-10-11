@@ -7,6 +7,17 @@
 
 ---
 
+## XHEY + Hugging Face iPhone 数据
+
+> 更新：2026-10-11 19:05 CST。
+
+- 已下载 5 个 HF 数据集到 `data/hf_iphone/`（媒体不进 git；说明 `docs/hf_iphone_data.md`）。
+- 统一 episode：zeno_lidar 8、hub_rgb 20（WiLoR）、hub_imu 12（WiLoR）、zeno_raw 16（WiLoR）、zeno_phone 5（WiLoR）。
+- **Wave 2 最好配比 `iphone+hub_rgb` ADE 16.45 cm，首次略赢 zero 16.68（−0.23 cm）**。详见 `docs/xhey_model.md`。
+- 脚本：`scripts/convert_hf_iphone.py`、`scripts/wilor_video_to_episodes.py`；`train_xhey.py --mix` 支持 zeno_lidar/hub_rgb/hub_imu/zeno_raw/zeno_phone。
+- 许可：zeno-* CC BY-NC；Hubdata other。
+
+
 ## 1. 一张图看懂项目
 
 数据从左流到右。颜色表示现在的状态：绿 = 这条软件路径已经能跑；黄 = 只做了一部分；红 = 还在等。
