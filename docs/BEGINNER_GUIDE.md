@@ -4,6 +4,8 @@
 > 目标：用一张图、几个类比、短句子，把「这个仓库到底在干什么」讲明白。  
 > 更新日期：2026-10-11。命令都对照过仓库里脚本的 `--help`，没有编造。
 >
+> **新手建议先读漫画卡：** [`BEGINNER_COMIC.md`](BEGINNER_COMIC.md)（[`beginner_guide/comic.html`](beginner_guide/comic.html) 左右滑、[`beginner_guide/comic.pdf`](beginner_guide/comic.pdf) 可打印）。本文是需要命令和数字时再打开的文字版。
+>
 > HTML/PDF 离线版：[`docs/beginner_guide/guide.html`](beginner_guide/guide.html)、[`docs/beginner_guide/guide.pdf`](beginner_guide/guide.pdf)。
 
 ---
@@ -92,6 +94,7 @@ robot/
 
 | 路径 | 干什么 | 新手要不要看 |
 |---|---|---|
+| `docs/BEGINNER_COMIC.md` | 18 张漫画卡，先建立直觉 | **第一读** |
 | `docs/PROGRESS.md` | 做到哪、数字多少、下一步 | **必读** |
 | `docs/PIPELINE_ARCHITECTURE.md` | 从录制到训练的全流程 | **必读** |
 | `docs/iphone_capture.md` | 用 iPhone 怎么录 | 要用手机时读 |

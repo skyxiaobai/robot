@@ -1,6 +1,6 @@
 # 项目进度（给第一次看仓库的人）
 
-> 更新日期：2026-10-11。这是一份活文档：做到哪一步、下一步干什么，都写在这里。中文新手图解在 [`BEGINNER_GUIDE.md`](BEGINNER_GUIDE.md)，离线 HTML/PDF 在 [`beginner_guide/`](beginner_guide/)。
+> 更新日期：2026-10-11。这是一份活文档：做到哪一步、下一步干什么，都写在这里。中文新手建议先刷漫画卡 [`BEGINNER_COMIC.md`](BEGINNER_COMIC.md)（[`beginner_guide/comic.html`](beginner_guide/comic.html)、[`beginner_guide/comic.pdf`](beginner_guide/comic.pdf)），需要命令和数字时再看 [`BEGINNER_GUIDE.md`](BEGINNER_GUIDE.md) 与 [`beginner_guide/guide.html`](beginner_guide/guide.html)。
 > 名词先说人话：**采集** = 头上戴着摄像机录自己的手；**手部姿态** = 从画面里算出手指和手腕在哪儿；**QC** = 质检，扔掉手出画、糊掉或干等太久的片段；**LeRobot** = 训练代码能直接读的数据格式；**预训练** = 先用别人公开的第一视角视频学；**微调** = 再用自己录的数据改模型。
 
 仓库在做两件事：一条能训练的模仿学习流水线，和一副还没做出来的头戴双目采集设备。软件大多已经能跑。缺的是设备，以及设备到手之后用自己的数据再训一次。
