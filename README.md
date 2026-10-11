@@ -99,6 +99,7 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | 文档 | 内容 |
 |---|---|
 | `docs/BEGINNER_GUIDE.md` | **中文新手图解**。离线版 `docs/beginner_guide/guide.html`、`docs/beginner_guide/guide.pdf` |
+| `docs/xhey_model.md` | **XHEY 模型**（iPhone/xhey 数据）：一条命令训练、开源/合成配比消融、结果表 |
 | `docs/PROGRESS.md` | **项目进度**（流水线图、时间线、已有实验数字、待办）。建议第一次从这里读 |
 | `docs/retarget_sim.md` | 人手腕重定向到 MuJoCo 抓放。合成、EgoDex、HOT3D 三份 JSON 分开读 |
 | `docs/PIPELINE_ARCHITECTURE.md` | 整体架构：录制 → 校验 → 标定 → 认手 → 双目 → 世界系 → QC → 标注 → LeRobot → 训练，每步的状态和文件格式 |
