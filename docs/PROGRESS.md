@@ -133,7 +133,7 @@ flowchart LR
 | 2026-10-10 | [#29](https://github.com/skyxiaobai/robot/pull/29) | 记下 HOT3D/EgoDex 快手速度和快动作仿真；跳点门限改成按时间的预测（米/秒、加速度），RTS 噪声按速度在 30–300 之间取。同一 4 段 Quest3 用新默认重跑：手腕中位 1.13 cm、p90 2.38 cm、≤2 cm 85%，标注覆盖 70.5%，片段 4/4；`--legacy-temporal` 1.11 / 2.29 / 87%、覆盖 70.7%。 |
 | 2026-10-10 | [#30](https://github.com/skyxiaobai/robot/pull/30) | EgoDex 留出集对比 ReViV 与 WiLoR 单目：相对根中位 11.0 cm 对 3.97 cm，2D 门限检出率 21.2%。 |
 | 2026-10-10 | [#31](https://github.com/skyxiaobai/robot/pull/31) | HOT3D 20 段物体位姿重放：位姿耦合 1/20，其余 0。同一 101 条 EgoDex 刚性仍是 15/101；合死夹爪 41/101。合并再抓 89/101 是上界：再抓时用了仿真里方块的真实坐标（先知感知），不是相机，而且 101 次都是第一次没抬起来才再抓。行为克隆 45 条、3 个种子，人类最高 8/50。没有 80 条。 |
-| 2026-10-11 | 本页 | 加上中文新手图解 [`BEGINNER_GUIDE.md`](BEGINNER_GUIDE.md)，以及 `beginner_guide/guide.html`、`beginner_guide/guide.pdf`。 |
+| 2026-10-11 | [#41](https://github.com/skyxiaobai/robot/pull/41) | 加上中文新手图解 [`BEGINNER_GUIDE.md`](BEGINNER_GUIDE.md)，以及 `beginner_guide/guide.html`、`beginner_guide/guide.pdf`。 |
 
 ---
 
