@@ -1,5 +1,12 @@
 # PROGRESS
 
+## 2026-10-11 17:42 CST · XHEY 模型 + 开源/合成配比消融
+
+- 新模型名 **XHEY**（xhey App iPhone 数据）；脚本 `scripts/train_xhey.py`（`--mix` / `--ablation`）。
+- 消融（留一段 iPhone）：zero ADE **16.68 cm**；最好的 XHEY=iphone-only **17.60**（未赢 zero）；EgoDex/HOT3D/aug 均无帮助。
+- 文档 `docs/xhey_model.md`，图 `docs/xhey/xhey_results.png`。ckpt：`outputs/xhey/xhey.pt`（不进 git）。
+
+
 ## 2026-10-11 13:02 CST · iPhone 路径 A 第一张表
 - LeRobot：2 ep / 358 帧（QC 通过）
 - 训练：zero ADE **8.38 cm**；线性/MLP 均差于零动作（数据太少，同早期 HOT3D）
