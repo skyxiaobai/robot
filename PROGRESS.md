@@ -8,3 +8,7 @@
 ## 2026-10-11 13:30 CST · HOT3D 24clips + iPhone 全长
 - HOT3D：3576 帧；手腕 vs GT 中位 1.24cm；zero ADE **5.026**；linear/MLP 均更差
 - iPhone 全长 stride=10：9325 帧覆盖高但 valid_chunk@16=0，ADE 无法比；改 stride=2 重跑中
+
+## 2026-10-11 14:16 CST · iPhone 全长 stride=2
+- 46620 帧 @15fps；zero ADE **16.68**；MLP 16.56（≈持平）；线性 24.5
+- 全长未推翻「需更多数据/换模型」
