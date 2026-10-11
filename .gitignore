@@ -52,3 +52,7 @@ mano_data
 /data/hf_iphone/logs/
 /outputs/xhey_hf/
 /outputs/xhey_hf_w2/
+
+# Record3D / stray captures at repo root
+*.r3d
+/data/record3d/
