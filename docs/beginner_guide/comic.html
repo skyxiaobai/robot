@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<title>robot 漫画新手卡 · skyxiaobai/robot</title>
+<style>
+:root {
+  --ink:#1a1a1a; --muted:#5c5c5c; --accent:#00695c;
+  --bg:#1a1a1a; --card:#faf8f5;
+}
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body { margin:0; height:100%; overflow:hidden;
+  font-family:"Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif;
+  background:var(--bg); color:var(--ink); }
+.deck {
+  display:flex; height:100%; width:100%;
+  overflow-x:auto; overflow-y:hidden;
+  scroll-snap-type:x mandatory;
+  -webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
+}
+.deck::-webkit-scrollbar { display:none; }
+.card {
+  flex:0 0 100%; width:100%; height:100%;
+  scroll-snap-align:center; scroll-snap-stop:always;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding:12px 16px 72px; background:var(--bg);
+}
+.panel {
+  width:min(100%,420px); background:var(--card);
+  border-radius:20px; overflow:hidden;
+  box-shadow:0 8px 32px rgba(0,0,0,.35);
+  display:flex; flex-direction:column;
+}
+.badge {
+  display:inline-block; margin:14px 16px 0;
+  padding:4px 12px; border-radius:999px;
+  background:#00695c; color:#fff; font-size:12px; font-weight:700;
+  letter-spacing:.04em;
+}
+.panel h2 {
+  margin:8px 16px 4px; font-size:1.35rem; line-height:1.3;
+}
+.art {
+  margin:4px 12px; background:#fff; border-radius:14px;
+  border:1px solid #e0dcd4; overflow:hidden;
+}
+.art svg { display:block; width:100%; height:auto; }
+.caption {
+  margin:10px 16px 18px; font-size:1.05rem; font-weight:600;
+  line-height:1.45; color:var(--ink);
+  min-height:2.9em;
+}
+.hud {
+  position:fixed; left:0; right:0; bottom:0; z-index:10;
+  display:flex; flex-direction:column; align-items:center; gap:8px;
+  padding:10px 16px 18px;
+  background:linear-gradient(transparent, rgba(0,0,0,.85) 40%);
+  color:#fff; pointer-events:none;
+}
+.dots { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; max-width:90vw; }
+.dot {
+  width:7px; height:7px; border-radius:50%; background:rgba(255,255,255,.35);
+  transition:all .2s;
+}
+.dot.on { background:#80cbc4; transform:scale(1.35); }
+.hint { font-size:12px; opacity:.75; pointer-events:none; }
+.nav {
+  position:fixed; top:50%; transform:translateY(-50%);
+  width:44px; height:44px; border-radius:50%; border:none;
+  background:rgba(255,255,255,.15); color:#fff; font-size:22px;
+  cursor:pointer; z-index:11; backdrop-filter:blur(4px);
+  pointer-events:auto;
+}
+.nav:active { background:rgba(255,255,255,.3); }
+.nav.prev { left:8px; }
+.nav.next { right:8px; }
+@media (min-width:700px) {
+  .card { padding:24px 24px 80px; }
+  .panel { width:min(100%,480px); }
+}
+/* print / PDF: one card per page */
+@media print {
+  @page { size: A5 portrait; margin: 8mm; }
+  html,body { height:auto; overflow:visible; background:#fff; }
+  .deck { display:block; overflow:visible; height:auto; }
+  .hud,.nav { display:none !important; }
+  .card {
+    flex:none; width:100%; height:auto; min-height:0;
+    page-break-after:always; break-after:page;
+    padding:0; background:#fff;
+    display:flex; flex-direction:column; align-items:stretch;
+  }
+  .card:last-child { page-break-after:auto; }
+  .panel {
+    width:100%; max-width:none; box-shadow:none;
+    border:1.5px solid #ccc; border-radius:14px;
+    flex:1;
+  }
+  .badge { font-size:11pt; margin:12pt 14pt 0; }
+  .panel h2 { font-size:20pt; margin:8pt 14pt 4pt; }
+  .art { margin:6pt 12pt; }
+  .caption { font-size:13pt; margin:10pt 14pt 16pt; min-height:0; }
+}
+</style>
+</head>
+<body>
+<button class="nav prev" aria-label="上一张" onclick="go(-1)">‹</button>
+<button class="nav next" aria-label="下一张" onclick="go(1)">›</button>
+<div class="deck" id="deck">
+
+  <section class="card" id="c0" data-i="0">
+    <div class="panel">
+      <span class="badge">封面</span>
+      <h2>整件事像做饭</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#FFF8E7"/>
+<!-- chef hat phone -->
+<rect x="40" y="70" width="70" height="110" rx="10" fill="#fff" stroke="#333" stroke-width="2"/>
+<circle cx="75" cy="115" r="18" fill="#FFCCBC"/>
+<path d="M55 145 Q75 170 95 145" fill="none" stroke="#E57373" stroke-width="3"/>
+<text x="75" y="55" text-anchor="middle" font-size="13" font-weight="700">①拍</text>
+<path d="M120 125 H150" stroke="#1a1a1a" stroke-width="4" marker-end="url(#arr)"/>
+<!-- hand skeleton -->
+<g transform="translate(160,80)">
+  <circle cx="30" cy="70" r="8" fill="#FFAB91"/>
+  <line x1="30" y1="70" x2="20" y2="40" stroke="#5D4037" stroke-width="3"/>
+  <line x1="30" y1="70" x2="30" y2="30" stroke="#5D4037" stroke-width="3"/>
+  <line x1="30" y1="70" x2="42" y2="35" stroke="#5D4037" stroke-width="3"/>
+  <line x1="30" y1="70" x2="52" y2="45" stroke="#5D4037" stroke-width="3"/>
+  <line x1="30" y1="70" x2="55" y2="60" stroke="#5D4037" stroke-width="3"/>
+  <circle cx="20" cy="40" r="4" fill="#1565C0"/><circle cx="30" cy="30" r="4" fill="#1565C0"/>
+  <circle cx="42" cy="35" r="4" fill="#1565C0"/><circle cx="52" cy="45" r="4" fill="#1565C0"/>
+</g>
+<text x="195" y="55" text-anchor="middle" font-size="13" font-weight="700">②认手</text>
+<path d="M230 125 H260" stroke="#1a1a1a" stroke-width="4" marker-end="url(#arr)"/>
+<!-- book -->
+<rect x="270" y="85" width="60" height="75" rx="4" fill="#E8F5E9" stroke="#2E7D32" stroke-width="2"/>
+<text x="300" y="125" text-anchor="middle" font-size="11">课件</text>
+<text x="300" y="145" text-anchor="middle" font-size="11">LeRobot</text>
+<text x="300" y="55" text-anchor="middle" font-size="13" font-weight="700">③学</text>
+<!-- big cooking pot -->
+<ellipse cx="180" cy="230" rx="90" ry="20" fill="#FFECB3" stroke="#F9A825"/>
+<text x="180" y="235" text-anchor="middle" font-size="14" font-weight="700" fill="#E65100">🍳 厨房类比贯穿全书</text>
+</svg>
+      </div>
+      <p class="caption">头上拍切菜→认出手指→做成课件→教下一步</p>
+    </div>
+  </section>
+
+  <section class="card" id="c1a" data-i="1">
+    <div class="panel">
+      <span class="badge">①采集参数</span>
+      <h2>双目＝两只眼睛</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#E3F2FD"/>
+<!-- two eyes / cameras -->
+<g transform="translate(40,60)">
+  <rect x="0" y="20" width="80" height="60" rx="8" fill="#fff" stroke="#1565C0" stroke-width="3"/>
+  <circle cx="40" cy="50" r="16" fill="#90CAF9"/><circle cx="40" cy="50" r="7" fill="#0D47A1"/>
+  <text x="40" y="100" text-anchor="middle" font-size="12">左目</text>
+</g>
+<g transform="translate(200,60)">
+  <rect x="0" y="20" width="80" height="60" rx="8" fill="#fff" stroke="#1565C0" stroke-width="3"/>
+  <circle cx="40" cy="50" r="16" fill="#90CAF9"/><circle cx="40" cy="50" r="7" fill="#0D47A1"/>
+  <text x="40" y="100" text-anchor="middle" font-size="12">右目</text>
+</g>
+<!-- baseline arrow -->
+<path d="M120 90 H200" stroke="#C62828" stroke-width="4" marker-end="url(#arrR)"/>
+<path d="M200 90 H120" stroke="#C62828" stroke-width="4"/>
+<text x="160" y="80" text-anchor="middle" font-size="16" font-weight="800" fill="#C62828">8–10 cm</text>
+<!-- sync -->
+<rect x="50" y="160" width="260" height="50" rx="12" fill="#FFF8E1" stroke="#F9A825" stroke-width="2"/>
+<text x="180" y="190" text-anchor="middle" font-size="15" font-weight="700">⏱ 左右同时眨 ≤1 ms</text>
+<!-- fps badge -->
+<circle cx="180" cy="245" r="22" fill="#2E7D32"/>
+<text x="180" y="250" text-anchor="middle" font-size="12" fill="#fff" font-weight="700">30fps</text>
+</svg>
+      </div>
+      <p class="caption">30fps·基线8–10cm·同步≤1ms·深度单位：米</p>
+    </div>
+  </section>
+
+  <section class="card" id="c1b" data-i="2">
+    <div class="panel">
+      <span class="badge">①采集参数</span>
+      <h2>iPhone＝带激光尺的手机</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#FFF3E0"/>
+<!-- phone -->
+<rect x="130" y="30" width="100" height="170" rx="14" fill="#263238" stroke="#000" stroke-width="2"/>
+<rect x="140" y="50" width="80" height="120" rx="4" fill="#81D4FA"/>
+<!-- lidar beams -->
+<path d="M180 100 L80 200" stroke="#FF6F00" stroke-width="2" stroke-dasharray="4 3"/>
+<path d="M180 100 L180 220" stroke="#FF6F00" stroke-width="2" stroke-dasharray="4 3"/>
+<path d="M180 100 L280 200" stroke="#FF6F00" stroke-width="2" stroke-dasharray="4 3"/>
+<!-- hand -->
+<ellipse cx="80" cy="210" rx="28" ry="18" fill="#FFCCBC" stroke="#E57373"/>
+<text x="80" y="215" text-anchor="middle" font-size="11">手</text>
+<text x="280" y="215" text-anchor="middle" font-size="12" font-weight="700" fill="#E65100">激光量距</text>
+<!-- distance badge -->
+<rect x="60" y="235" width="240" height="32" rx="8" fill="#FFE0B2" stroke="#EF6C00"/>
+<text x="180" y="256" text-anchor="middle" font-size="14" font-weight="700">📏 ≥25cm · 量程约0.25–5m</text>
+</svg>
+      </div>
+      <p class="caption">Pro+Record3D·后置LiDAR·手距≥25cm（30–70最佳）</p>
+    </div>
+  </section>
+
+  <section class="card" id="c2a" data-i="3">
+    <div class="panel">
+      <span class="badge">②数据类型</span>
+      <h2>菜照 + 激光尺</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#FAFAFA"/>
+<!-- RGB photo -->
+<rect x="25" y="40" width="140" height="120" rx="10" fill="#FFECB3" stroke="#F9A825" stroke-width="2"/>
+<circle cx="70" cy="90" r="16" fill="#FFAB91"/>
+<circle cx="110" cy="85" r="16" fill="#90CAF9"/>
+<rect x="55" y="120" width="70" height="20" rx="4" fill="#A5D6A7"/>
+<text x="95" y="185" text-anchor="middle" font-size="14" font-weight="700">彩色 RGB</text>
+<text x="95" y="205" text-anchor="middle" font-size="12" fill="#666">像一张菜照</text>
+<!-- depth -->
+<rect x="195" y="40" width="140" height="120" rx="10" fill="#E8EAF6" stroke="#3949AB" stroke-width="2"/>
+<!-- depth gradient circles -->
+<circle cx="265" cy="100" r="40" fill="#1A237E" opacity="0.3"/>
+<circle cx="265" cy="100" r="28" fill="#283593" opacity="0.4"/>
+<circle cx="265" cy="100" r="16" fill="#3F51B5" opacity="0.6"/>
+<circle cx="265" cy="100" r="8" fill="#C5CAE9"/>
+<text x="265" y="185" text-anchor="middle" font-size="14" font-weight="700">深度 Depth</text>
+<text x="265" y="205" text-anchor="middle" font-size="12" fill="#666">激光尺 · 单位米</text>
+<path d="M170 100 H190" stroke="#1a1a1a" stroke-width="3" marker-end="url(#arr)"/>
+<text x="180" y="250" text-anchor="middle" font-size="13" fill="#C62828" font-weight="700">手腕常见 0.2–0.8 m（不是毫米！）</text>
+</svg>
+      </div>
+      <p class="caption">RGB＝菜照 · 深度＝每个像素离镜头几米</p>
+    </div>
+  </section>
+
+  <section class="card" id="c2b" data-i="4">
+    <div class="panel">
+      <span class="badge">②数据类型</span>
+      <h2>手指图钉 + 下一刀</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#F3E5F5"/>
+<!-- hand with 21 pins -->
+<g transform="translate(40,50)">
+  <ellipse cx="60" cy="100" rx="35" ry="45" fill="#FFCCBC" stroke="#E57373"/>
+  <!-- pins -->
+  <g fill="#7B1FA2">
+    <circle cx="60" cy="130" r="5"/><!-- wrist -->
+    <circle cx="40" cy="90" r="4"/><circle cx="30" cy="70" r="4"/><circle cx="25" cy="55" r="4"/><circle cx="22" cy="40" r="4"/>
+    <circle cx="55" cy="75" r="4"/><circle cx="55" cy="55" r="4"/><circle cx="55" cy="38" r="4"/><circle cx="55" cy="22" r="4"/>
+    <circle cx="70" cy="72" r="4"/><circle cx="75" cy="52" r="4"/><circle cx="78" cy="35" r="4"/><circle cx="80" cy="20" r="4"/>
+    <circle cx="85" cy="80" r="4"/><circle cx="95" cy="62" r="4"/><circle cx="100" cy="48" r="4"/><circle cx="103" cy="35" r="4"/>
+    <circle cx="90" cy="100" r="4"/><circle cx="105" cy="95" r="4"/><circle cx="115" cy="90" r="4"/><circle cx="122" cy="85" r="4"/>
+  </g>
+  <text x="60" y="175" text-anchor="middle" font-size="13" font-weight="700">21 个图钉</text>
+</g>
+<!-- big arrow -->
+<path d="M170 110 H210" stroke="#1a1a1a" stroke-width="5" marker-end="url(#arr)"/>
+<!-- action -->
+<g transform="translate(220,50)">
+  <rect x="0" y="30" width="110" height="100" rx="12" fill="#E8F5E9" stroke="#2E7D32" stroke-width="3"/>
+  <text x="55" y="70" text-anchor="middle" font-size="28">➡️</text>
+  <text x="55" y="100" text-anchor="middle" font-size="13" font-weight="700">下一刀</text>
+  <text x="55" y="120" text-anchor="middle" font-size="11">挪 1cm…</text>
+  <text x="55" y="175" text-anchor="middle" font-size="13" font-weight="700">action 增量</text>
+</g>
+<text x="180" y="250" text-anchor="middle" font-size="13" fill="#6A1B9A" font-weight="700">训练学的是「下一步怎么动」</text>
+</svg>
+      </div>
+      <p class="caption">21关节＝手指图钉 · action＝下一小步怎么挪</p>
+    </div>
+  </section>
+
+  <section class="card" id="c3a" data-i="5">
+    <div class="panel">
+      <span class="badge">③一帧流水线</span>
+      <h2>一帧走前半程</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#E0F7FA"/>
+<!-- 4 steps in 2x2 -->
+<g>
+  <rect x="20" y="35" width="140" height="85" rx="12" fill="#FFCDD2" stroke="#C62828" stroke-width="2"/>
+  <text x="90" y="70" text-anchor="middle" font-size="28">📷</text>
+  <text x="90" y="100" text-anchor="middle" font-size="13" font-weight="700">① 原始帧</text>
+  
+  <path d="M165 75 H190" stroke="#1a1a1a" stroke-width="4" marker-end="url(#arr)"/>
+  
+  <rect x="200" y="35" width="140" height="85" rx="12" fill="#FFE0B2" stroke="#EF6C00" stroke-width="2"/>
+  <text x="270" y="70" text-anchor="middle" font-size="28">✋</text>
+  <text x="270" y="100" text-anchor="middle" font-size="13" font-weight="700">② WiLoR</text>
+  
+  <path d="M270 125 V145" stroke="#1a1a1a" stroke-width="4" marker-end="url(#arr)"/>
+  
+  <rect x="200" y="155" width="140" height="85" rx="12" fill="#BBDEFB" stroke="#1565C0" stroke-width="2"/>
+  <text x="270" y="190" text-anchor="middle" font-size="28">📐</text>
+  <text x="270" y="220" text-anchor="middle" font-size="13" font-weight="700">③ 深度/三角化</text>
+  
+  <path d="M195 195 H170" stroke="#1a1a1a" stroke-width="4" marker-end="url(#arr)"/>
+  
+  <rect x="20" y="155" width="140" height="85" rx="12" fill="#C8E6C9" stroke="#2E7D32" stroke-width="2"/>
+  <text x="90" y="190" text-anchor="middle" font-size="28">🌍</text>
+  <text x="90" y="220" text-anchor="middle" font-size="13" font-weight="700">④ 世界坐标</text>
+</g>
+</svg>
+      </div>
+      <p class="caption">①拍下→②WiLoR认手→③量深度→④变世界坐标</p>
+    </div>
+  </section>
+
+  <section class="card" id="c3b" data-i="6">
+    <div class="panel">
+      <span class="badge">③一帧流水线</span>
+      <h2>一帧走后半程</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#F1F8E9"/>
+<!-- horizontal pipeline -->
+<g font-size="12" font-weight="700" text-anchor="middle">
+  <rect x="15" y="50" width="70" height="70" rx="10" fill="#E1BEE7" stroke="#7B1FA2" stroke-width="2"/>
+  <text x="50" y="80" font-size="22">🌊</text>
+  <text x="50" y="105">⑤平滑</text>
+  
+  <path d="M90 85 H110" stroke="#1a1a1a" stroke-width="3" marker-end="url(#arr)"/>
+  
+  <rect x="115" y="50" width="70" height="70" rx="10" fill="#B2DFDB" stroke="#00695C" stroke-width="2"/>
+  <text x="150" y="80" font-size="22">✅</text>
+  <text x="150" y="105">⑥质检</text>
+  
+  <path d="M190 85 H210" stroke="#1a1a1a" stroke-width="3" marker-end="url(#arr)"/>
+  
+  <rect x="215" y="50" width="70" height="70" rx="10" fill="#DCEDC8" stroke="#558B2F" stroke-width="2"/>
+  <text x="250" y="80" font-size="22">📚</text>
+  <text x="250" y="105">⑦课件</text>
+  
+  <path d="M290 85 H310" stroke="#1a1a1a" stroke-width="3" marker-end="url(#arr)"/>
+  
+  <rect x="315" y="50" width="35" height="70" rx="8" fill="#FFF9C4" stroke="#F9A825" stroke-width="2"/>
+  <text x="332" y="90" font-size="18">🎓</text>
+</g>
+<!-- cooking analogy strip -->
+<rect x="30" y="160" width="300" height="90" rx="14" fill="#FFF8E1" stroke="#FF8F00" stroke-width="2"/>
+<text x="180" y="195" text-anchor="middle" font-size="15" font-weight="700">一条命令串全程</text>
+<text x="180" y="220" text-anchor="middle" font-size="12" fill="#555">run_stereo_pipeline.py</text>
+<text x="180" y="240" text-anchor="middle" font-size="11" fill="#888">双目 / HOT3D / iPhone 同一入口</text>
+</svg>
+      </div>
+      <p class="caption">⑤平滑→⑥质检扔糊的→⑦打包课件→⑧学下一刀</p>
+    </div>
+  </section>
+
+  <section class="card" id="c4a" data-i="7">
+    <div class="panel">
+      <span class="badge">④WiLoR</span>
+      <h2>看照片画手骨的专家</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#FFFDE7"/>
+<!-- expert character -->
+<circle cx="60" cy="90" r="28" fill="#FFE0B2" stroke="#EF6C00" stroke-width="2"/>
+<text x="60" y="98" text-anchor="middle" font-size="22">🧑‍🎨</text>
+<text x="60" y="140" text-anchor="middle" font-size="12" font-weight="700">WiLoR</text>
+<!-- flow -->
+<path d="M95 90 H125" stroke="#1a1a1a" stroke-width="4" marker-end="url(#arr)"/>
+<rect x="130" y="55" width="70" height="70" rx="8" fill="#FFCDD2" stroke="#C62828" stroke-width="2"/>
+<rect x="145" y="70" width="40" height="40" rx="3" fill="none" stroke="#C62828" stroke-width="3" stroke-dasharray="4 2"/>
+<text x="165" y="145" text-anchor="middle" font-size="11">检测框</text>
+<path d="M205 90 H235" stroke="#1a1a1a" stroke-width="4" marker-end="url(#arr)"/>
+<rect x="240" y="55" width="90" height="70" rx="8" fill="#BBDEFB" stroke="#1565C0" stroke-width="2"/>
+<text x="285" y="85" text-anchor="middle" font-size="12" font-weight="700">MANO</text>
+<text x="285" y="105" text-anchor="middle" font-size="11">弯曲+形状</text>
+<!-- result -->
+<path d="M180 140 V165" stroke="#1a1a1a" stroke-width="4" marker-end="url(#arr)"/>
+<rect x="80" y="175" width="200" height="55" rx="12" fill="#C8E6C9" stroke="#2E7D32" stroke-width="3"/>
+<text x="180" y="210" text-anchor="middle" font-size="16" font-weight="800">→ 21 个关节点</text>
+<text x="180" y="255" text-anchor="middle" font-size="12" fill="#666">GPU优先 · MediaPipe是备用计算器</text>
+</svg>
+      </div>
+      <p class="caption">圈出手→套上MANO手模→吐出21个关节点</p>
+    </div>
+  </section>
+
+  <section class="card" id="c4b" data-i="8">
+    <div class="panel">
+      <span class="badge">④WiLoR</span>
+      <h2>认得出手，量不准远近</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#FFEBEE"/>
+<!-- two interpretations -->
+<rect x="20" y="40" width="150" height="130" rx="12" fill="#fff" stroke="#C62828" stroke-width="2"/>
+<text x="95" y="65" text-anchor="middle" font-size="12" font-weight="700">小手很近？</text>
+<ellipse cx="95" cy="110" rx="25" ry="30" fill="#FFCCBC"/>
+<text x="95" y="155" text-anchor="middle" font-size="11" fill="#C62828">误差可达10–22cm</text>
+
+<rect x="190" y="40" width="150" height="130" rx="12" fill="#fff" stroke="#C62828" stroke-width="2"/>
+<text x="265" y="65" text-anchor="middle" font-size="12" font-weight="700">大手很远？</text>
+<ellipse cx="265" cy="110" rx="40" ry="35" fill="#FFCCBC" opacity="0.5"/>
+<text x="265" y="155" text-anchor="middle" font-size="11" fill="#C62828">单目分不清</text>
+
+<!-- fix -->
+<path d="M180 180 V200" stroke="#2E7D32" stroke-width="4" marker-end="url(#arrG)"/>
+<rect x="50" y="210" width="260" height="45" rx="12" fill="#E8F5E9" stroke="#2E7D32" stroke-width="3"/>
+<text x="180" y="238" text-anchor="middle" font-size="14" font-weight="800" fill="#1B5E20">双目≈1.2cm · LiDAR≈1.5cm ✅</text>
+</svg>
+      </div>
+      <p class="caption">单目不知远近 · 必须双目或LiDAR修尺度</p>
+    </div>
+  </section>
+
+  <section class="card" id="c5a" data-i="9">
+    <div class="panel">
+      <span class="badge">⑤IMU与时间戳</span>
+      <h2>IMU＝头上的运动手环</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#E8EAF6"/>
+<!-- head with band -->
+<circle cx="180" cy="100" r="50" fill="#FFE0B2" stroke="#EF6C00" stroke-width="2"/>
+<ellipse cx="180" cy="70" rx="55" ry="12" fill="#5C6BC0" stroke="#283593" stroke-width="2"/>
+<text x="180" y="75" text-anchor="middle" font-size="11" fill="#fff" font-weight="700">IMU 手环</text>
+<!-- eyes -->
+<circle cx="160" cy="100" r="5" fill="#333"/><circle cx="200" cy="100" r="5" fill="#333"/>
+<path d="M165 120 Q180 130 195 120" fill="none" stroke="#333" stroke-width="2"/>
+<!-- motion arrows -->
+<path d="M100 80 Q60 100 100 120" fill="none" stroke="#C62828" stroke-width="3" marker-end="url(#arrR)"/>
+<path d="M260 80 Q300 100 260 120" fill="none" stroke="#C62828" stroke-width="3" marker-end="url(#arrR)"/>
+<text x="50" y="105" font-size="12" fill="#C62828" font-weight="700">转头</text>
+<text x="290" y="105" font-size="12" fill="#C62828" font-weight="700">点头</text>
+<!-- warning -->
+<rect x="40" y="180" width="280" height="70" rx="12" fill="#FFF8E1" stroke="#F9A825" stroke-width="2"/>
+<text x="180" y="210" text-anchor="middle" font-size="14" font-weight="700">⚠️ 测的是头，不是手！</text>
+<text x="180" y="235" text-anchor="middle" font-size="12" fill="#666">建议 ≥100Hz · 与相机刚性固定</text>
+</svg>
+      </div>
+      <p class="caption">测头怎么晃·帮SLAM稳住·不能当手部姿态</p>
+    </div>
+  </section>
+
+  <section class="card" id="c5b" data-i="10">
+    <div class="panel">
+      <span class="badge">⑤IMU与时间戳</span>
+      <h2>时间戳＝照片背面写几点几分</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#E0F2F1"/>
+<!-- timeline -->
+<line x1="30" y1="80" x2="330" y2="80" stroke="#00695C" stroke-width="3"/>
+<text x="30" y="55" font-size="13" font-weight="700">时间轴 →</text>
+<!-- video frames -->
+<g fill="#C62828">
+  <circle cx="70" cy="80" r="8"/><circle cx="150" cy="80" r="8"/>
+  <circle cx="230" cy="80" r="8"/><circle cx="310" cy="80" r="8"/>
+</g>
+<text x="70" y="110" text-anchor="middle" font-size="11">帧0</text>
+<text x="150" y="110" text-anchor="middle" font-size="11">帧1</text>
+<text x="230" y="110" text-anchor="middle" font-size="11">帧2</text>
+<text x="310" y="110" text-anchor="middle" font-size="11">帧3</text>
+<text x="110" y="70" text-anchor="middle" font-size="10" fill="#666">33ms</text>
+<!-- IMU denser -->
+<g fill="#2E7D32">
+  <circle cx="50" cy="150" r="4"/><circle cx="70" cy="150" r="4"/>
+  <circle cx="90" cy="150" r="4"/><circle cx="110" cy="150" r="4"/>
+  <circle cx="130" cy="150" r="4"/><circle cx="150" cy="150" r="4"/>
+  <circle cx="170" cy="150" r="4"/><circle cx="190" cy="150" r="4"/>
+  <circle cx="210" cy="150" r="4"/><circle cx="230" cy="150" r="4"/>
+  <circle cx="250" cy="150" r="4"/><circle cx="270" cy="150" r="4"/>
+</g>
+<text x="180" y="175" text-anchor="middle" font-size="12">IMU 更密（如200Hz）盖住视频</text>
+<!-- sync badge -->
+<rect x="50" y="200" width="260" height="50" rx="12" fill="#FFECB3" stroke="#F9A825" stroke-width="2"/>
+<text x="180" y="230" text-anchor="middle" font-size="14" font-weight="800">左右同时刻 ≤1ms 才算对齐</text>
+</svg>
+      </div>
+      <p class="caption">多路对齐靠它·左右差≤1ms·丢帧留缺口</p>
+    </div>
+  </section>
+
+  <section class="card" id="c6a" data-i="11">
+    <div class="panel">
+      <span class="badge">⑥位姿与SLAM</span>
+      <h2>镜头前 vs 厨房里</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#FAFAFA"/>
+<!-- camera frame -->
+<rect x="15" y="40" width="150" height="150" rx="12" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+<text x="90" y="65" text-anchor="middle" font-size="13" font-weight="700">相机系</text>
+<circle cx="90" cy="110" r="8" fill="#1565C0"/>
+<text x="90" y="130" text-anchor="middle" font-size="10">镜头</text>
+<circle cx="130" cy="140" r="7" fill="#C62828"/>
+<path d="M90 110 L130 140" stroke="#C62828" stroke-width="2" stroke-dasharray="3 2"/>
+<text x="90" y="175" text-anchor="middle" font-size="12" fill="#C62828">手 0.48m</text>
+
+<path d="M175 115 H195" stroke="#1a1a1a" stroke-width="5" marker-end="url(#arr)"/>
+
+<!-- world frame -->
+<rect x="205" y="40" width="140" height="150" rx="12" fill="#E8F5E9" stroke="#2E7D32" stroke-width="2"/>
+<text x="275" y="65" text-anchor="middle" font-size="13" font-weight="700">世界系</text>
+<rect x="220" y="145" width="110" height="18" fill="#D7CCC8"/>
+<text x="275" y="140" text-anchor="middle" font-size="11">桌面</text>
+<circle cx="260" cy="120" r="7" fill="#C62828"/>
+<text x="275" y="175" text-anchor="middle" font-size="12" fill="#2E7D32">手在桌上</text>
+
+<text x="180" y="230" text-anchor="middle" font-size="13" font-weight="700">转头时：镜头前在动，桌上可能没动</text>
+<text x="180" y="255" text-anchor="middle" font-size="12" fill="#666">p_world = T_world_cam · p_cam</text>
+</svg>
+      </div>
+      <p class="caption">相机系＝离镜头多远 · 世界系＝在桌上哪</p>
+    </div>
+  </section>
+
+  <section class="card" id="c6b" data-i="12">
+    <div class="panel">
+      <span class="badge">⑥位姿与SLAM</span>
+      <h2>SLAM＝边走边画厨房地图</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#EFEBE9"/>
+<!-- room map -->
+<rect x="40" y="40" width="200" height="160" rx="8" fill="#FFF8E1" stroke="#8D6E63" stroke-width="2"/>
+<!-- furniture -->
+<rect x="55" y="150" width="70" height="30" fill="#BCAAA4"/>
+<text x="90" y="170" text-anchor="middle" font-size="10">桌子</text>
+<rect x="160" y="55" width="50" height="40" fill="#A5D6A7"/>
+<text x="185" y="80" text-anchor="middle" font-size="10">灶台</text>
+<!-- path -->
+<path d="M70 130 Q100 100 140 120 T200 90" fill="none" stroke="#1565C0" stroke-width="3" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+<circle cx="70" cy="130" r="6" fill="#C62828"/>
+<text x="70" y="120" text-anchor="middle" font-size="10">起点</text>
+<!-- tum file -->
+<rect x="255" y="60" width="90" height="120" rx="8" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+<text x="300" y="90" text-anchor="middle" font-size="12" font-weight="700">slam.tum</text>
+<text x="300" y="115" text-anchor="middle" font-size="10" fill="#555">时间</text>
+<text x="300" y="135" text-anchor="middle" font-size="10" fill="#555">位置xyz</text>
+<text x="300" y="155" text-anchor="middle" font-size="10" fill="#555">朝向四元数</text>
+<text x="180" y="240" text-anchor="middle" font-size="13" font-weight="700">仓库不算SLAM · 你放好文件即可</text>
+<text x="180" y="262" text-anchor="middle" font-size="12" fill="#666">临时：iPhone ARKit 也能导出</text>
+</svg>
+      </div>
+      <p class="caption">SLAM/VIO算相机在房间哪 · 写入slam.tum</p>
+    </div>
+  </section>
+
+  <section class="card" id="c7a" data-i="13">
+    <div class="panel">
+      <span class="badge">⑦训练数据</span>
+      <h2>LeRobot＝统一课件格式</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#E8F5E9"/>
+<!-- messy notes -->
+<g transform="translate(30,50)">
+  <rect x="0" y="0" width="50" height="70" rx="4" fill="#FFCDD2" transform="rotate(-8 25 35)"/>
+  <rect x="30" y="10" width="50" height="70" rx="4" fill="#FFE0B2" transform="rotate(5 55 45)"/>
+  <rect x="55" y="0" width="50" height="70" rx="4" fill="#BBDEFB" transform="rotate(-3 80 35)"/>
+  <text x="55" y="100" text-anchor="middle" font-size="11">杂乱片段</text>
+</g>
+<path d="M150 85 H185" stroke="#1a1a1a" stroke-width="5" marker-end="url(#arr)"/>
+<!-- neat book -->
+<g transform="translate(200,40)">
+  <rect x="0" y="0" width="120" height="100" rx="8" fill="#fff" stroke="#2E7D32" stroke-width="3"/>
+  <line x1="15" y1="25" x2="105" y2="25" stroke="#A5D6A7" stroke-width="3"/>
+  <line x1="15" y1="45" x2="105" y2="45" stroke="#A5D6A7" stroke-width="3"/>
+  <line x1="15" y1="65" x2="80" y2="65" stroke="#A5D6A7" stroke-width="3"/>
+  <text x="60" y="90" text-anchor="middle" font-size="12" font-weight="700">LeRobot</text>
+</g>
+<rect x="40" y="180" width="280" height="70" rx="12" fill="#FFF8E1" stroke="#F9A825" stroke-width="2"/>
+<text x="180" y="210" text-anchor="middle" font-size="14" font-weight="700">observation.state ≈ 140 维</text>
+<text x="180" y="235" text-anchor="middle" font-size="14" font-weight="700">action = 下一步增量 14 维</text>
+</svg>
+      </div>
+      <p class="caption">质检通过→parquet+mp4 · 状态140维·动作14维</p>
+    </div>
+  </section>
+
+  <section class="card" id="c7b" data-i="14">
+    <div class="panel">
+      <span class="badge">⑦训练数据</span>
+      <h2>BC/ACT＝照着菜谱练刀工</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#FFF3E0"/>
+<!-- student -->
+<circle cx="80" cy="90" r="35" fill="#FFE0B2" stroke="#EF6C00" stroke-width="2"/>
+<text x="80" y="100" text-anchor="middle" font-size="28">🤖</text>
+<text x="80" y="145" text-anchor="middle" font-size="12" font-weight="700">模型学生</text>
+<!-- sees -->
+<path d="M120 90 H150" stroke="#1a1a1a" stroke-width="4" marker-end="url(#arr)"/>
+<rect x="155" y="50" width="80" height="80" rx="8" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+<text x="195" y="85" text-anchor="middle" font-size="20">👀</text>
+<text x="195" y="110" text-anchor="middle" font-size="11">画面+状态</text>
+<!-- predicts -->
+<path d="M240 90 H270" stroke="#1a1a1a" stroke-width="4" marker-end="url(#arr)"/>
+<rect x="275" y="50" width="70" height="80" rx="8" fill="#C8E6C9" stroke="#2E7D32" stroke-width="2"/>
+<text x="310" y="85" text-anchor="middle" font-size="20">➡️</text>
+<text x="310" y="110" text-anchor="middle" font-size="11">下一刀</text>
+<!-- warning -->
+<rect x="30" y="175" width="300" height="75" rx="12" fill="#FFCDD2" stroke="#C62828" stroke-width="2"/>
+<text x="180" y="205" text-anchor="middle" font-size="14" font-weight="700">⚠️ 数据太少 → 学成「永远不动」</text>
+<text x="180" y="230" text-anchor="middle" font-size="12" fill="#666">多半不是代码全坏了</text>
+</svg>
+      </div>
+      <p class="caption">看画面+状态→预测下一刀 · 数据少会学「不动」</p>
+    </div>
+  </section>
+
+  <section class="card" id="c8a" data-i="15">
+    <div class="panel">
+      <span class="badge">⑧常见翻车</span>
+      <h2>数字写错就灾难</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#FFEBEE"/>
+<!-- 4 fail cards -->
+<g font-size="12" text-anchor="middle" font-weight="700">
+  <rect x="20" y="35" width="150" height="90" rx="10" fill="#fff" stroke="#C62828" stroke-width="2"/>
+  <text x="95" y="65" font-size="24">💥</text>
+  <text x="95" y="95">基线写成 mm</text>
+  <text x="95" y="115" font-size="11" fill="#666">0.09m ≠ 90</text>
+  
+  <rect x="190" y="35" width="150" height="90" rx="10" fill="#fff" stroke="#C62828" stroke-width="2"/>
+  <text x="265" y="65" font-size="24">📏</text>
+  <text x="265" y="95">深度用毫米</text>
+  <text x="265" y="115" font-size="11" fill="#666">手腕变 480m</text>
+  
+  <rect x="20" y="145" width="150" height="90" rx="10" fill="#fff" stroke="#C62828" stroke-width="2"/>
+  <text x="95" y="175" font-size="24">👁👁</text>
+  <text x="95" y="205">左右差 &gt;1ms</text>
+  <text x="95" y="225" font-size="11" fill="#666">深度会飘</text>
+  
+  <rect x="190" y="145" width="150" height="90" rx="10" fill="#fff" stroke="#C62828" stroke-width="2"/>
+  <text x="265" y="175" font-size="24">🤏</text>
+  <text x="265" y="205">手 &lt;25cm</text>
+  <text x="265" y="225" font-size="11" fill="#666">LiDAR 测不准</text>
+</g>
+</svg>
+      </div>
+      <p class="caption">基线写成mm·深度用mm·不同步·手太近</p>
+    </div>
+  </section>
+
+  <section class="card" id="c8b" data-i="16">
+    <div class="panel">
+      <span class="badge">⑧常见翻车</span>
+      <h2>质检与训练翻车</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#FCE4EC"/>
+<!-- QC reject -->
+<rect x="30" y="40" width="140" height="100" rx="12" fill="#fff" stroke="#AD1457" stroke-width="2"/>
+<text x="100" y="75" text-anchor="middle" font-size="28">🚫</text>
+<text x="100" y="105" text-anchor="middle" font-size="13" font-weight="700">手出画 / 糊</text>
+<text x="100" y="125" text-anchor="middle" font-size="11" fill="#666">坏帧&gt;20%整段拒</text>
+
+<path d="M180 90 H200" stroke="#1a1a1a" stroke-width="4" marker-end="url(#arr)"/>
+
+<rect x="210" y="40" width="120" height="100" rx="12" fill="#fff" stroke="#6A1B9A" stroke-width="2"/>
+<text x="270" y="75" text-anchor="middle" font-size="28">😴</text>
+<text x="270" y="105" text-anchor="middle" font-size="13" font-weight="700">学成不动</text>
+<text x="270" y="125" text-anchor="middle" font-size="11" fill="#666">先加数据</text>
+
+<!-- fix tip -->
+<rect x="30" y="170" width="300" height="75" rx="14" fill="#E8F5E9" stroke="#2E7D32" stroke-width="3"/>
+<text x="180" y="200" text-anchor="middle" font-size="14" font-weight="800" fill="#1B5E20">✅ 先跑 validate_session.py</text>
+<text x="180" y="225" text-anchor="middle" font-size="12" fill="#555">通过后再进管线 · 看 yield.html</text>
+</svg>
+      </div>
+      <p class="caption">手出画被拒·学成不动多半数据少·先validate</p>
+    </div>
+  </section>
+
+  <section class="card" id="c9" data-i="17">
+    <div class="panel">
+      <span class="badge">下一步</span>
+      <h2>想看细节？去文字版</h2>
+      <div class="art">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 280" font-family="Noto Sans CJK SC,PingFang SC,sans-serif">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/>
+  </marker>
+  <marker id="arrR" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/>
+  </marker>
+</defs>
+
+<rect width="360" height="280" fill="#E0F2F1"/>
+<text x="180" y="70" text-anchor="middle" font-size="40">🎉</text>
+<text x="180" y="110" text-anchor="middle" font-size="18" font-weight="800">八章刷完！</text>
+<rect x="50" y="130" width="260" height="100" rx="14" fill="#fff" stroke="#00695C" stroke-width="2"/>
+<text x="180" y="165" text-anchor="middle" font-size="13" font-weight="700">深入阅读（文字版）</text>
+<text x="180" y="190" text-anchor="middle" font-size="12" fill="#555">docs/BEGINNER_GUIDE.md</text>
+<text x="180" y="215" text-anchor="middle" font-size="12" fill="#555">仓库 docs/PROGRESS.md</text>
+</svg>
+      </div>
+      <p class="caption">漫画只讲直觉 · 命令数字见文字版 v2</p>
+    </div>
+  </section>
+
+</div>
+<div class="hud">
+  <div class="dots" id="dots"></div>
+  <div class="hint">左右滑动翻卡 · <span id="pg">1</span> / 18</div>
+</div>
+<script>
+const deck = document.getElementById('deck');
+const cards = [...deck.querySelectorAll('.card')];
+const dots = document.getElementById('dots');
+const pg = document.getElementById('pg');
+cards.forEach((_,i) => {
+  const d = document.createElement('span');
+  d.className = 'dot' + (i===0?' on':'');
+  dots.appendChild(d);
+});
+function idx() {
+  const w = deck.clientWidth || 1;
+  return Math.round(deck.scrollLeft / w);
+}
+function paint() {
+  const i = Math.max(0, Math.min(cards.length-1, idx()));
+  [...dots.children].forEach((d,j) => d.classList.toggle('on', j===i));
+  pg.textContent = String(i+1);
+}
+function go(dir) {
+  const i = Math.max(0, Math.min(cards.length-1, idx()+dir));
+  cards[i].scrollIntoView({behavior:'smooth', inline:'center', block:'nearest'});
+}
+deck.addEventListener('scroll', () => requestAnimationFrame(paint), {passive:true});
+document.addEventListener('keydown', e => {
+  if (e.key==='ArrowRight' || e.key===' ') { e.preventDefault(); go(1); }
+  if (e.key==='ArrowLeft') { e.preventDefault(); go(-1); }
+});
+paint();
+</script>
+</body>
+</html>

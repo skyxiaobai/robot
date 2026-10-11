@@ -1,6 +1,7 @@
 # robot 仓库新手指南 v2（给 Justin）
 
 > 写给仓库主人 Justin（自称新手）。  
+> **新手建议先读漫画卡：** [`BEGINNER_COMIC.md`](BEGINNER_COMIC.md)（[`beginner_guide/comic.html`](beginner_guide/comic.html) 左右滑、[`beginner_guide/comic.pdf`](beginner_guide/comic.pdf) 可打印）。本文是需要命令和数字时再打开的文字版。  
 > 上一版太难：这一版把 **8 件事各自写成一章**。每章都有：生活类比 → 图 → 具体数字 →「这一步你要做什么」清单。  
 > 命令、路径都对照过仓库里的脚本与文档（含 iPhone/双目文档）。  
 > 离线版：[`docs/beginner_guide/guide.html`](beginner_guide/guide.html)、[`docs/beginner_guide/guide.pdf`](beginner_guide/guide.pdf)。  
