@@ -4,7 +4,7 @@
 > 训练用基准：LeRobot ACT（pusht）+ robomimic BC-RNN（MimicGen Square）。
 > 第一次看这个仓库，先读 [`docs/PROGRESS.md`](docs/PROGRESS.md)：一张图、做到哪一步、下一步是什么。
 >
-> **中文新手从这里开始（推荐第一读）：** 漫画卡 [`docs/BEGINNER_COMIC.md`](docs/BEGINNER_COMIC.md)。手机左右滑 [`docs/beginner_guide/comic.html`](docs/beginner_guide/comic.html)，打印用 [`docs/beginner_guide/comic.pdf`](docs/beginner_guide/comic.pdf)。需要命令和数字时再看 [`docs/BEGINNER_GUIDE.md`](docs/BEGINNER_GUIDE.md)（图解：一张图、类比、命令速查；离线版 [`docs/beginner_guide/guide.html`](docs/beginner_guide/guide.html)、[`docs/beginner_guide/guide.pdf`](docs/beginner_guide/guide.pdf)）。
+> **中文新手从这里开始（推荐第一读）：** 漫画卡 [`docs/BEGINNER_COMIC.md`](docs/BEGINNER_COMIC.md)。手机左右滑 [`docs/beginner_guide/comic.html`](docs/beginner_guide/comic.html)，打印用 [`docs/beginner_guide/comic.pdf`](docs/beginner_guide/comic.pdf)。需要命令和数字时再看 [`docs/BEGINNER_GUIDE.md`](docs/BEGINNER_GUIDE.md)（v2：八件事分章，类比、图、数字和清单；离线版 [`docs/beginner_guide/guide.html`](docs/beginner_guide/guide.html)、[`docs/beginner_guide/guide.pdf`](docs/beginner_guide/guide.pdf)）。
 
 ## 训练管线（现状）
 
@@ -99,7 +99,7 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 | 文档 | 内容 |
 |---|---|
 | `docs/BEGINNER_COMIC.md` | **中文新手第一读（漫画卡）**。离线版 `docs/beginner_guide/comic.html`、`docs/beginner_guide/comic.pdf` |
-| `docs/BEGINNER_GUIDE.md` | **中文新手图解**（命令与数字）。离线版 `docs/beginner_guide/guide.html`、`docs/beginner_guide/guide.pdf` |
+| `docs/BEGINNER_GUIDE.md` | **中文新手指南 v2**（八章，命令与数字）。离线版 `docs/beginner_guide/guide.html`、`docs/beginner_guide/guide.pdf` |
 | `docs/xhey_model.md` | **XHEY 模型**（iPhone/xhey 数据）：一条命令训练、开源/合成配比消融、结果表 |
 | `docs/PROGRESS.md` | **项目进度**（流水线图、时间线、已有实验数字、待办）。建议第一次从这里读 |
 | `docs/retarget_sim.md` | 人手腕重定向到 MuJoCo 抓放。合成、EgoDex、HOT3D 三份 JSON 分开读 |

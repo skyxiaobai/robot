@@ -38,7 +38,7 @@
 
 ## 对应文字版（需要命令/数字时再打开）
 
-- 完整文字版：[`BEGINNER_GUIDE.md`](BEGINNER_GUIDE.md)
+- 完整文字版 v2：[`BEGINNER_GUIDE.md`](BEGINNER_GUIDE.md)
 - 项目进度图：[`PROGRESS.md`](PROGRESS.md)
 - 流水线总表：[`PIPELINE_ARCHITECTURE.md`](PIPELINE_ARCHITECTURE.md)
 
