@@ -12,3 +12,8 @@
 ## 2026-10-11 14:16 CST · iPhone 全长 stride=2
 - 46620 帧 @15fps；zero ADE **16.68**；MLP 16.56（≈持平）；线性 24.5
 - 全长未推翻「需更多数据/换模型」
+
+## 2026-10-11 14:50 CST · Path B 质量对比
+- 文档：`docs/iphone_mcap/quality_compare.md` + `quality_*.png` / `quality_metrics.json`
+- 脚本：`scripts/iphone_quality_compare.py`
+- 要点：采集层稳（≈30fps、RGB=Depth、LiDAR≈87%）；精度代理 RGB-D 手腕 1.51cm vs HOT3D 双目 1.24cm vs EgoDex 绝对≈22cm；整段 WiLoR 有效手≈17%（需披露）

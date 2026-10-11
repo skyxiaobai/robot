@@ -126,6 +126,7 @@ flowchart LR
 | 2026-10-10 | [#23](https://github.com/skyxiaobai/robot/pull/23) | 刚体对齐手腕、2 cm 速度门限和 RTS 平滑写入管线；立体门限丢掉的帧改记标注覆盖，不再用 20% 坏帧把整段拒绝掉。 |
 | 2026-10-10 | [#24](https://github.com/skyxiaobai/robot/pull/24) | 双目手部关联：翻转 TTA（左右两种假设）+ 时序/双目关联 + 去重 + 另一目重裁，HOT3D 标注覆盖 53% → 71%，手腕误差不变。 |
 | 2026-10-10 | [#25](https://github.com/skyxiaobai/robot/pull/25) | 没测到的手腕不再当成「保持不动」来学：导出 `action_valid`，训练损失按手屏蔽，质检和导出摘要报告有效动作比例。 |
+| 2026-10-11 | Path B | iPhone vs EgoDex vs HOT3D 质量对比：`docs/iphone_mcap/quality_compare.md`（手腕/检出/深度/帧率图）。 |
 | 2026-10-10 | [#26](https://github.com/skyxiaobai/robot/pull/26) | iPhone Pro 采集：Record3D（.r3d / EXR+JPG）转会话目录，激光雷达深度代替三角化，`run_stereo_pipeline.py --iphone` 一条命令；DexYCB 实测手腕中位 1.41 cm（单目同批 2.75 cm），iPhone 仿真 1.51 cm。导出同样带 `action_valid`。 |
 | 2026-10-10 | [#27](https://github.com/skyxiaobai/robot/pull/27) | 统一格式加上物体 6DoF、接触和抓取。合成小球上接触召回 0.5、抓取召回 1.0；HOT3D 真实片段的同样指标待补。规格到 v11。 |
 | 2026-10-10 | [#28](https://github.com/skyxiaobai/robot/pull/28) | 仿真里把抓放手腕重定向到 6 轴臂。合成演示重放 20/20。真实 EgoDex `basic_pick_place` 重放 15/101；留出 50 条上脚本专家 50/50，8 条成功重放训出来的行为克隆是 0% / 27.3% / 2.7%（3 个种子）。 |
