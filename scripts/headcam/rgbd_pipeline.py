@@ -30,7 +30,7 @@ class RGBDParams(object):
     """深度取样与检查的参数。默认值是按传感器常识先定的，不是在评测真值上调出来的。"""
 
     def __init__(self, min_conf=2, hand_band_m=0.10, near_percentile=10.0, patch=1, joint_offset_m=0.01,
-                 min_joints=8, depth_range_m=(0.25, 1.5), max_fit_residual_m=0.02, scale_range=(0.75, 1.33),
+                 min_joints=8, depth_range_m=(0.2, 2.5), max_fit_residual_m=0.035, scale_range=(0.75, 1.33),
                  palm_range_m=(0.05, 0.15), min_conf_frac=0.3, max_pose_jump_m=0.10, max_pose_jump_deg=20.0,
                  pose_jump_unit="seconds", max_pose_speed_mps=3.0, max_pose_ang_speed_dps=600.0):
         self.min_conf = int(min_conf)            # Record3D：0 低 / 1 中 / 2 高
@@ -73,8 +73,16 @@ def _hull_mask(uv, shape, dilate=1):
 
 def depth_hand(hand, depth, conf, image_size, K, p, mono_override=None):
     """一只手一帧。hand：WiLoR 输出 JSON（keypoints_2d 是 RGB 像素，joints_cam 是单目公制 3D）。
-    depth/conf：激光雷达深度（米）和置信度，任意分辨率，按比例对齐到 RGB（Record3D 的深度和 RGB 同视场）。
-    返回与 stereo_hand 同样键的字典。"""
+    depth/conf：激光雷达深度（米）和置信度，任意分辨率，按比例对齐到 RGB。
+
+    WiLoR 手型尺寸准（手掌约 8–10 cm），但用真实短焦算出的公制平移常偏近
+    （本数据约 0.4 m，LiDAR 约 1.0 m）。做法：
+    - 在 2D 凸包里取 LiDAR 近层深度；
+    - 沿 RGB 射线放手腕；
+    - 把 WiLoR 手型（减手腕）平移过去，**不缩放**（避免被错误深度拉大）。
+    不再把单目去拟合「同深度 2D 反投影」——那些点角向尺寸按 LiDAR 深度会变成 20 cm 假手掌，
+    Umeyama 一带尺度就会把手型撑坏。
+    """
     out = {"status": "none", "joints_cam": None, "raw_joints": None, "confidence": None, "reproj_px": None,
            "wrist_depth_m": None, "palm_m": None, "scale": None, "mono_joints": None}
     if hand is None or hand.get("keypoints_2d") is None:
@@ -82,7 +90,7 @@ def depth_hand(hand, depth, conf, image_size, K, p, mono_override=None):
     uv = np.asarray(hand["keypoints_2d"], dtype=float)
     mono = mono_override if mono_override is not None else (
         None if hand.get("joints_cam") is None else np.asarray(hand["joints_cam"], dtype=float))
-    out["mono_joints"] = mono
+    out["mono_joints"] = None if mono is None else np.asarray(mono, dtype=float)
     out["confidence"] = np.asarray(hand.get("confidence") or [1.0] * JOINTS, dtype=float)
     w, h = image_size
     dh, dw = depth.shape
@@ -97,48 +105,37 @@ def depth_hand(hand, depth, conf, image_size, K, p, mono_override=None):
         out["status"] = "lowconf"
         return out
     near = float(np.percentile(vals, p.near_percentile))
-    lo, hi = near - 0.02, near + p.hand_band_m
     out["near_depth_m"] = near
-    pts = np.full((JOINTS, 3), np.nan)
-    fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
-    r = p.patch
-    for j in range(JOINTS):
-        u, v = int(round(uvd[j, 0])), int(round(uvd[j, 1]))
-        if not (0 <= u < dw and 0 <= v < dh):
-            continue
-        sl = (slice(max(0, v - r), v + r + 1), slice(max(0, u - r), u + r + 1))
-        patch = depth[sl][good[sl]]
-        patch = patch[(patch >= lo) & (patch <= hi)]
-        if len(patch) == 0:
-            continue
-        z = float(np.median(patch)) + p.joint_offset_m
-        pts[j] = [(uv[j, 0] - cx) / fx * z, (uv[j, 1] - cy) / fy * z, z]
-    ok = np.isfinite(pts).all(1)
-    out["raw_joints"] = pts
-    out["n_joints_ok"] = int(ok.sum())
-    if ok.sum() < p.min_joints or mono is None or not np.isfinite(mono).all():
+    fx, fy, cx, cy = float(K[0, 0]), float(K[1, 1]), float(K[0, 2]), float(K[1, 2])
+    z_hand = near + float(p.joint_offset_m)
+    if mono is None or not np.isfinite(mono).all():
         out["status"] = "few_joints"
         return out
-    fit, resid = rigid_fit_hand(mono, pts, out["confidence"] * ok)
-    if fit is None:
+    mono = np.asarray(mono, dtype=float)
+    out["mono_wrist_z"] = float(mono[0, 2])
+    out["mono_scale"] = float(z_hand / mono[0, 2]) if abs(float(mono[0, 2])) > 1e-3 else None
+    # 手腕在 RGB 射线上取 LiDAR 深度；手型用 WiLoR 相对手腕的位移（公制，不缩放）
+    wrist = np.array([(uv[0, 0] - cx) / fx * z_hand, (uv[0, 1] - cy) / fy * z_hand, z_hand], dtype=float)
+    fit = mono - mono[0] + wrist
+    out["raw_joints"] = fit
+    out["n_joints_ok"] = int(np.isfinite(fit).all(1).sum())
+    if out["n_joints_ok"] < p.min_joints:
         out["status"] = "few_joints"
         return out
-    # 尺度：对齐后的手掌长度 / 单目手掌长度
-    out["scale"] = float(np.linalg.norm(fit[MIDDLE_MCP] - fit[0]) / max(np.linalg.norm(mono[MIDDLE_MCP] - mono[0]), 1e-6))
-    out["fit_residual_m"] = resid
+    out["scale"] = 1.0  # 手型未缩放
+    out["fit_residual_m"] = 0.0
     out["wrist_depth_m"] = float(fit[0, 2])
     out["palm_m"] = float(np.linalg.norm(fit[MIDDLE_MCP] - fit[0]))
     status = "ok"
     if not (p.depth_range_m[0] <= fit[0, 2] <= p.depth_range_m[1]):
         status = "depth"
-    elif resid > p.max_fit_residual_m or not (p.scale_range[0] <= out["scale"] <= p.scale_range[1]):
-        status = "fit"
     elif not (p.palm_range_m[0] <= out["palm_m"] <= p.palm_range_m[1]):
         status = "palm"
     out["status"] = status
     if status == "ok":
         out["joints_cam"] = fit
     return out
+
 
 
 def pose_jumps(poses, max_m, max_deg, timestamps=None):
