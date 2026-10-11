@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>robot 仓库新手图解指南</title>
+<style>
+  :root {
+    --bg: #faf8f5;
+    --card: #ffffff;
+    --ink: #1a1a1a;
+    --muted: #5c5c5c;
+    --green: #2e7d32;
+    --green-bg: #e8f5e9;
+    --yellow: #b8860b;
+    --yellow-bg: #fff8e1;
+    --red: #c62828;
+    --red-bg: #ffebee;
+    --blue: #1565c0;
+    --blue-bg: #e3f2fd;
+    --border: #e0dcd4;
+    --accent: #00695c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.65;
+    font-size: 16px;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  h1 { font-size: 1.85rem; margin: 0 0 0.4rem; letter-spacing: -0.02em; }
+  h2 {
+    font-size: 1.4rem;
+    margin: 2.4rem 0 0.9rem;
+    padding-bottom: 0.35rem;
+    border-bottom: 3px solid var(--accent);
+  }
+  h3 { font-size: 1.1rem; margin: 1.4rem 0 0.5rem; color: var(--accent); }
+  p { margin: 0.6rem 0; }
+  .lead { font-size: 1.05rem; color: var(--muted); }
+  .tag {
+    display: inline-block;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    background: var(--blue-bg);
+    color: var(--blue);
+    margin-right: 0.35rem;
+  }
+  .analogy {
+    background: linear-gradient(135deg, #e0f2f1, #fff8e1);
+    border-left: 4px solid var(--accent);
+    padding: 0.85rem 1rem;
+    border-radius: 0 10px 10px 0;
+    margin: 1rem 0;
+  }
+  .analogy strong { color: var(--accent); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.8rem 0 1.2rem;
+    font-size: 0.92rem;
+    background: var(--card);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 0.55rem 0.7rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #f0ebe3; font-weight: 600; }
+  code, .cmd {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.86em;
+    background: #f3f0ea;
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+  }
+  pre {
+    background: #1e2430;
+    color: #e8e6e3;
+    padding: 1rem 1.1rem;
+    border-radius: 10px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    line-height: 1.5;
+  }
+  pre code { background: none; color: inherit; padding: 0; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.1rem 1.25rem;
+    margin: 1rem 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,.04);
+  }
+  .card h3 { margin-top: 0; }
+  .meta { font-size: 0.88rem; color: var(--muted); }
+  .pill-g { background: var(--green-bg); color: var(--green); padding: 0.1rem 0.45rem; border-radius: 6px; font-size: 0.8rem; }
+  .pill-y { background: var(--yellow-bg); color: var(--yellow); padding: 0.1rem 0.45rem; border-radius: 6px; font-size: 0.8rem; }
+  .pill-r { background: var(--red-bg); color: var(--red); padding: 0.1rem 0.45rem; border-radius: 6px; font-size: 0.8rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 0.75rem 0 1.25rem; font-size: 0.9rem; }
+  .legend span { display: flex; align-items: center; gap: 0.35rem; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .dot-g { background: #66bb6a; }
+  .dot-y { background: #ffca28; }
+  .dot-r { background: #ef5350; }
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    margin: 1.25rem 0;
+  }
+  .toc ol { margin: 0.4rem 0 0; padding-left: 1.3rem; }
+  .toc a { color: var(--blue); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .diagram {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1rem;
+    margin: 1rem 0 1.4rem;
+    overflow-x: auto;
+  }
+  .diagram svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  .bar-chart { display: flex; flex-direction: column; gap: 0.55rem; margin: 1rem 0; }
+  .bar-row { display: grid; grid-template-columns: 9rem 1fr 3.5rem; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
+  .bar-track { background: #eee8df; border-radius: 6px; height: 22px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 6px; display: flex; align-items: center; padding-left: 0.4rem; color: #fff; font-size: 0.75rem; }
+  .callout {
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    margin: 1rem 0;
+  }
+  .callout.warn { background: var(--yellow-bg); border: 1px solid #ffe082; }
+  .callout.ok { background: var(--green-bg); border: 1px solid #a5d6a7; }
+  .callout.info { background: var(--blue-bg); border: 1px solid #90caf9; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } .bar-row { grid-template-columns: 1fr; } }
+  footer { margin-top: 3rem; color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+  ul.compact li { margin: 0.25rem 0; }
+  .stage-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.7rem; height: 1.7rem; border-radius: 50%;
+    background: var(--accent); color: #fff; font-weight: 700; font-size: 0.85rem;
+    margin-right: 0.4rem;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>robot 仓库新手图解指南</h1>
+<p class="lead">写给仓库主人 Justin（自称新手）。用一张图、几个类比、短句子，讲清「这个仓库到底在干什么」。</p>
+<p class="meta"><span class="tag">2026-10-11</span><span class="tag">命令已对照脚本 --help</span><span class="tag">skyxiaobai/robot</span></p>
+
+<div class="analogy">
+  <strong>生活类比：</strong>整件事就像「拍烹饪视频 → 标出每根手指 → 量清菜离镜头多远 → 剪掉糊片 → 做成课件 → 教机器人炒菜」。
+</div>
+
+<nav class="toc">
+  <strong>目录</strong>
+  <ol>
+    <li><a href="#s1">一张图看懂整个项目</a></li>
+    <li><a href="#s2">仓库地图：哪些文件夹重要</a></li>
+    <li><a href="#s3">数据之旅：跟一帧画面走一遍</a></li>
+    <li><a href="#s4">流水线每一站（卡片）</a></li>
+    <li><a href="#s5">实验结果用人话说</a></li>
+    <li><a href="#s6">名词小词典</a></li>
+    <li><a href="#s7">想做 X，就跑 Y（速查）</a></li>
+    <li><a href="#s8">接下来做什么</a></li>
+  </ol>
+</nav>
+
+<!-- ========== 1 ========== -->
+<h2 id="s1">1. 一张图看懂整个项目</h2>
+<p><strong>一句话：</strong>头上戴摄像头录自己的手 → 认出手指在哪、离镜头多远 → 扔掉坏片段 → 打包成训练数据 → 教机器人学你怎么动手。</p>
+
+<div class="diagram" aria-label="项目总览流程图">
+<svg viewBox="0 0 880 220" xmlns="http://www.w3.org/2000/svg" role="img">
+  <defs>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="120%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+  <!-- boxes -->
+  <g filter="url(#sh)" font-family="PingFang SC, Noto Sans SC, sans-serif" font-size="12" text-anchor="middle">
+    <rect x="10" y="50" width="110" height="70" rx="12" fill="#ffebee" stroke="#c62828" stroke-width="2"/>
+    <text x="65" y="78" font-weight="700" fill="#c62828">① 录像</text>
+    <text x="65" y="98" fill="#333">头戴/iPhone</text>
+
+    <rect x="140" y="50" width="110" height="70" rx="12" fill="#fff8e1" stroke="#b8860b" stroke-width="2"/>
+    <text x="195" y="78" font-weight="700" fill="#b8860b">② 认手</text>
+    <text x="195" y="98" fill="#333">WiLoR</text>
+
+    <rect x="270" y="50" width="110" height="70" rx="12" fill="#fff8e1" stroke="#b8860b" stroke-width="2"/>
+    <text x="325" y="78" font-weight="700" fill="#b8860b">③ 量距离</text>
+    <text x="325" y="98" fill="#333">双目/激光</text>
+
+    <rect x="400" y="50" width="110" height="70" rx="12" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+    <text x="455" y="78" font-weight="700" fill="#2e7d32">④ 挑片段</text>
+    <text x="455" y="98" fill="#333">QC 质检</text>
+
+    <rect x="530" y="50" width="110" height="70" rx="12" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+    <text x="585" y="78" font-weight="700" fill="#2e7d32">⑤ 打包</text>
+    <text x="585" y="98" fill="#333">LeRobot</text>
+
+    <rect x="660" y="50" width="100" height="70" rx="12" fill="#fff8e1" stroke="#b8860b" stroke-width="2"/>
+    <text x="710" y="78" font-weight="700" fill="#b8860b">⑥ 教模型</text>
+    <text x="710" y="98" fill="#333">ACT / BC</text>
+
+    <rect x="780" y="50" width="90" height="70" rx="12" fill="#ffebee" stroke="#c62828" stroke-width="2"/>
+    <text x="825" y="78" font-weight="700" fill="#c62828">⑦ 映射</text>
+    <text x="825" y="98" fill="#333">仿真</text>
+  </g>
+  <!-- arrows -->
+  <g stroke="#555" stroke-width="2" fill="#555">
+    <path d="M120 85 H135" marker-end="url(#arrow)"/>
+    <path d="M250 85 H265"/>
+    <path d="M380 85 H395"/>
+    <path d="M510 85 H525"/>
+    <path d="M640 85 H655"/>
+    <path d="M760 85 H775"/>
+  </g>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#555"/>
+    </marker>
+  </defs>
+  <!-- analogy row -->
+  <g font-family="PingFang SC, Noto Sans SC, sans-serif" font-size="11" fill="#555" text-anchor="middle">
+    <text x="65" y="150">拍视频</text>
+    <text x="195" y="150">标手指</text>
+    <text x="325" y="150">量厘米</text>
+    <text x="455" y="150">剪糊片</text>
+    <text x="585" y="150">做成课件</text>
+    <text x="710" y="150">学生模仿</text>
+    <text x="825" y="150">换身体</text>
+    <text x="440" y="185" font-size="13" fill="#00695c" font-weight="600">类比：录像 → 认手 → 量距离 → 挑好片段 → 打包 → 教机器人</text>
+    <text x="440" y="208" font-size="11" fill="#888">绿=软件已通 · 黄=部分完成 · 红=还在等硬件/数据</text>
+  </g>
+</svg>
+</div>
+
+<div class="legend">
+  <span><i class="dot dot-g"></i> 绿：软件已能跑</span>
+  <span><i class="dot dot-y"></i> 黄：部分完成</span>
+  <span><i class="dot dot-r"></i> 红：等硬件或更多数据</span>
+</div>
+
+<div class="callout ok">
+  <strong>当前状态：</strong>软件链路大体就绪；双目头戴还没做出来；临时用 iPhone Pro + 激光雷达；小模型还没超过「手永远不动」基线——主要因为数据太少。
+</div>
+
+<table>
+  <tr><th>步骤</th><th>类比</th><th>仓库里叫什么</th></tr>
+  <tr><td>录像</td><td>拍你切菜</td><td>采集（头戴 / iPhone / EgoDex / HOT3D）</td></tr>
+  <tr><td>认手</td><td>标出每根手指</td><td>WiLoR 手部姿态</td></tr>
+  <tr><td>量距离</td><td>量出菜离镜头多远</td><td>双目三角化 或 iPhone LiDAR</td></tr>
+  <tr><td>挑好片段</td><td>剪掉糊片、干等</td><td>QC 质检</td></tr>
+  <tr><td>打包</td><td>做成标准课件</td><td>LeRobot 数据集</td></tr>
+  <tr><td>教机器人</td><td>看视频学动作</td><td>模仿学习（ACT / 线性 BC）</td></tr>
+  <tr><td>换身体</td><td>人手动作改编给机械臂</td><td>仿真重定向 retarget</td></tr>
+</table>
+
+<p>论文三条路径（<code>docs/iphone_arxiv_plan.md</code>）：</p>
+<ul class="compact">
+  <li><strong>路径 A</strong>：先证明管线能训出「还能用」的策略</li>
+  <li><strong>路径 B</strong>：讲清楚数据质量（双目 / LiDAR / 单目差在哪）</li>
+  <li><strong>路径 C</strong>：预训练是否真的涨分</li>
+</ul>
+
+<!-- ========== 2 ========== -->
+<h2 id="s2">2. 仓库地图：哪些文件夹重要</h2>
+
+<div class="diagram">
+<svg viewBox="0 0 860 340" xmlns="http://www.w3.org/2000/svg" role="img">
+  <rect width="860" height="340" fill="#faf8f5"/>
+  <g font-family="ui-monospace, Menlo, monospace" font-size="13" fill="#1a1a1a">
+    <text x="20" y="28" font-weight="700" font-size="15" font-family="PingFang SC, sans-serif">robot/ 仓库树（只标重要的）</text>
+    <text x="30" y="58">├── README.md</text>
+    <text x="280" y="58" fill="#1565c0" font-family="PingFang SC,sans-serif" font-size="12">总入口</text>
+    <text x="30" y="82">├── docs/PROGRESS.md</text>
+    <text x="280" y="82" fill="#2e7d32" font-family="PingFang SC,sans-serif" font-size="12" font-weight="700">★ 第一次必读</text>
+    <text x="30" y="106">├── docs/PIPELINE_ARCHITECTURE.md</text>
+    <text x="340" y="106" fill="#2e7d32" font-family="PingFang SC,sans-serif" font-size="12">流水线详解</text>
+    <text x="30" y="130">├── docs/iphone_*.md · hardware_day1_*.md</text>
+    <text x="400" y="130" fill="#5c5c5c" font-family="PingFang SC,sans-serif" font-size="12">iPhone / 到货清单</text>
+    <text x="30" y="162">├── scripts/</text>
+    <text x="30" y="186">│   ├── run_stereo_pipeline.py</text>
+    <text x="340" y="186" fill="#c62828" font-family="PingFang SC,sans-serif" font-size="12" font-weight="700">★ 一条命令总入口</text>
+    <text x="30" y="210">│   ├── egodata/ · headcam/ · iphone/</text>
+    <text x="360" y="210" fill="#5c5c5c" font-family="PingFang SC,sans-serif" font-size="12">格式 · 认手 · 手机适配</text>
+    <text x="30" y="234">│   ├── retarget/ · sim/</text>
+    <text x="280" y="234" fill="#5c5c5c" font-family="PingFang SC,sans-serif" font-size="12">人手→机械臂</text>
+    <text x="30" y="258">├── notebooks/</text>
+    <text x="200" y="258" fill="#1565c0" font-family="PingFang SC,sans-serif" font-size="12">Colab 复现</text>
+    <text x="30" y="282">├── examples/ · tests/</text>
+    <text x="260" y="282" fill="#888" font-family="PingFang SC,sans-serif" font-size="12">配方 / 测试（可后看）</text>
+    <text x="30" y="306">└── outputs/</text>
+    <text x="180" y="306" fill="#888" font-family="PingFang SC,sans-serif" font-size="12">跑出来的报告（大数据不入库）</text>
+  </g>
+  <!-- highlight boxes -->
+  <rect x="20" y="68" width="250" height="22" rx="4" fill="none" stroke="#2e7d32" stroke-width="1.5" opacity="0.5"/>
+  <rect x="20" y="172" width="310" height="22" rx="4" fill="none" stroke="#c62828" stroke-width="1.5" opacity="0.5"/>
+</svg>
+</div>
+
+<table>
+  <tr><th>路径</th><th>干什么</th><th>新手？</th></tr>
+  <tr><td><code>docs/PROGRESS.md</code></td><td>做到哪、数字、待办</td><td><span class="pill-g">必读</span></td></tr>
+  <tr><td><code>docs/PIPELINE_ARCHITECTURE.md</code></td><td>录制→训练全流程</td><td><span class="pill-g">必读</span></td></tr>
+  <tr><td><code>scripts/run_stereo_pipeline.py</code></td><td>双目 / HOT3D / iPhone 一条龙</td><td><span class="pill-g">核心</span></td></tr>
+  <tr><td><code>scripts/egodata/</code> · <code>headcam/</code> · <code>iphone/</code></td><td>格式、认手、手机适配</td><td><span class="pill-y">改代码时再看</span></td></tr>
+  <tr><td><code>notebooks/</code></td><td>Colab 一键复现</td><td><span class="pill-y">没 GPU 时用</span></td></tr>
+  <tr><td><code>docs/ANALYSIS_PROCESS.md</code>、BOM、大量 JSON</td><td>分析过程与原始数字</td><td><span class="pill-r">可后查</span></td></tr>
+  <tr><td><code>2607.24744v1.pdf</code>、<code>train.log</code></td><td>参考论文 / 旧日志</td><td><span class="pill-r">可忽略</span></td></tr>
+</table>
+
+<!-- ========== 3 ========== -->
+<h2 id="s3">3. 数据之旅：跟一帧画面走一遍</h2>
+<p>假设你在桌前抓起杯子。看<strong>第 42 帧</strong>发生了什么：</p>
+
+<div class="diagram">
+<svg viewBox="0 0 840 380" xmlns="http://www.w3.org/2000/svg" role="img">
+  <defs>
+    <marker id="a2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#555"/></marker>
+  </defs>
+  <g font-family="PingFang SC, Noto Sans SC, sans-serif" font-size="12" text-anchor="middle">
+    <rect x="300" y="10" width="240" height="50" rx="10" fill="#e3f2fd" stroke="#1565c0" stroke-width="2"/>
+    <text x="420" y="32" font-weight="700" fill="#1565c0">第 42 帧彩色图</text>
+    <text x="420" y="48" fill="#333">右手在画面里抓杯子</text>
+
+    <rect x="300" y="90" width="240" height="50" rx="10" fill="#fff8e1" stroke="#b8860b" stroke-width="2"/>
+    <text x="420" y="112" font-weight="700" fill="#b8860b">WiLoR 认手</text>
+    <text x="420" y="128" fill="#333">21 个关节点（像素）</text>
+
+    <rect x="300" y="170" width="240" height="50" rx="10" fill="#fff8e1" stroke="#b8860b" stroke-width="2"/>
+    <text x="420" y="192" font-weight="700" fill="#b8860b">量深度</text>
+    <text x="420" y="208" fill="#333">双目三角化 或 激光雷达</text>
+
+    <rect x="300" y="250" width="240" height="50" rx="10" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+    <text x="420" y="272" font-weight="700" fill="#2e7d32">世界坐标 + QC</text>
+    <text x="420" y="288" fill="#333">手腕 ≈ (0.12, −0.05, 0.48) m</text>
+
+    <rect x="80" y="320" width="200" height="45" rx="10" fill="#ffebee" stroke="#c62828" stroke-width="2"/>
+    <text x="180" y="347" font-weight="700" fill="#c62828">不通过 → 丢掉 / 无效</text>
+
+    <rect x="560" y="320" width="220" height="45" rx="10" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+    <text x="670" y="347" font-weight="700" fill="#2e7d32">通过 → LeRobot 一行</text>
+  </g>
+  <g stroke="#555" stroke-width="2" marker-end="url(#a2)" fill="none">
+    <path d="M420 60 V88"/>
+    <path d="M420 140 V168"/>
+    <path d="M420 220 V248"/>
+    <path d="M360 300 Q180 300 180 318"/>
+    <path d="M480 300 Q670 300 670 318"/>
+  </g>
+  <!-- hand sketch -->
+  <g transform="translate(40,40)" stroke="#00695c" fill="none" stroke-width="2">
+    <circle cx="30" cy="70" r="8" fill="#b2dfdb"/>
+    <line x1="30" y1="70" x2="20" y2="30"/>
+    <line x1="30" y1="70" x2="35" y2="25"/>
+    <line x1="30" y1="70" x2="48" y2="30"/>
+    <line x1="30" y1="70" x2="55" y2="40"/>
+    <line x1="30" y1="70" x2="10" y2="50"/>
+    <circle cx="20" cy="30" r="3" fill="#00695c"/>
+    <circle cx="35" cy="25" r="3" fill="#00695c"/>
+    <circle cx="48" cy="30" r="3" fill="#00695c"/>
+    <text x="30" y="100" text-anchor="middle" font-size="11" fill="#00695c" font-family="PingFang SC,sans-serif">21 点骨架</text>
+  </g>
+</svg>
+</div>
+
+<div class="analogy">
+  <strong>类比：</strong><code>observation</code> =「现在手在哪」；<code>action</code> =「下一步挪多少」。机器人学的是：看到这个画面，手该怎么动。
+</div>
+
+<table>
+  <tr><th>字段</th><th>样子（示意）</th><th>人话</th></tr>
+  <tr><td>21 个关节</td><td>每个点 <code>(x,y,z)</code>，单位米</td><td>手指骨架的 3D 位置</td></tr>
+  <tr><td>手腕 6DoF</td><td><code>xyz</code> + 四元数 <code>(qx,qy,qz,qw)</code></td><td>手腕在哪、朝向哪</td></tr>
+  <tr><td>置信度</td><td><code>0.92</code></td><td>模型有多确信；低于 0.5 常当无效</td></tr>
+  <tr><td><code>action</code></td><td>下一帧手腕增量</td><td>下一小步手要怎么动</td></tr>
+  <tr><td><code>action_valid</code></td><td><code>(1, 0)</code></td><td>左有效、右无效；别把缺测当「保持不动」学</td></tr>
+</table>
+<p class="meta">字段定义见 <code>scripts/egodata/schema.py</code>（版本 1.0，21 点顺序与 MediaPipe Hands 一致）。</p>
+
+<!-- ========== 4 ========== -->
+<h2 id="s4">4. 流水线每一站（卡片）</h2>
+
+<div class="card">
+  <h3><span class="stage-num">1</span>采集：把世界录进文件夹</h3>
+  <p><strong>做什么：</strong>把头戴 / iPhone / 公开数据变成「会话目录」。<br/>
+  <strong>类比：</strong>原材料放进标好标签的周转箱。</p>
+  <p class="meta">脚本：<code>simulate_device_session.py</code> · <code>iphone/record3d_adapter.py</code> · <code>iphone/mcap_adapter.py</code></p>
+<pre><code>python scripts/validate_session.py /path/to/session</code></pre>
+</div>
+
+<div class="card">
+  <h3><span class="stage-num">2</span>认手：WiLoR</h3>
+  <p><strong>做什么：</strong>在彩色图上找出左右手 21 个关节点。<br/>
+  <strong>类比：</strong>在照片上用笔勾出骨骼。</p>
+  <p class="meta">实现：<code>scripts/headcam/hand_pose.py</code>（管线自动调用）· 后端默认 <code>wilor</code></p>
+  <p>EgoDex 上：WiLoR 检出约 <strong>95%</strong>、关节误差约 <strong>3.5 cm</strong>；MediaPipe 约 50% / 8 cm。</p>
+</div>
+
+<div class="card">
+  <h3><span class="stage-num">3</span>量距离：双目 或 激光雷达</h3>
+  <p><strong>做什么：</strong>把画面上的点变成真实厘米。<br/>
+  <strong>类比：</strong>两只眼睛看深度，或用激光尺直接量。</p>
+  <p class="meta">双目：<code>headcam/stereo_pipeline.py</code> · iPhone：<code>headcam/rgbd_pipeline.py</code></p>
+  <p>HOT3D 双目手腕中位约 <strong>1.2 cm</strong>；iPhone LiDAR 代理约 <strong>1.5 cm</strong>；单目绝对手腕可差到约 <strong>22 cm</strong>。</p>
+</div>
+
+<div class="card">
+  <h3><span class="stage-num">4</span>平滑与补洞</h3>
+  <p><strong>做什么：</strong>抖一下抹平；短缺口插值。<br/>
+  <strong>类比：</strong>给轨迹上蜡，小坑填平。</p>
+  <p class="meta"><code>scripts/headcam/hand_track_refine.py</code> · 补帧标 <code>filled</code>，训练里 <code>action_valid=0</code></p>
+</div>
+
+<div class="card">
+  <h3><span class="stage-num">5</span>质检 QC</h3>
+  <p><strong>做什么：</strong>扔掉手出画、视线飘、糊、干等太久的片段。<br/>
+  <strong>类比：</strong>挑出拍糊了的镜头，不进教材。</p>
+<pre><code>python scripts/egodata_qc.py \
+  --episodes outputs/egodex_unified \
+  --html outputs/yield_report.html \
+  --csv outputs/yield_episodes.csv</code></pre>
+</div>
+
+<div class="card">
+  <h3><span class="stage-num">6</span>打包成 LeRobot</h3>
+  <p><strong>做什么：</strong>只导出 QC 通过的片段；动作是「手腕下一步怎么动」。<br/>
+  <strong>类比：</strong>把剪好的镜头排成标准课件。</p>
+<pre><code>python scripts/ego_to_lerobot.py \
+  --episodes outputs/egodex_unified \
+  --yield-csv outputs/yield_episodes.csv \
+  --out outputs/egodex_lerobot \
+  --horizon 16 --video-size 224</code></pre>
+</div>
+
+<div class="card">
+  <h3><span class="stage-num">7</span>训练：线性 BC / ACT</h3>
+  <p><strong>做什么：</strong>让模型看状态/图像，预测动作。<br/>
+  <strong>类比：</strong>学生看示范，学下一秒手怎么动。</p>
+<pre><code>python scripts/ego_pretrain_bc.py \
+  --dataset outputs/egodex_lerobot \
+  --max-frames 1000 \
+  --log outputs/ego_pretrain.log</code></pre>
+  <p class="meta">ACT：<code>scripts/ego_act_train.py</code> / <code>notebooks/egodex_act_scaling_colab.ipynb</code></p>
+</div>
+
+<div class="card" style="border-color:#00695c; border-width:2px;">
+  <h3><span class="stage-num">★</span>一条命令总入口（最常用）</h3>
+<pre><code># HOT3D 公开双目
+python scripts/run_stereo_pipeline.py \
+  --hot3d data/train_quest3/clip-000000 --out outputs/hot3d
+
+# 自有头戴会话
+python scripts/validate_session.py /data/sess01
+python scripts/run_stereo_pipeline.py \
+  --session /data/sess01 --out outputs/sess01
+
+# iPhone（.r3d 或已转好的会话目录）
+python scripts/run_stereo_pipeline.py \
+  --iphone ~/iphone_raw/take1.r3d --out outputs/iphone</code></pre>
+  <p class="meta">可选：<code>--backend wilor|hamer|mediapipe</code> · <code>--no-export</code> 跳过导出 · <code>--stride 2</code>（iPhone 抽帧）</p>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h3>可视化</h3>
+<pre><code>python scripts/ego_visualize.py overlay \
+  --episode path/to/ep.json \
+  --out overlay.png --width 640
+
+python scripts/ego_visualize.py qc_compare \
+  --episodes path/to/unified \
+  --out qc.png
+
+python scripts/ego_visualize.py traj3d \
+  --episode path/to/ep.json \
+  --out traj.png</code></pre>
+  </div>
+  <div class="card">
+    <h3>冒烟（不下载大数据）</h3>
+<pre><code>python scripts/demo_open_dataset_pipeline.py \
+  --out outputs/open_data_demo</code></pre>
+    <p class="meta">合成假 EgoDex，把转换→QC→覆盖串一遍。</p>
+  </div>
+</div>
+
+<!-- ========== 5 ========== -->
+<h2 id="s5">5. 实验结果用人话说</h2>
+
+<h3>5.1 认手准不准？</h3>
+<table>
+  <tr><th>对比</th><th>WiLoR</th><th>MediaPipe</th><th>人话</th></tr>
+  <tr><td>EgoDex 检出率</td><td>~95%</td><td>~50%</td><td>WiLoR 几乎都能认出</td></tr>
+  <tr><td>关节误差</td><td>~3.5 cm</td><td>~8 cm</td><td>半个手指宽 vs 一只手掌</td></tr>
+  <tr><td>单目手腕（未对齐）</td><td>~10–22 cm</td><td>更差</td><td><strong>没有深度就量不准远近</strong></td></tr>
+</table>
+
+<h3>5.2 有了深度之后</h3>
+<div class="bar-chart">
+  <div class="bar-row">
+    <div>HOT3D 双目</div>
+    <div class="bar-track"><div class="bar-fill" style="width:40.7%;background:#2e7d32;">1.22</div></div>
+    <div>1.22 cm</div>
+  </div>
+  <div class="bar-row">
+    <div>iPhone 代理</div>
+    <div class="bar-track"><div class="bar-fill" style="width:50.3%;background:#00897b;">1.51</div></div>
+    <div>1.51 cm</div>
+  </div>
+  <div class="bar-row">
+    <div>目标线</div>
+    <div class="bar-track"><div class="bar-fill" style="width:66.7%;background:#9e9e9e;">2.0</div></div>
+    <div>2.0 cm</div>
+  </div>
+  <div class="bar-row">
+    <div>HOT3D 单目</div>
+    <div class="bar-track"><div class="bar-fill" style="width:90%;background:#ef6c00;">2.71</div></div>
+    <div>2.71 cm</div>
+  </div>
+</div>
+<p class="meta">条形按 3 cm 满格比例绘制。越小越好。目标 ≤ 2 cm。</p>
+
+<h3>5.3 小模型训得怎样？</h3>
+<div class="callout warn">
+  <strong>诚实结论：</strong>数据太少时，线性 BC / 小 MLP / 小 ACT <strong>还没稳定赢过「手永远不动」</strong>。
+  类比：只看 3 集电视剧就想学会炒菜——不如站着不动偶尔碰巧像样。
+</div>
+<table>
+  <tr><th>实验</th><th>零动作 ADE</th><th>模型</th><th>人话</th></tr>
+  <tr><td>EgoDex 图像 ACT（4 任务子集）</td><td>3.13 cm</td><td>ACT ~3.06–3.17</td><td>几乎打平</td></tr>
+  <tr><td>HOT3D 4 段（596 帧）</td><td>4.37 cm</td><td>线性/MLP 更差或持平</td><td>帧数不够</td></tr>
+  <tr><td>iPhone 3 段 Path A</td><td>~8.4 cm</td><td>线性/MLP 更差</td><td>先证明管线通，再堆数据</td></tr>
+</table>
+
+<h3>5.4 仿真重定向（简述）</h3>
+<p>人手腕 → 6 轴臂抓放（<code>docs/retarget_sim.md</code>）：合成开环 20/20 很好；真实 EgoDex 刚性约 15/101；行为克隆仍弱。「映射过去」≠「学会策略」。</p>
+
+<!-- ========== 6 ========== -->
+<h2 id="s6">6. 名词小词典</h2>
+<table>
+  <tr><th>词</th><th>一句话</th><th>类比</th></tr>
+  <tr><td><strong>WiLoR</strong></td><td>从一张图估计手部 3D 姿态（默认后端）</td><td>看照片画出手指骨骼的专家</td></tr>
+  <tr><td><strong>MANO</strong></td><td>标准 3D 手部网格；WiLoR 需要其权重</td><td>手的「标准人体模型」</td></tr>
+  <tr><td><strong>MediaPipe</strong></td><td>轻量认手，CPU 能跑但不准</td><td>手机上的简易手势识别</td></tr>
+  <tr><td><strong>双目</strong></td><td>左右两个摄像头</td><td>人的两只眼睛</td></tr>
+  <tr><td><strong>三角化</strong></td><td>用左右视差算深度</td><td>左右眼合起来判断远近</td></tr>
+  <tr><td><strong>LiDAR</strong></td><td>激光测距（iPhone Pro）</td><td>激光尺</td></tr>
+  <tr><td><strong>QC</strong></td><td>自动质检</td><td>挑坏片</td></tr>
+  <tr><td><strong>产出率</strong></td><td>能拿去训练的帧/段比例</td><td>拍了 10 分钟能用几分钟</td></tr>
+  <tr><td><strong>LeRobot</strong></td><td>机器人学习库 + 数据格式</td><td>统一的课件格式</td></tr>
+  <tr><td><strong>BC</strong></td><td>行为克隆：直接模仿示范</td><td>依样画葫芦</td></tr>
+  <tr><td><strong>线性 BC</strong></td><td>岭回归做的最简单 BC</td><td>用直尺拟合的「伪学习」</td></tr>
+  <tr><td><strong>ACT</strong></td><td>一次预测一串动作的 Transformer</td><td>想好半秒的动作再动手</td></tr>
+  <tr><td><strong>ADE</strong></td><td>开环轨迹平均位移误差</td><td>预测轨迹平均偏了几厘米</td></tr>
+  <tr><td><strong>零动作</strong></td><td>永远预测「别动」的基线</td><td>懒学生什么都不做</td></tr>
+  <tr><td><strong>action_valid</strong></td><td>这步动作是否实测、能否算损失</td><td>考卷上「这题不算分」</td></tr>
+  <tr><td><strong>EgoDex</strong></td><td>Apple 公开第一视角手部数据</td><td>别人拍好的教学片</td></tr>
+  <tr><td><strong>HOT3D</strong></td><td>Meta 头戴双目手/物数据</td><td>另一套公开双目教材</td></tr>
+  <tr><td><strong>episode</strong></td><td>一段连续任务轨迹</td><td>一集视频</td></tr>
+  <tr><td><strong>6DoF</strong></td><td>位置 3 + 朝向 3</td><td>在哪 + 朝哪</td></tr>
+  <tr><td><strong>重定向</strong></td><td>人手动作映射到机器人关节</td><td>把人的舞步改编给机器人</td></tr>
+  <tr><td><strong>预训练/微调</strong></td><td>先用大数据学，再用自己的改</td><td>先上公共课，再上家教</td></tr>
+  <tr><td><strong>OV9281</strong></td><td>计划自建头戴的全局快门双目芯片</td><td>未来自制眼镜的眼睛</td></tr>
+</table>
+
+<!-- ========== 7 ========== -->
+<h2 id="s7">7. 想做 X，就跑 Y（速查）</h2>
+<p class="meta">下列命令均来自脚本 <code>--help</code> 或 README 示例。请在仓库根目录执行。</p>
+<table>
+  <tr><th>我想…</th><th>运行</th></tr>
+  <tr><td>不下载数据，先冒烟</td><td><code>python scripts/demo_open_dataset_pipeline.py --out outputs/open_data_demo</code></td></tr>
+  <tr><td>检查会话目录</td><td><code>python scripts/validate_session.py /path/to/session</code></td></tr>
+  <tr><td>跑 HOT3D 一条龙</td><td><code>python scripts/run_stereo_pipeline.py --hot3d &lt;clip&gt; --out outputs/hot3d</code></td></tr>
+  <tr><td>跑自有双目会话</td><td><code>python scripts/run_stereo_pipeline.py --session /data/sess01 --out outputs/sess01</code></td></tr>
+  <tr><td>跑 iPhone .r3d</td><td><code>python scripts/run_stereo_pipeline.py --iphone capture.r3d --out outputs/iphone</code></td></tr>
+  <tr><td>Record3D → 会话</td><td><code>python scripts/iphone/record3d_adapter.py take1.r3d --out outputs/iphone/sessions/take1</code></td></tr>
+  <tr><td>xhey .mcap → 会话</td><td><code>python scripts/iphone/mcap_adapter.py file.mcap --out outputs/iphone/sessions/s1</code></td></tr>
+  <tr><td>EgoDex → 统一 JSON</td><td><code>python scripts/convert_egodex.py --input test --out outputs/egodex_unified --limit 20</code></td></tr>
+  <tr><td>质检</td><td><code>python scripts/egodata_qc.py --episodes … --html … --csv …</code></td></tr>
+  <tr><td>覆盖统计</td><td><code>python scripts/egodata_coverage.py --episodes … --html … --csv …</code></td></tr>
+  <tr><td>导出 LeRobot</td><td><code>python scripts/ego_to_lerobot.py --episodes … --yield-csv … --out … --horizon 16 --video-size 224</code></td></tr>
+  <tr><td>线性 BC 训练</td><td><code>python scripts/ego_pretrain_bc.py --dataset … --max-frames 1000 --log …</code></td></tr>
+  <tr><td>iPhone 训练对比</td><td><code>python scripts/iphone_train_compare.py --run outputs/iphone_mcap/run_all --out outputs/iphone_mcap/train</code></td></tr>
+  <tr><td>画骨架叠加</td><td><code>python scripts/ego_visualize.py overlay --episode &lt;ep.json&gt; --out overlay.png --width 640</code></td></tr>
+  <tr><td>校验四级标注</td><td><code>python scripts/validate_hierarchy.py examples/hierarchy_annotation.json --strict</code></td></tr>
+  <tr><td>HOT3D → 假设备会话</td><td><code>python scripts/simulate_device_session.py --hot3d &lt;clip&gt; --out outputs/fake_session</code></td></tr>
+  <tr><td>头戴单条转换</td><td><code>python scripts/convert_headcam.py --session /path/to/session --out outputs/headcam/episode.json</code></td></tr>
+</table>
+
+<div class="callout info">
+  <strong>Colab：</strong>
+  <code>open_dataset_pipeline_colab.ipynb</code> ·
+  <code>headcam_hand_pose_colab.ipynb</code> ·
+  <code>stereo_pipeline_colab.ipynb</code> ·
+  <code>egodex_act_scaling_colab.ipynb</code> ·
+  <code>act_pusht_colab.ipynb</code>（仿真框架冒烟，<em>不是</em>头戴人手成绩）
+</div>
+
+<!-- ========== 8 ========== -->
+<h2 id="s8">8. 接下来做什么</h2>
+
+<div class="diagram">
+<svg viewBox="0 0 840 140" xmlns="http://www.w3.org/2000/svg" role="img">
+  <g font-family="PingFang SC, Noto Sans SC, sans-serif" font-size="12" text-anchor="middle">
+    <rect x="10" y="30" width="150" height="60" rx="12" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+    <text x="85" y="55" font-weight="700" fill="#2e7d32">软件链路</text>
+    <text x="85" y="73" fill="#333">基本就绪</text>
+
+    <rect x="190" y="30" width="160" height="60" rx="12" fill="#fff8e1" stroke="#b8860b" stroke-width="2"/>
+    <text x="270" y="55" font-weight="700" fill="#b8860b">iPhone 临时采集</text>
+    <text x="270" y="73" fill="#333">Path A/B 进行中</text>
+
+    <rect x="380" y="30" width="140" height="60" rx="12" fill="#ffebee" stroke="#c62828" stroke-width="2"/>
+    <text x="450" y="55" font-weight="700" fill="#c62828">做出双目头戴</text>
+    <text x="450" y="73" fill="#333">方案 A &lt;1000 元</text>
+
+    <rect x="550" y="30" width="140" height="60" rx="12" fill="#ffebee" stroke="#c62828" stroke-width="2"/>
+    <text x="620" y="55" font-weight="700" fill="#c62828">自采测误差</text>
+    <text x="620" y="73" fill="#333">目标 ≤ 2 cm</text>
+
+    <rect x="720" y="30" width="110" height="60" rx="12" fill="#ffebee" stroke="#c62828" stroke-width="2"/>
+    <text x="775" y="55" font-weight="700" fill="#c62828">堆数据</text>
+    <text x="775" y="73" fill="#333">赢过零动作</text>
+  </g>
+  <g stroke="#555" stroke-width="2" fill="none">
+    <path d="M160 60 H185"/>
+    <path d="M350 60 H375"/>
+    <path d="M520 60 H545"/>
+    <path d="M690 60 H715"/>
+  </g>
+  <text x="420" y="120" text-anchor="middle" font-size="12" fill="#00695c" font-family="PingFang SC,sans-serif">你现在大约在第 2 格（iPhone 临时采集）</text>
+</svg>
+</div>
+
+<ol>
+  <li><strong>继续用 iPhone 采更多段</strong>（Path A）：目标 10+ 段，再跑 <code>iphone_train_compare.py</code>，看能否压过零动作。</li>
+  <li><strong>补全 Path B 质量图</strong>：mono vs LiDAR 直方图、更多有深度片段。</li>
+  <li><strong>买齐 / 装好双目头戴</strong>（方案 A 约 727–982 元）：基线 8–10 cm，镜头约 100°。见 <code>docs/headcam_stereo_bom.md</code>。</li>
+  <li><strong>到货第一天</strong>：按 <code>docs/hardware_day1_checklist.md</code> —— 同步 → 标定 → 首段 → <code>validate_session</code> → <code>run_stereo_pipeline</code>。</li>
+  <li><strong>自采手腕误差</strong>填进进度表（目标 ≤ 2 cm，现在「待补」）。</li>
+  <li><strong>数据够了再上 ACT 与预训练对比</strong>（Path C）。</li>
+</ol>
+
+<footer>
+  本指南由仓库文档与脚本 <code>--help</code> 整理，命令路径均在仓库中存在。
+  更细数字见 <code>docs/PROGRESS.md</code>；架构见 <code>docs/PIPELINE_ARCHITECTURE.md</code>。
+  参数若日后变更，以 <code>--help</code> 为准。<br/>
+  文件：<code>guide.html</code> · <code>guide.pdf</code> · <code>GUIDE.md</code>（可提交为 <code>docs/BEGINNER_GUIDE.md</code>）
+</footer>
+
+</div>
+</body>
+</html>
