@@ -40,3 +40,17 @@ LeRobot 导出（QC 2 段）：`outputs/iphone_mcap/run_all/lerobot`（358 帧�
 4. **下一步（仍属 A）**：再采/再下 10+ 段同类深度 clip；或先降 horizon / 用单步 MSE 做冒烟；图像 ACT 等帧数过千再上。
 
 指标 JSON：`outputs/iphone_mcap/train/metrics.json`、`outputs/iphone_mcap/train_all3/metrics.json`。
+
+
+## 全长尝试（stride=10，2026-10-11）
+
+三段整段录制（约 14–22 分钟）均匀抽帧 → **9325** 帧，标签覆盖 **96–99%**。
+
+| 片段 | 帧 | 覆盖 | valid_action | full chunk@16 | QC |
+|---|---|---|---|---|---|
+| 08-22 | 2568 | 98.7% | 0.033 | 0 | 拒（static/出画） |
+| 08-24 | 2785 | 99.9% | 0.004 | 0 | 拒 |
+| 09-05 | 3972 | 96.7% | 0.093 | 0 | 拒 |
+
+**结果**：有效 fps≈3 时 H=16 没有完整 chunk → ADE 无法计算，**不能**证明全长优于 180 帧冒烟。  
+正在重跑 **stride=2（~15 fps）** 以保留时序密度。
