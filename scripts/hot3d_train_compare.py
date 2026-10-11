@@ -185,9 +185,10 @@ class MLP:
         in_dim = in_dim or (140 if FEAT == "abs" else 137)
         import torch
         self.t = torch; torch.manual_seed(seed); self.seed = seed
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.net = torch.nn.Sequential(torch.nn.Linear(in_dim, hidden), torch.nn.ReLU(),
                                        torch.nn.Linear(hidden, hidden), torch.nn.ReLU(),
-                                       torch.nn.Linear(hidden, H * STEP))
+                                       torch.nn.Linear(hidden, H * STEP)).to(self.device)
         self.norm = None
 
     def fit(self, X, Y, V, steps=2000, lr=1e-3, wd=1e-4, keep_norm=False, log_every=50, Xv=None, Yv=None, Vv=None,
@@ -197,9 +198,10 @@ class MLP:
             ys = (Y - IDENT).reshape(-1, STEP)
             self.norm = (X.mean(0), X.std(0) + 1e-6, ys.std(0) + 1e-6)
         mu, sd, ysd = self.norm
-        Xn = t.tensor((X - mu) / sd, dtype=t.float32)
-        Yn = t.tensor((Y - IDENT) / ysd, dtype=t.float32)
-        M = t.tensor(np.repeat(V >= 0.5, 7, axis=-1), dtype=t.float32)
+        dev = self.device
+        Xn = t.tensor((X - mu) / sd, dtype=t.float32, device=dev)
+        Yn = t.tensor((Y - IDENT) / ysd, dtype=t.float32, device=dev)
+        M = t.tensor(np.repeat(V >= 0.5, 7, axis=-1), dtype=t.float32, device=dev)
         opt = t.optim.AdamW(self.net.parameters(), lr=lr, weight_decay=wd)
         g = np.random.default_rng(self.seed); curve = []
         for it in range(steps):
@@ -208,14 +210,14 @@ class MLP:
             loss = (((out - Yn[b]) ** 2) * M[b]).sum() / M[b].sum().clamp(min=1)
             opt.zero_grad(); loss.backward(); opt.step()
             if it % log_every == 0 or it == steps - 1 or (it + 1) in eval_at:
-                row = {"step": it, "train_loss": float(loss.detach())}
+                row = {"step": it, "train_loss": float(loss.detach().cpu())}
                 if Xv is not None:
                     row["test_ade_cm"] = self._ade(Xv, Yv, Vv)
                 curve.append(row)
         return curve
 
     def clone(self):
-        c = MLP(self.seed); c.net = copy.deepcopy(self.net); c.norm = self.norm
+        c = MLP(self.seed); c.net = copy.deepcopy(self.net).to(c.device); c.norm = self.norm
         return c
 
     def _ade(self, X, Y, V):
@@ -232,7 +234,8 @@ class MLP:
     def __call__(self, X):
         t = self.t; mu, sd, ysd = self.norm
         with t.no_grad():
-            out = self.net(t.tensor((X - mu) / sd, dtype=t.float32)).view(-1, H, STEP).numpy()
+            xt = t.tensor((X - mu) / sd, dtype=t.float32, device=self.device)
+            out = self.net(xt).view(-1, H, STEP).detach().cpu().numpy()
         return out * ysd + IDENT
 
 
