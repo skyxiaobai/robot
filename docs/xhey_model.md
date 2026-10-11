@@ -24,12 +24,17 @@
 
 ## 数据从哪来
 
-| 来源 | 用途 | 规模（这次实验） |
-|---|---|---|
-| **iPhone Pro Max + 激光雷达**（xhey `.mcap`） | 主数据，也是评测集 | 3 段整段，stride=2，约 4.6 万帧 / 15 fps |
-| **EgoDex**（开源，Apple） | 预训练 | 抽了 309 段，约 1.4 万行动作 |
-| **HOT3D**（开源双目） | 预训练 | 已有的 24 段，约 1.8 千行 |
-| **合成增强 `aug`** | 扩大 iPhone 训练集 | 左右镜像并交换左右手、2 倍速下采样、输入噪声 |
+| 来源 | 用途 | 规模 | 许可 |
+|---|---|---|---|
+| **iPhone Pro Max + 激光雷达**（xhey `.mcap`） | 主数据 + **唯一留出评测** | 3 段整段，stride=2，约 4.6 万帧 / 15 fps | 自有 |
+| **zeno_lidar**（HF iPhone LiDAR 家务） | 预训练（米制手腕，优先） | 8 段 → 约 6.4 万行 / 15 fps，valid≈0.88 | **CC BY-NC 4.0** |
+| **EgoDex**（开源，Apple） | 预训练 | 309 段，约 1.4 万行 | 按 EgoDex 条款 |
+| **HOT3D**（开源双目） | 预训练 | 24 段，约 1.8 千行 | 按 HOT3D 条款 |
+| **hub_rgb / hub_imu**（HF Hubdata） | 预训练（WiLoR 相机系） | 各截取前约 300 帧/段 | **other**（见数据集 LICENSE） |
+| **zeno_raw / zeno_phone**（HF 开放样例） | 预训练（WiLoR） | 样例视频截取 | **CC BY-NC 4.0** |
+| **合成增强 `aug`** | 扩大 iPhone 训练集 | 镜像换手、2 倍速、输入噪声 | — |
+
+本地镜像与转换说明：[`docs/hf_iphone_data.md`](hf_iphone_data.md)。媒体很大，不进 git。
 
 所有来源都统一成：**140 维状态、14 维手腕增量、horizon=16**。开源数据没有画面时，画面特征置 0，并加一个 `has_image` 开关，模型知道「这次没画面」。
 
@@ -60,7 +65,7 @@ python scripts/train_xhey.py --ablation
 
 | 参数 | 含义 | 默认 |
 |---|---|---|
-| `--mix` | 最终模型用哪些数据，用 `+` 连接 | `iphone+egodex+aug` |
+| `--mix` | 最终模型用哪些数据，用 `+` 连接（含 `zeno_lidar` / `hub_rgb` / `hub_imu` / `zeno_raw` / `zeno_phone`） | `iphone+egodex+aug` |
 | `--ablation` | 跑一整套配比对比 | 关 |
 | `--seeds` | 每种配比训几个随机种子 | 3 |
 | `--steps` | iPhone 微调最大步数 | 3000 |
@@ -80,34 +85,63 @@ HOT3D 用现成的 `outputs/hot3d_scale/run/episodes`。
 
 ---
 
-## 这次实验结果
+## 实验结果
 
-评测方式：**留一段交叉验证**（3 段 iPhone，训 2 测 1）。主指标 ADE = 未来 16 步手腕累计位移误差（厘米，越小越好）。「猜手不动」是硬基线。
+评测方式：**留一段交叉验证**（Justin 的 3 段 iPhone，训 2 测 1）。主指标 ADE = 未来 16 步手腕累计位移误差（厘米，越小越好）。「猜手不动」是硬基线。
 
-> 注意：三段整段里 WiLoR 三维手有效率只有约 **3.8%**，满足「连续 16 步双手都有效」的评测块一共只有 **32 个**。数字波动会比较大，只能当方向参考。
+> 三段整段里有效三维手大约 **3.8%**，完整 16 步评测块大约 **32 个**。数字波动大，只能当方向参考。
+
+### Wave 1：加入 HF zeno iPhone LiDAR（`outputs/xhey_hf/`，seeds=2）
 
 | 方法 | ADE (cm) ↓ | 相对 zero | 前缀 ADE (cm) ↓ |
 |---|---:|---:|---:|
 | **zero（手不动）** | **16.68** | 0 | **18.61** |
-| history_revert（拉回历史均值） | 16.68 | 0 | 18.79 |
-| **XHEY · iPhone only** | 17.60 | +0.92 | 19.14 |
-| XHEY · iPhone + HOT3D + EgoDex | 17.76 | +1.08 | 19.22 |
-| XHEY · iPhone + aug | 18.33 | +1.65 | 20.17 |
-| XHEY · iPhone + EgoDex | 18.40 | +1.72 | 19.15 |
-| XHEY · iPhone + EgoDex + HOT3D + aug | 20.54 | +3.86 | 21.03 |
-| XHEY · iPhone + EgoDex + aug | 21.03 | +4.35 | 20.92 |
+| history_revert | 16.68 | 0 | 18.79 |
+| XHEY · iPhone + EgoDex + zeno_lidar | 17.01 | +0.33 | 18.74 |
+| XHEY · iPhone + zeno_lidar | 17.14 | +0.46 | 19.48 |
+| XHEY · iPhone only | 17.22 | +0.54 | 18.83 |
+| XHEY · iPhone + EgoDex | 18.45 | +1.77 | 19.02 |
+| XHEY · iPhone + EgoDex + HOT3D + zeno_lidar + aug | 18.76 | +2.08 | 19.78 |
+| XHEY · iPhone + zeno_lidar + aug | 18.83 | +2.15 | 20.10 |
 | linear BC | 30.07 | +13.39 | 28.86 |
 
-![数据配比对比](xhey/xhey_results.png)
+![HF 配比 Wave1](xhey/xhey_hf_results.png)
+
+zeno_lidar 预训练把最好配比从「只 iPhone」推到了 **iPhone+EgoDex+zeno_lidar（17.01）**，仍略差于 zero（16.68）。**没有任何配比赢过 zero。**
+
+### Wave 2：再加 Hubdata / zeno WiLoR（`outputs/xhey_hf_w2/`，seeds=2）
+
+外部行数：hub_rgb 5980、hub_imu 3588、zeno_raw 4784、zeno_phone 1495、zeno_lidar 64412。
+
+| 方法 | ADE (cm) ↓ | 相对 zero | 前缀 ADE (cm) ↓ |
+|---|---:|---:|---:|
+| **XHEY · iPhone + hub_rgb** | **16.45** | **−0.23** | 18.62 |
+| XHEY · iPhone + zeno_raw | 16.54 | −0.14 | 18.62 |
+| XHEY · iPhone + zeno_lidar + hub_rgb + zeno_raw + zeno_phone | 16.61 | −0.07 | 18.66 |
+| XHEY · iPhone + zeno_phone | 16.65 | −0.03 | 18.74 |
+| **zero（手不动）** | **16.68** | 0 | **18.61** |
+| history_revert | 16.68 | 0 | 18.79 |
+| XHEY · iPhone + hub_imu | 16.68 | 0.00 | 18.61 |
+| XHEY · iPhone + EgoDex + zeno_lidar | 17.01 | +0.33 | 18.74 |
+| XHEY · iPhone + zeno_lidar | 17.14 | +0.46 | 19.48 |
+| XHEY · iPhone only | 17.22 | +0.54 | 18.83 |
+| XHEY · 全开源 + aug | 18.17 | +1.49 | 19.57 |
+| linear BC | 30.07 | +13.39 | 28.86 |
+
+![HF 配比 Wave2](xhey/xhey_hf_w2_results.png)
+
+**有配比赢过 zero**：最好是 `iphone+hub_rgb`（ADE 16.45，比 zero 好 0.23 cm）。`zeno_raw` / `zeno_phone` 也略好于 zero。差距很小，且评测块仍只有约 32 个，需要更多自有有深度数据再确认。
 
 ---
 
 ## 诚实结论
 
-1. **XHEY 这一轮没有赢过「猜手不动」。** 最好的配比是只用 iPhone（ADE 17.60 cm），仍然比 zero 的 16.68 cm 差一点。
-2. **开源预训练 / 合成增强这次没有帮上忙。** EgoDex、HOT3D、镜像和倍速都让 ADE 变差或持平。原因很可能是：评测只看 iPhone 上极少数「双手连续有效」的块；开源数据的动作分布和这 3 段家务不完全一样；有效标签太稀。
-3. **管线和命名是齐的**：一条命令能训、能评、能存 `xhey.pt`；状态/动作维度和 EgoDex ACT 实验对齐。
-4. **下一步真正能拉开差距的，是更多有激光雷达深度、双手检出率更高的 iPhone 段**（目标：每类任务 10+ 段），再上带画面的完整 ACT。现在的 3 段 + 3.8% 有效率，不够支撑「模型赢了基线」的论文结论。
+1. **Wave 2 首次出现赢过「猜手不动」的配比**：`iphone+hub_rgb` ADE **16.45** vs zero **16.68**（−0.23 cm）。`zeno_raw`、`zeno_phone` 也略胜。
+2. **米制 zeno_lidar  alone 仍不够翻盘**（17.14）；和 EgoDex 搭配到 17.01。WiLoR 相机系的手机 RGB 预训练反而在这个极小留出集上更有效——可能因为动作更「家务」、或 shrink 选到更保守的预测。
+3. **堆全部开源 + aug 会变差**（18.17）。不是越多越好。
+4. **评测仍极窄**（有效手 ~3.8%，完整块 ~32）。论文里只能当方向信号，不能当最终证明。
+5. **下一步**：再采 10+ 段自有 Pro 深度；可选把剩余 20 段 hub_rgb 也跑完 WiLoR。
+6. **许可**：zeno-* = CC BY-NC（非商用）；Hubdata = other，商用前读 LICENSE。
 
 ---
 
@@ -116,4 +150,4 @@ HOT3D 用现成的 `outputs/hot3d_scale/run/episodes`。
 - 数据来自 `outputs/iphone_mcap/run_s2`（见 `docs/iphone_arxiv_plan.md`、`docs/iphone_mcap/`）。
 - 评测指标复用 `scripts/egodex_act_eval.py`。
 - 状态/动作打包复用 `scripts/egodata/lerobot_export.py` 的 `pack_state` / `pack_action`。
-- 脚本：`scripts/train_xhey.py`。
+- 脚本：`scripts/train_xhey.py`；HF 转换：`scripts/convert_hf_iphone.py`、`scripts/wilor_video_to_episodes.py`。

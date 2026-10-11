@@ -16,7 +16,7 @@ XHEY 看三样东西，预测接下来 16 步（15 fps，约 1 秒）双手手�
 （action_valid 掩码，等价于 ACT 的 action_is_pad）。评测时再乘一个 shrink 系数，
 在内部验证集上选；shrink=0 就退回「手不动」。
 
---mix 用 + 连接：iphone（必选）/ egodex（开源预训练）/ hot3d（24 段）/ aug（镜像换手 + 2 倍速 + 输入噪声）。
+--mix 用 + 连接：iphone（必选）/ egodex / hot3d / zeno_lidar（HF iPhone LiDAR，CC BY-NC）/ hub_rgb / hub_imu / zeno_raw（后三者需先 WiLoR）/ aug（镜像换手 + 2 倍速 + 输入噪声）。
 评测：留一段交叉验证，指标复用 egodex_act_eval.metrics_for，对比 zero / linear / history_revert。
 最终模型存到 <out>/xhey.pt（不进 git）。详见 docs/xhey_model.md。
 """
@@ -158,7 +158,8 @@ def build_external(kind, root, cache_dir):
     f = Path(cache_dir) / ("%s_arrays.npz" % kind)
     if f.exists():
         z = dict(np.load(f)); return finish({k: z[k] for k in ("state", "action", "valid", "episode", "index")}, None)
-    paths = sorted(Path(root).rglob("*.json"))
+    skip = {"manifest.json", "convert_summary.json"}
+    paths = sorted(p for p in Path(root).rglob("*.json") if p.name not in skip)
     eps = []
     for p in paths:
         ep = json.loads(p.read_text())
@@ -317,7 +318,14 @@ def xyv(d, starts, use_img=True):
     return feats(d, starts, use_img), Y, V
 
 
-MIX_HELP = "iphone 必选；egodex=EgoDex 预训练；hot3d=HOT3D 24 段加入预训练；aug=合成增强（镜像换手 + 2 倍速 + 输入噪声）"
+MIX_HELP = (
+    "iphone 必选；egodex=EgoDex；hot3d=HOT3D；"
+    "zeno_lidar=HF zeno iPhone LiDAR 家务（米制手腕，CC BY-NC）；"
+    "hub_rgb=Hubdata iPhone RGB 经 WiLoR；"
+    "hub_imu=Hubdata iPhone RGB+IMU 经 WiLoR；"
+    "zeno_raw=zeno 开放样例视频经 WiLoR；"
+    "aug=合成增强（镜像换手 + 2 倍速 + 输入噪声）"
+)
 
 
 def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True):
@@ -335,7 +343,8 @@ def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True):
             Xe, Ye, Ve = xyv(extra, ex_starts, use_img)
             X, Y, V = np.vstack([X, Xe]), np.concatenate([Y, Ye]), np.concatenate([V, Ve])
     m = XHEY(X.shape[1], seed); m.set_norm(X, Y)
-    pre = [ext[k] for k in ("egodex", "hot3d") if k in mix]
+    pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone")
+    pre = [ext[k] for k in pre_keys if k in mix and k in ext]
     if pre:
         P = concat(pre); ps = useful(P, ev.chunk_starts(P["episode"], H, 1))
         Xp, Yp, Vp = xyv(P, ps, use_img)
@@ -344,18 +353,71 @@ def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True):
     return m
 
 
-DEFAULT_ABLATION = ["iphone", "iphone+aug", "iphone+egodex", "iphone+egodex+aug",
-                    "iphone+egodex+hot3d", "iphone+egodex+hot3d+aug"]
+DEFAULT_ABLATION = [
+    "iphone",
+    "iphone+aug",
+    "iphone+zeno_lidar",
+    "iphone+zeno_lidar+aug",
+    "iphone+egodex",
+    "iphone+egodex+zeno_lidar",
+    "iphone+hub_rgb",
+    "iphone+hub_imu",
+    "iphone+zeno_raw",
+    "iphone+zeno_phone",
+    "iphone+egodex+hot3d+zeno_lidar+hub_rgb+hub_imu+zeno_raw+zeno_phone+aug",
+]
 
+
+
+def try_external(kind, root, cache):
+    """开源/HF 目录缺失或没有 episode 时跳过该配比分量，不整场退出。"""
+    root = Path(root)
+    if not root.exists():
+        print("skip %s: missing %s" % (kind, root), flush=True)
+        return None
+    paths = list(root.rglob("*.json"))
+    paths = [p for p in paths if p.name != "manifest.json" and p.name != "convert_summary.json"]
+    if not paths:
+        print("skip %s: no episode json under %s" % (kind, root), flush=True)
+        return None
+    try:
+        return build_external(kind, root, cache)
+    except SystemExit as e:
+        print("skip %s: %s" % (kind, e), flush=True)
+        return None
 
 def prepare_external(mixes, iph, eps, names, a):
     ext = {}
     need = set("+".join(mixes).split("+"))
     cache = Path(a.out) / "cache"
     if "egodex" in need:
-        ext["egodex"] = build_external("egodex", a.egodex, cache)
+        _d = try_external("egodex", a.egodex, cache)
+        if _d is not None:
+            ext["egodex"] = _d
     if "hot3d" in need:
-        ext["hot3d"] = build_external("hot3d", Path(a.hot3d), cache)
+        _d = try_external("hot3d", Path(a.hot3d), cache)
+        if _d is not None:
+            ext["hot3d"] = _d
+    if "zeno_lidar" in need:
+        _d = try_external("zeno_lidar", Path(a.zeno_lidar), cache)
+        if _d is not None:
+            ext["zeno_lidar"] = _d
+    if "hub_rgb" in need:
+        _d = try_external("hub_rgb", Path(a.hub_rgb), cache)
+        if _d is not None:
+            ext["hub_rgb"] = _d
+    if "hub_imu" in need:
+        _d = try_external("hub_imu", Path(a.hub_imu), cache)
+        if _d is not None:
+            ext["hub_imu"] = _d
+    if "zeno_raw" in need:
+        _d = try_external("zeno_raw", Path(a.zeno_raw), cache)
+        if _d is not None:
+            ext["zeno_raw"] = _d
+    if "zeno_phone" in need:
+        _d = try_external("zeno_phone", Path(a.zeno_phone), cache)
+        if _d is not None:
+            ext["zeno_phone"] = _d
     if "aug" in need:
         mir = mirror_arrays({k: iph[k] for k in ("state", "action", "valid", "episode", "index")})
         img = np.vstack([image_features(e, n, cache, flip=True)[: e["num_frames"] - 1] for e, n in zip(eps, names)])
@@ -379,6 +441,16 @@ def main():
     ap.add_argument("--mixes", default=None, help="自定义消融列表，逗号分隔，例如 iphone,iphone+aug")
     ap.add_argument("--egodex", default="data/egodex_sub/unified", help="EgoDex 统一 episode JSON 目录")
     ap.add_argument("--hot3d", default="outputs/hot3d_scale/run/episodes", help="HOT3D episode JSON 目录")
+    ap.add_argument("--zeno-lidar", default="data/hf_iphone/unified/zeno_lidar",
+                    help="HF zeno iPhone LiDAR 统一 episode（CC BY-NC）")
+    ap.add_argument("--hub-rgb", default="data/hf_iphone/unified/hub_rgb",
+                    help="Hubdata RGB 经 WiLoR 的 episode 目录")
+    ap.add_argument("--hub-imu", default="data/hf_iphone/unified/hub_imu",
+                    help="Hubdata RGB+IMU 经 WiLoR 的 episode 目录")
+    ap.add_argument("--zeno-raw", default="data/hf_iphone/unified/zeno_raw",
+                    help="zeno raw 开放样例经 WiLoR 的 episode 目录")
+    ap.add_argument("--zeno-phone", default="data/hf_iphone/unified/zeno_phone_wilor",
+                    help="zeno phone sample 经 WiLoR 的 episode 目录")
     ap.add_argument("--seeds", type=int, default=3, help="每个配比训练几个随机种子")
     ap.add_argument("--steps", type=int, default=3000, help="iPhone（微调）阶段最大步数，按内部验证集挑最佳步")
     ap.add_argument("--pre-steps", type=int, default=6000, help="开源数据预训练步数")
