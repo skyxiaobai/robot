@@ -3,6 +3,8 @@
 > 本仓库沉淀「**机器人模仿学习训练管线 + 头戴式数据采集设备**」的完整分析、规格与采购依据。
 > 训练用基准：LeRobot ACT（pusht）+ robomimic BC-RNN（MimicGen Square）。
 > 第一次看这个仓库，先读 [`docs/PROGRESS.md`](docs/PROGRESS.md)：一张图、做到哪一步、下一步是什么。
+>
+> **中文新手从这里开始：** [`docs/BEGINNER_GUIDE.md`](docs/BEGINNER_GUIDE.md)（图解：一张图、类比、命令速查）。离线版：[`docs/beginner_guide/guide.html`](docs/beginner_guide/guide.html)、[`docs/beginner_guide/guide.pdf`](docs/beginner_guide/guide.pdf)。
 
 ## 训练管线（现状）
 
@@ -96,6 +98,7 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 
 | 文档 | 内容 |
 |---|---|
+| `docs/BEGINNER_GUIDE.md` | **中文新手图解**。离线版 `docs/beginner_guide/guide.html`、`docs/beginner_guide/guide.pdf` |
 | `docs/PROGRESS.md` | **项目进度**（流水线图、时间线、已有实验数字、待办）。建议第一次从这里读 |
 | `docs/retarget_sim.md` | 人手腕重定向到 MuJoCo 抓放。合成、EgoDex、HOT3D 三份 JSON 分开读 |
 | `docs/PIPELINE_ARCHITECTURE.md` | 整体架构：录制 → 校验 → 标定 → 认手 → 双目 → 世界系 → QC → 标注 → LeRobot → 训练，每步的状态和文件格式 |
