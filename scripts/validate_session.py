@@ -46,10 +46,11 @@ def _video_info(path):
     n = 0
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = float(cap.get(cv2.CAP_PROP_FPS))
     while cap.grab():
         n += 1
     cap.release()
-    return {"frames": n, "width": w, "height": h}
+    return {"frames": n, "width": w, "height": h, "fps": fps}
 
 
 def _read_numeric_csv(path):
@@ -121,6 +122,8 @@ def validate_iphone(session, **overrides):
         return {"session": str(s), "kind": "iphone", "ok": False, "errors": errors, "warnings": warns, "facts": facts}
     meta = json.loads((s / "metadata.json").read_text(encoding="utf-8")) if (s / "metadata.json").is_file() else {}
     fps = float(meta.get("fps", 30.0))
+    if meta.get("capture_app") == "xhey_mcap" and meta.get("n_tf_poses") == 0:
+        errors.append("MCAP 没有真实相机位姿；旧转换器的单位位姿占位不能用于世界系监督")
     calib = json.loads((s / "calib.yaml").read_text(encoding="utf-8"))
     K = np.asarray(calib["K_rgb"], dtype=float)
     w, h = int(calib["image_width"]), int(calib["image_height"])
@@ -138,6 +141,8 @@ def validate_iphone(session, **overrides):
             errors.append("rgb.mp4 有 %d 帧，深度有 %d 帧" % (vid["frames"], n))
         if (vid["width"], vid["height"]) != (w, h):
             errors.append("视频尺寸 %dx%d 与 calib %dx%d 不一致" % (vid["width"], vid["height"], w, h))
+        if abs(vid["fps"] - fps) > 0.05 * fps:
+            errors.append("视频帧率 %.2f 与 metadata.fps %.2f 不一致" % (vid["fps"], fps))
     valid = np.isfinite(depth) & (depth > 0)
     lo, hi = opt["lidar_range_m"]
     facts["depth_valid_frac"] = float(valid.mean())

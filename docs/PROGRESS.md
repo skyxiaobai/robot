@@ -1,9 +1,37 @@
 # 项目进度（给第一次看仓库的人）
 
-> 更新日期：2026-10-11。这是一份活文档：做到哪一步、下一步干什么，都写在这里。中文新手建议先刷漫画卡 [`BEGINNER_COMIC.md`](BEGINNER_COMIC.md)（[`beginner_guide/comic.html`](beginner_guide/comic.html)、[`beginner_guide/comic.pdf`](beginner_guide/comic.pdf)），需要命令和数字时再看指南 v2 [`BEGINNER_GUIDE.md`](BEGINNER_GUIDE.md)，离线 HTML/PDF 在 [`beginner_guide/`](beginner_guide/)。
+> 更新日期：2026-10-12。这是一份活文档：做到哪一步、下一步干什么，都写在这里。中文新手建议先刷漫画卡 [`BEGINNER_COMIC.md`](BEGINNER_COMIC.md)（[`beginner_guide/comic.html`](beginner_guide/comic.html)、[`beginner_guide/comic.pdf`](beginner_guide/comic.pdf)），需要命令和数字时再看指南 v2 [`BEGINNER_GUIDE.md`](BEGINNER_GUIDE.md)，离线 HTML/PDF 在 [`beginner_guide/`](beginner_guide/)。
 > 名词先说人话：**采集** = 头上戴着摄像机录自己的手；**手部姿态** = 从画面里算出手指和手腕在哪儿；**QC** = 质检，扔掉手出画、糊掉或干等太久的片段；**LeRobot** = 训练代码能直接读的数据格式；**预训练** = 先用别人公开的第一视角视频学；**微调** = 再用自己录的数据改模型。
 
 仓库在做两件事：一条能训练的模仿学习流水线，和一副还没做出来的头戴双目采集设备。软件大多已经能跑。缺的是设备，以及设备到手之后用自己的数据再训一次。
+
+---
+
+## 2026-10-12 review 修复与核验
+
+完成条件：七项 review 问题都有代码修复和回归证据，并留下可审查的 diff。
+状态：实现与本地检查已完成，本次修复及核验记录保存为本地 Git 提交，尚未推送。基线 `039bd61bf905fb40f464e60aeba373265d0f13b8`，分支 `codex/fix-review-findings`。
+
+| 项目 | 修复后的行为 |
+|---|---|
+| MCAP 抽帧 | 完整解码 HEVC 参考链之后抽 RGB 帧；视频和深度使用相同的帧号与帧率；解码提前结束时报错 |
+| 导出时间 | LeRobot 时间戳按视频内 `frame_index/fps` 写入；原始采集时钟保留在 episode JSON，语言按源时钟匹配 |
+| 缺失相机位姿 | 缺失或非法 TF 位姿阻止 MCAP 转换；旧的零 TF 单位位姿占位会被会话校验拒绝，RGB-D 管线入口执行校验 |
+| 公制标签 | WiLoR 视频转换要求真实 `--calib`；未校准标签不能进入 XHEY；源文件变更或旧尺度缓存会触发重建 |
+| 内部验证隔离 | 镜像／倍速增强都保存源动作区间，完整窗口仅来自内部训练时段；早停和 shrink 选择保持留出 |
+| ACT／基线比较 | 每条验证 episode 选完整窗口；ACT 和保持不动基线共用同一批窗口、目标和逐手掩码 |
+| 转换旁文件 | QC、覆盖、导出及 XHEY 共用 episode 枚举，排除 index、manifest 和 convert_summary |
+
+核验时间：`2026-10-12T09:58:26+08:00`。
+核验环境：独立 Python 3.12 环境（numpy、pandas、pyarrow、h5py、OpenCV、PyYAML、torch、pytest；ffmpeg 与 ffprobe），没有安装 LeRobot、MANO／手部模型权重或 MuJoCo。
+
+- `PATH=/tmp/robot-review-rWRHV1-checkenv/bin:$PATH /tmp/robot-review-rWRHV1-checkenv/bin/python -m pytest -q -rs`：**260 passed，8 skipped，1 warning，2 subtests passed**，退出码 0。
+- `git diff --check`：通过，无输出，退出码 0。
+- 完整补丁：`/Users/justin/code/robot-review-fixes.patch`（含新增测试）；在干净的 `039bd61` checkout 上运行 `git apply --check` 通过，退出码 0。
+- 新增 `tests/test_review_regressions.py`：10 项回归检查。MCAP 容器／protobuf 用内存封装替代，HEVC 使用真实帧间编码并逐像素对照；ACT 使用真实 torch 张量和替代策略，核对评估窗口与掩码。
+- 已查阅 LeRobot 0.6.1 发布包源码，确认评估读取的 `hf_dataset` 接口；完整 LeRobot／GPU 训练、真实 MCAP、真实标定精度和设备行为仍未验证。
+
+当前任务没有代码阻塞。下一步：在有真实数据与权重的环境重新转换 MCAP、给开放 RGB 视频提供真实标定、重训 XHEY／ACT 并更新历史成绩。旧配比排名已标为待重算；模型效果未因单元检查通过而得到验证。
 
 ---
 
@@ -13,7 +41,7 @@
 
 - 已下载 5 个 HF 数据集到 `data/hf_iphone/`（媒体不进 git；说明 `docs/hf_iphone_data.md`）。
 - 统一 episode：zeno_lidar 8、hub_rgb 20（WiLoR）、hub_imu 12（WiLoR）、zeno_raw 16（WiLoR）、zeno_phone 5（WiLoR）。
-- **Wave 2 最好配比 `iphone+hub_rgb` ADE 16.45 cm，首次略赢 zero 16.68（−0.23 cm）**。详见 `docs/xhey_model.md`。
+- Wave 2 历史记录：`iphone+hub_rgb` ADE 16.45 cm、zero 16.68 cm。2026-10-12 review 发现 MCAP 解码、未校准平移和内部验证污染，修复后需重算，暂不作为配比依据。详见 `docs/xhey_model.md`。
 - 脚本：`scripts/convert_hf_iphone.py`、`scripts/wilor_video_to_episodes.py`；`train_xhey.py --mix` 支持 zeno_lidar/hub_rgb/hub_imu/zeno_raw/zeno_phone。
 - 许可：zeno-* CC BY-NC；Hubdata other。
 

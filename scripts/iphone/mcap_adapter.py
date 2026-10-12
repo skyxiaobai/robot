@@ -90,9 +90,47 @@ def _nearest_pose(poses, t):
         return None
     # poses: list of (t, tx,ty,tz,qx,qy,qz,qw)
     i = min(range(len(poses)), key=lambda j: abs(poses[j][0] - t))
-    if abs(poses[i][0] - t) > 0.05:
+    if abs(poses[i][0] - t) > 0.05 or not np.isfinite(poses[i]).all() or np.linalg.norm(poses[i][4:8]) < 1e-8:
         return None
     return poses[i]
+
+
+def _write_selected_video(color_pkts, selected, path, width, height, fps, ffmpeg):
+    """先解码完整 HEVC 参考链，再按 RGB 帧号抽帧，输出与标签相同的 CFR。"""
+    wanted = {row[0] for row in selected}
+    last = max(wanted)
+    frame_bytes = int(width) * int(height) * 3
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "color.h265"
+        with source.open("wb") as fh:
+            for _, blob, _ in color_pkts:
+                fh.write(blob)
+        decode = [ffmpeg, "-loglevel", "error", "-f", "hevc", "-i", str(source),
+                  "-vsync", "0", "-frames:v", str(last + 1), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"]
+        encode = [ffmpeg, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+                  "-s", "%dx%d" % (width, height), "-r", str(fps), "-i", "pipe:0",
+                  "-an", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", str(path)]
+        with tempfile.TemporaryFile() as decode_err, tempfile.TemporaryFile() as encode_err:
+            with subprocess.Popen(decode, stdout=subprocess.PIPE, stderr=decode_err) as reader, \
+                    subprocess.Popen(encode, stdin=subprocess.PIPE, stderr=encode_err) as writer:
+                try:
+                    for index in range(last + 1):
+                        frame = reader.stdout.read(frame_bytes)
+                        if len(frame) != frame_bytes:
+                            raise ValueError("HEVC 解码在 RGB 帧 %d 提前结束，无法和深度对齐" % index)
+                        if index in wanted:
+                            writer.stdin.write(frame)
+                    writer.stdin.close()
+                    reader.stdout.close()
+                    for proc, command, err in ((reader, decode, decode_err), (writer, encode, encode_err)):
+                        if proc.wait() != 0:
+                            err.seek(0)
+                            raise subprocess.CalledProcessError(proc.returncode, command, stderr=err.read().decode())
+                except BaseException:
+                    for proc in (reader, writer):
+                        if proc.poll() is None:
+                            proc.terminate()
+                    raise
 
 
 def convert_mcap(path, out, stride=1, max_frames=None, ffmpeg="ffmpeg"):
@@ -176,46 +214,28 @@ def convert_mcap(path, out, stride=1, max_frames=None, ffmpeg="ffmpeg"):
     if not selected:
         raise RuntimeError("对齐后没有帧（彩色/深度时间戳对不上）")
 
-    depths, confs, pose_rows, stamps = [], [], [], []
-    # 写 H265 annex-B 临时文件，ffmpeg 解码成 raw rgb，再封装 mp4
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
-        h265 = tmp / "color.h265"
-        with open(h265, "wb") as fh:
-            for _, _, _, blob in selected:
-                fh.write(blob)
-        rgb_mp4 = out / "rgb.mp4"
-        cmd = [
-            ffmpeg, "-y", "-loglevel", "error",
-            "-f", "hevc", "-i", str(h265),
-            "-an", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
-            str(rgb_mp4),
-        ]
-        subprocess.check_call(cmd)
-
-        # 深度 / 置信度 / 位姿
-        for _, t, td, _ in selected:
-            raw, scale, _fmt = depth_by_t[td]
-            d = decode_depth(raw, scale, dh, dw)
-            c = decode_conf(conf_by_t.get(td, b"\x02" * (dh * dw)), dh, dw)
-            depths.append(d.astype(np.float16))
-            confs.append(c)
-            stamps.append(t)
-            p = _nearest_pose(poses, t)
-            if p is None:
-                pose_rows.append(None)
-            else:
-                pose_rows.append(p)
+    stamps = [t for _, t, _, _ in selected]
+    dt = np.diff(stamps)
+    if not np.isfinite(stamps).all() or np.any(dt <= 0):
+        raise ValueError("RGB 时间戳必须有限且严格递增")
+    fps = float(1.0 / np.median(dt)) if len(dt) else 30.0
+    pose_rows = [_nearest_pose(poses, t) for t in stamps]
+    missing = [i for i, pose in enumerate(pose_rows) if pose is None]
+    if missing:
+        raise ValueError("缺少 %d 帧的相机位姿（第一帧号 %d），无法生成世界系监督；请检查 /embosa_tf" % (
+            len(missing), missing[0]))
+    _write_selected_video(color_pkts, selected, out / "rgb.mp4", w, h, fps, ffmpeg)
+    depths, confs = [], []
+    for _, _, td, _ in selected:
+        raw, scale, _fmt = depth_by_t[td]
+        depths.append(decode_depth(raw, scale, dh, dw).astype(np.float16))
+        confs.append(decode_conf(conf_by_t.get(td, b"\x02" * (dh * dw)), dh, dw))
 
     np.savez_compressed(out / "depth.npz", depth=np.stack(depths), conf=np.stack(confs))
     with open(out / "slam.tum", "w", encoding="utf-8") as fh:
         for i, p in enumerate(pose_rows):
-            if p is None:
-                # 缺位姿：单位位姿占位，timestamps 仍对齐
-                fh.write("%.6f 0 0 0 0 0 0 1\n" % stamps[i])
-            else:
-                fh.write("%.6f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\n" % (
-                    stamps[i], p[1], p[2], p[3], p[4], p[5], p[6], p[7]))
+            fh.write("%.6f %.8f %.8f %.8f %.8f %.8f %.8f %.8f\n" % (
+                stamps[i], p[1], p[2], p[3], p[4], p[5], p[6], p[7]))
     with open(out / "timestamps.csv", "w", encoding="utf-8") as fh:
         fh.write("frame,timestamp_s\n")
         for i, t in enumerate(stamps):
@@ -247,8 +267,6 @@ def convert_mcap(path, out, stride=1, max_frames=None, ffmpeg="ffmpeg"):
         "mcap": str(path),
     }
     (out / "calib.yaml").write_text(json.dumps(calib, indent=1), encoding="utf-8")
-    dt = np.diff(stamps)
-    fps = float(1.0 / np.median(dt)) if len(dt) else 30.0
     md = {
         "fps": fps,
         "device": "iphone_pro_lidar",

@@ -333,10 +333,13 @@ def load_episode(path):
 
 
 def iter_episode_paths(path):
-    """文件则返回自身；目录则返回其中的 episode JSON（跳过 index.json）。"""
+    """枚举 episode JSON，排除转换器写出的索引和摘要旁文件。"""
     path = Path(path)
+    sidecars = {"index.json", "manifest.json", "convert_summary.json"}
     if path.is_file():
+        if path.name in sidecars:
+            raise ValueError("%s 是转换元数据，不是 episode" % path)
         return [path]
     return sorted(
-        item for item in path.rglob("*.json") if item.name != "index.json"
+        item for item in path.rglob("*.json") if item.name not in sidecars
     )

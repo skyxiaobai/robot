@@ -283,11 +283,26 @@ def _batch_from_item(item, device):
     return batch
 
 
+def evaluation_indices(episodes, horizon, max_samples):
+    """每个验证 episode 至少选一个完整窗口，窗口在该片段内均匀分布。"""
+    groups = [_chunk_starts(start, length, horizon) for _, start, length in _spans(episodes)
+              if length >= horizon]
+    if not groups:
+        raise ValueError("验证集里没有完整动作窗口")
+    budget = max(int(max_samples), len(groups))
+    per, remainder = divmod(budget, len(groups))
+    return np.concatenate([
+        group[np.linspace(0, len(group) - 1, min(len(group), per + (i < remainder)), dtype=int)]
+        for i, group in enumerate(groups)
+    ])
+
+
 def evaluate_act_l1(
     dataset_dir, policy_dir, val_episode_ids, device, horizon, max_batches=4, min_valid_fraction=0.0,
 ):
     """验证集上的动作 L1，反归一化之后，和保持不动基线同一单位。需要 lerobot 0.6.1。
 
+    返回 ACT L1 和保持不动 L1，二者用完全相同的窗口、目标和掩码。
     只在有效手上平均。比例低于 ``min_valid_fraction`` 的块不参与。
     """
     import torch
@@ -316,10 +331,12 @@ def evaluate_act_l1(
     )
     valid_table = load_action_valid(dataset_dir)
     total = 0.0
+    copy_total = 0.0
     weight = 0.0
-    limit = min(len(dataset), max(1, int(max_batches) * 2))
-    for index in range(limit):
-        item = dataset[index]
+    episodes = np.asarray(dataset.hf_dataset["episode_index"], dtype=np.int64)
+    indices = evaluation_indices(episodes, horizon, max(1, int(max_batches) * 2))
+    for index in indices:
+        item = dataset[int(index)]
         action = item["action"]
         if not torch.is_tensor(action):
             action = torch.as_tensor(action)
@@ -350,10 +367,12 @@ def evaluate_act_l1(
         mask = element_mask(pad, window, width)
         error = torch.abs(prediction[:steps, :width] - action[:steps, :width]).detach().cpu().numpy()
         total += float(np.sum(error * mask))
+        baseline = _copy_current_vector(width, 1)
+        copy_total += float(np.sum(np.abs(action[:steps, :width].numpy() - baseline) * mask))
         weight += float(np.sum(mask))
     if weight <= 0.0:
         raise ValueError("验证集是空的，或有效动作被掩码滤空了")
-    return total / weight
+    return total / weight, copy_total / weight
 
 
 def _cached_action_valid(root):
@@ -577,7 +596,8 @@ def main(argv=None):
     parser.add_argument("--out-dir", default="outputs/ego_act_scaling")
     parser.add_argument("--dry-run", action="store_true", help="只打印命令，不训练")
     parser.add_argument("--run", action="store_true", help="调用 lerobot-train，再写验证日志和缩放报告")
-    parser.add_argument("--max-eval-batches", type=int, default=4)
+    parser.add_argument("--max-eval-batches", type=int, default=4,
+                        help="评估窗口预算为 2*batches，至少每条验证 episode 一个完整窗口")
     args = parser.parse_args(argv)
     runs = build_plans(
         args.dataset, args.sizes, args.steps, args.seed, args.val_fraction,
@@ -599,10 +619,7 @@ def main(argv=None):
         env = os.environ.copy()
         env["EGO_MIN_VALID_FRACTION"] = str(args.min_valid_fraction)
         subprocess.check_call(run["argv"], env=env)
-        copy_loss = copy_baseline_l1(
-            args.dataset, run["val_episode_ids"], run["horizon"], args.min_valid_fraction,
-        )
-        val_loss = evaluate_act_l1(
+        val_loss, copy_loss = evaluate_act_l1(
             args.dataset, run["output_dir"], run["val_episode_ids"], args.device,
             run["horizon"], args.max_eval_batches, args.min_valid_fraction,
         )

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""对纯 RGB 视频跑 WiLoR，导出统一 episode JSON（相机系米制近似）。
+"""用真实相机标定对 RGB 视频跑 WiLoR，导出相机系米制近似标签。
 
 用于 Hubdata RGB / RGB+IMU，以及 zeno raw、phone 样例视频。
 没有 SLAM 时手腕留在各帧相机系；短时域增量会混一点头部运动，适合预训练配比。
@@ -10,6 +10,7 @@
   python scripts/wilor_video_to_episodes.py \
       --videos 'data/hf_iphone/hub_rgb/*.mp4' \
       --out data/hf_iphone/unified/hub_rgb \
+      --calib /path/to/camera.yaml \
       --stride 2 --max-frames 900 --source hub_rgb
 """
 from __future__ import annotations
@@ -25,6 +26,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+from egodata.schema import empty_interaction
 
 
 def _empty_hand(n):
@@ -60,8 +62,27 @@ def _fill_hand(hand, i, joints_cam, conf_list):
     return True
 
 
+def load_video_calibration(path):
+    """复用双目标定，或读取 RGB-D 会话的 K_rgb / 单目的 K_left。"""
+    import yaml
+    from headcam.hand_pose import load_calibration
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, dict) and ("K_rgb" in data or "K_left" in data):
+        return {"K_left": data.get("K_rgb", data.get("K_left")),
+                "image_width": data["image_width"], "image_height": data["image_height"]}
+    return load_calibration(path)
+
+
 def process_video(path: Path, out_dir: Path, backend, source: str, stride: int,
-                  max_frames: int, min_conf: float, license_note: str):
+                  max_frames: int, min_conf: float, license_note: str, calib=None):
+    if calib is None or calib.get("K_left") is None:
+        raise ValueError("公制 WiLoR 标签需要真实相机标定；请提供 --calib")
+    K = np.asarray(calib["K_left"], dtype=float).copy()
+    if K.shape != (3, 3) or not np.isfinite(K).all() or K[0, 0] <= 0 or K[1, 1] <= 0 or K[2, 2] != 1:
+        raise ValueError("K_left 必须是有限的 3x3 内参，fx/fy > 0，K[2,2] = 1")
+    cw, ch = int(calib["image_width"]), int(calib["image_height"])
+    if cw <= 0 or ch <= 0 or stride < 1:
+        raise ValueError("标定尺寸和 stride 必须为正数")
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         print("skip open fail", path, flush=True)
@@ -70,6 +91,9 @@ def process_video(path: Path, out_dir: Path, backend, source: str, stride: int,
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    K[0] *= width / float(cw)
+    K[1] *= height / float(ch)
+    video_calib = dict(calib, K_left=K, image_width=width, image_height=height)
     frames_rgb, kept_src = [], []
     idx = 0
     while True:
@@ -91,7 +115,7 @@ def process_video(path: Path, out_dir: Path, backend, source: str, stride: int,
     hands = {"left": _empty_hand(n), "right": _empty_hand(n)}
     det = 0
     for i, rgb in enumerate(frames_rgb):
-        pred = backend.predict(rgb)
+        pred = backend.predict(rgb, calib=video_calib)
         for side in ("left", "right"):
             h = pred.get(side) or {}
             joints = h.get("joints_cam")
@@ -123,16 +147,14 @@ def process_video(path: Path, out_dir: Path, backend, source: str, stride: int,
         "image_height": height,
         "num_frames": n,
         "timestamps": [s / fps for s in kept_src],
-        "camera_intrinsic": None,
-        "camera_poses": None,
+        "camera_intrinsic": K.tolist(),
+        "camera_poses": [np.eye(4).tolist() for _ in range(n)],
         "hands": hands,
-        "objects": [],
-        "contact": {"source": "none", "left": [], "right": []},
-        "grasp": {"source": "none", "left": [], "right": []},
-        "events": [],
-        "annotation": {"environment": "", "task": path.stem, "subtasks": [], "instructions": []},
+        **empty_interaction(n),
+        "annotation": {"environment": {"name": "", "detail": "", "source": "missing"},
+                       "task": {"name": path.stem, "instruction": ""}, "subtasks": [], "instructions": []},
         "coverage": {},
-        "hand_pose": {"backend": "wilor", "frame": "camera", "stride": stride,
+        "hand_pose": {"backend": "wilor", "frame": "camera", "metric_translation": True, "stride": stride,
                       "src_frames": total, "kept": n},
         "license_note": license_note,
     }
@@ -156,6 +178,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--videos", nargs="+", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--calib", required=True, help="该相机的真实标定 YAML/JSON；不要用虚拟焦距")
     ap.add_argument("--source", default="hub_rgb")
     ap.add_argument("--stride", type=int, default=2)
     ap.add_argument("--max-frames", type=int, default=900,
@@ -163,6 +186,7 @@ def main():
     ap.add_argument("--min-conf", type=float, default=0.5)
     ap.add_argument("--license-note", default="")
     a = ap.parse_args()
+    calib = load_video_calibration(a.calib)
 
     paths = []
     for pattern in a.videos:
@@ -189,7 +213,7 @@ def main():
     manifest = []
     for p in paths:
         print("video", p, flush=True)
-        row = process_video(p, out, backend, a.source, a.stride, a.max_frames, a.min_conf, a.license_note)
+        row = process_video(p, out, backend, a.source, a.stride, a.max_frames, a.min_conf, a.license_note, calib=calib)
         if row:
             manifest.append(row)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
