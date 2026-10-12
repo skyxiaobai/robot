@@ -500,7 +500,8 @@ def _pack_episode(episode, include_hand):
         contact[frame_index], contact_valid[frame_index] = pack_contact(episode, frame_index)
         grasp[frame_index], grasp_valid[frame_index] = pack_grasp(episode, frame_index)
         action_valid[frame_index] = action_valid_flags(episode, frame_index)
-        timestamps[frame_index] = timestamp
+        # 视频是 CFR，按帧号对齐；原始时钟继续保存在源 episode，语言仍按源时钟匹配。
+        timestamps[frame_index] = frame_index / float(episode["fps"])
     return {
         "episode_id": episode["episode_id"],
         "fps": float(episode["fps"]),
@@ -776,6 +777,7 @@ def export_lerobot(
         "horizon": horizon,
         "include_hand": bool(include_hand),
         "action_step_dim": step,
+        "timestamp_doc": "timestamp 是视频内 frame_index/fps；原始采集时间戳和语言时段保留在源 episode JSON。",
         "state_doc": "state[0:63] 左手关节，[63:126] 右手关节，[126:133] 左手腕，[133:140] 右手腕。",
         "language": "SUBTASK 覆盖该帧时用子任务，否则 TASK.instruction",
         "qc": "只含 yield CSV 中 accepted=yes 的 episode_id",

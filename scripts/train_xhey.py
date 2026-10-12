@@ -27,6 +27,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import egodex_act_eval as ev  # noqa: E402
 import hot3d_train_compare as ht  # noqa: E402
+from egodata.schema import iter_episode_paths  # noqa: E402
 
 H, STEP, IDENT = ht.H, ht.STEP, ht.IDENT
 K_HIST = 8
@@ -55,7 +56,12 @@ def subsample_episode(ep, k):
 def image_features(ep, name, cache_dir, batch=256, flip=False):
     """整段视频 → (num_frames, 512) ResNet18 特征，缓存为 .npy。flip=True 时先左右翻转画面（镜像增强）。"""
     f = Path(cache_dir) / (name + (".flip" if flip else "") + ".resnet18.npy")
-    if f.exists():
+    video = Path(ep["video_path"])
+    stat = video.stat()
+    signature = {"video": str(video.resolve()), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+                 "num_frames": ep["num_frames"], "flip": bool(flip)}
+    meta_path = f.with_suffix(".meta")
+    if f.exists() and meta_path.exists() and json.loads(meta_path.read_text()) == signature:
         return np.load(f).astype(np.float32)
     import cv2, torch, torchvision
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -84,6 +90,7 @@ def image_features(ep, name, cache_dir, batch=256, flip=False):
     if len(feat) < ep["num_frames"]:
         feat = np.vstack([feat, np.zeros((ep["num_frames"] - len(feat), feat.shape[1]), np.float32)])
     f.parent.mkdir(parents=True, exist_ok=True); np.save(f, feat.astype(np.float16))
+    meta_path.write_text(json.dumps(signature))
     print("image features", f.name, feat.shape, flush=True)
     return feat.astype(np.float32)
 
@@ -155,14 +162,24 @@ def concat(ds):
 
 def build_external(kind, root, cache_dir):
     """开源数据 → 和 iPhone 同样 140 维状态 / 14 维动作，30 fps 下采样到 15 fps。没有画面特征（has_image=0）。"""
+    paths = iter_episode_paths(root)
+    signature = json.dumps([(str(p.resolve()), p.stat().st_size, p.stat().st_mtime_ns) for p in paths])
     f = Path(cache_dir) / ("%s_arrays.npz" % kind)
     if f.exists():
-        z = dict(np.load(f)); return finish({k: z[k] for k in ("state", "action", "valid", "episode", "index")}, None)
-    skip = {"manifest.json", "convert_summary.json"}
-    paths = sorted(p for p in Path(root).rglob("*.json") if p.name not in skip)
+        with np.load(f) as cached:
+            if "metric_checked" in cached and bool(cached["metric_checked"]) and (
+                "source_signature" in cached and str(cached["source_signature"]) == signature
+            ):
+                return finish({k: cached[k] for k in ("state", "action", "valid", "episode", "index")}, None)
+        print("重建尺度未校验或源文件已变更的缓存", f, flush=True)
     eps = []
     for p in paths:
         ep = json.loads(p.read_text())
+        pose = ep.get("hand_pose") or {}
+        if ep.get("usable_for_metric_xhey") is False or pose.get("metric_translation") is False or (
+            pose.get("backend") == "wilor" and ep.get("camera_intrinsic") is None
+        ):
+            raise ValueError("%s 没有公制手腕标签；请用真实 --calib 重新转换，不能混入米制训练" % p)
         if (ep.get("fps") or 30) >= 25:
             ep = subsample_episode(ep, 2)
         if ep["num_frames"] > H + 1:
@@ -170,7 +187,7 @@ def build_external(kind, root, cache_dir):
     if not eps:
         raise SystemExit("找不到 %s 数据：%s（见 docs/xhey_model.md 的准备步骤）" % (kind, root))
     d = ht.to_arrays(eps)
-    f.parent.mkdir(parents=True, exist_ok=True); np.savez(f, **d)
+    f.parent.mkdir(parents=True, exist_ok=True); np.savez(f, **d, metric_checked=True, source_signature=signature)
     print(kind, "episodes", len(eps), "rows", len(d["state"]), "valid", round(float(d["valid"].mean()), 3), flush=True)
     return finish(d, None)
 
@@ -318,6 +335,18 @@ def xyv(d, starts, use_img=True):
     return feats(d, starts, use_img), Y, V
 
 
+def augmentation_train_starts(extra, train_starts, source_rows):
+    """增强块的全部源动作必须在内部训练区间，镜像与倍速都遵守同一隔离区。"""
+    allowed = np.zeros(source_rows, dtype=bool)
+    for offset in range(H):
+        allowed[train_starts + offset] = True
+    starts = useful(extra, ev.chunk_starts(extra["episode"], H, 1))
+    begin = extra["src_start"][starts]
+    end = extra["src_end"][starts + H - 1]
+    rejected = np.concatenate(([0], np.cumsum(~allowed)))
+    return starts[(rejected[end] - rejected[begin]) == 0]
+
+
 MIX_HELP = (
     "iphone 必选；egodex=EgoDex；hot3d=HOT3D；"
     "zeno_lidar=HF zeno iPhone LiDAR 家务（米制手腕，CC BY-NC）；"
@@ -332,14 +361,14 @@ def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True):
     """在 iPhone 训练片段（+ 选中的开源/合成数据）上训一个 XHEY。返回模型。"""
     tr_all = ht.chunks(iph, train_eps)
     tr, va = split_inner(iph, tr_all)
+    aug_train = tr.copy()
     tr, va = useful(iph, tr), useful(iph, va)
     X, Y, V = xyv(iph, tr, use_img); Xv, Yv, Vv = xyv(iph, va, use_img)
     if "aug" in mix:  # 合成数据：镜像（只取训练片段，画面用翻转后的特征）+ 2 倍速
         for extra in (ext["mirror"], ext["fast"]):
-            keep = np.isin(extra["src_episode"], train_eps)
-            ex_starts = useful(extra, ev.chunk_starts(extra["episode"], H, 1))
-            ex_starts = ex_starts[keep[ex_starts]]
-            ex_starts = ex_starts[np.isin(ex_starts, np.nonzero(keep)[0])]
+            ex_starts = augmentation_train_starts(extra, aug_train, len(iph["state"]))
+            if not len(ex_starts):
+                continue
             Xe, Ye, Ve = xyv(extra, ex_starts, use_img)
             X, Y, V = np.vstack([X, Xe]), np.concatenate([Y, Ye]), np.concatenate([V, Ve])
     m = XHEY(X.shape[1], seed); m.set_norm(X, Y)
@@ -375,8 +404,7 @@ def try_external(kind, root, cache):
     if not root.exists():
         print("skip %s: missing %s" % (kind, root), flush=True)
         return None
-    paths = list(root.rglob("*.json"))
-    paths = [p for p in paths if p.name != "manifest.json" and p.name != "convert_summary.json"]
+    paths = iter_episode_paths(root)
     if not paths:
         print("skip %s: no episode json under %s" % (kind, root), flush=True)
         return None
@@ -421,12 +449,19 @@ def prepare_external(mixes, iph, eps, names, a):
     if "aug" in need:
         mir = mirror_arrays({k: iph[k] for k in ("state", "action", "valid", "episode", "index")})
         img = np.vstack([image_features(e, n, cache, flip=True)[: e["num_frames"] - 1] for e, n in zip(eps, names)])
-        mir = finish(mir, img); mir["src_episode"] = mir["episode"].copy(); ext["mirror"] = mir
+        mir = finish(mir, img)
+        mir["src_start"] = iph["index"].copy(); mir["src_end"] = mir["src_start"] + 1
+        ext["mirror"] = mir
         fast_eps = [subsample_episode(e, 2) for e in eps]
         fd = ht.to_arrays(fast_eps)
         fimg = np.vstack([image_features(e, n, cache)[: e["num_frames"] - 1][::2][: f["num_frames"] - 1]
                           for e, n, f in zip(eps, names, fast_eps)])
-        fd = finish(fd, fimg); fd["src_episode"] = fd["episode"].copy(); ext["fast"] = fd
+        fd = finish(fd, fimg)
+        offsets = np.cumsum([0] + [e["num_frames"] - 1 for e in eps[:-1]])
+        fd["src_start"] = np.concatenate([off + 2 * np.arange(f["num_frames"] - 1)
+                                          for off, f in zip(offsets, fast_eps)])
+        fd["src_end"] = fd["src_start"] + 2
+        ext["fast"] = fd
     return ext
 
 

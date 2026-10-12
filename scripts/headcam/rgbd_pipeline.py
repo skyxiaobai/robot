@@ -162,7 +162,11 @@ def pose_jumps(poses, max_m, max_deg, timestamps=None):
 
 def load_rgbd_session(session_dir):
     import convert_headcam as ch
+    from validate_session import validate_iphone
     s = Path(session_dir)
+    validation = validate_iphone(s)
+    if not validation["ok"]:
+        raise ValueError("iPhone 会话未通过校验：%s" % "; ".join(validation["errors"]))
     calib = json.loads((s / "calib.yaml").read_text(encoding="utf-8"))
     K = np.asarray(calib["K_rgb"], dtype=float)
     calib_full = dict(calib, K_left=K)

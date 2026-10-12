@@ -21,10 +21,19 @@ source outputs/hot3d_scale/env.sh
 python scripts/wilor_video_to_episodes.py \
   --videos 'data/hf_iphone/hub_rgb/*.mp4' \
   --out data/hf_iphone/unified/hub_rgb --source hub_rgb \
+  --calib /path/to/this_camera.yaml \
   --stride 2 --max-frames 600
 ```
 
 Outputs land in `data/hf_iphone/unified/<source>/`.
+
+WiLoR video conversion requires this camera's real intrinsics. `--calib` accepts
+the existing stereo YAML, or RGB-D/monocular YAML/JSON with `K_rgb` or `K_left`
+(3×3), `image_width`, and `image_height`. Resolution scaling is handled by the
+converter; cameras or crops with different fields of view need their own calibration.
+Without intrinsics the virtual focal length does not give metric wrist translation.
+Old uncalibrated WiLoR episodes are rejected by XHEY and must be reconverted;
+array and image-feature caches are rebuilt when their sources change.
 
 ## Train
 
