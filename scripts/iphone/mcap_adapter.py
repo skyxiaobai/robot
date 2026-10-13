@@ -242,8 +242,10 @@ def convert_mcap(path, out, stride=1, max_frames=None, ffmpeg="ffmpeg"):
             fh.write("%d,%.6f\n" % (i, t))
 
     # 深度有效性统计
-    depth_stack = np.stack([d.astype(np.float32) for d in depths])
-    conf_stack = np.stack(confs)
+    # 统计只抽样（整段 stack 成 float32 会占几 GB 内存）
+    step = max(1, len(depths) // 500)
+    depth_stack = np.stack([d.astype(np.float32) for d in depths[::step]])
+    conf_stack = np.stack(confs[::step])
     valid = (depth_stack > 0.05) & (depth_stack < 8.0) & (conf_stack >= 1)
     depth_ok_frac = float(valid.mean())
     med = float(np.median(depth_stack[valid])) if valid.any() else None
