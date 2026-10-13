@@ -372,7 +372,7 @@ def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True):
             Xe, Ye, Ve = xyv(extra, ex_starts, use_img)
             X, Y, V = np.vstack([X, Xe]), np.concatenate([Y, Ye]), np.concatenate([V, Ve])
     m = XHEY(X.shape[1], seed); m.set_norm(X, Y)
-    pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone")
+    pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone", "xhey_rgb")
     pre = [ext[k] for k in pre_keys if k in mix and k in ext]
     if pre:
         P = concat(pre); ps = useful(P, ev.chunk_starts(P["episode"], H, 1))
@@ -446,6 +446,10 @@ def prepare_external(mixes, iph, eps, names, a):
         _d = try_external("zeno_phone", Path(a.zeno_phone), cache)
         if _d is not None:
             ext["zeno_phone"] = _d
+    if "xhey_rgb" in need:  # 你自己另外 17 段没深度的 xhey 录像，WiLoR 认手（相机系）
+        _d = try_external("xhey_rgb", Path(a.xhey_rgb), cache)
+        if _d is not None:
+            ext["xhey_rgb"] = _d
     if "aug" in need:
         mir = mirror_arrays({k: iph[k] for k in ("state", "action", "valid", "episode", "index")})
         img = np.vstack([image_features(e, n, cache, flip=True)[: e["num_frames"] - 1] for e, n in zip(eps, names)])
@@ -486,6 +490,8 @@ def main():
                     help="zeno raw 开放样例经 WiLoR 的 episode 目录")
     ap.add_argument("--zeno-phone", default="data/hf_iphone/unified/zeno_phone_wilor",
                     help="zeno phone sample 经 WiLoR 的 episode 目录")
+    ap.add_argument("--xhey-rgb", default="data/xhey_rgb/unified",
+                    help="另外 17 段无深度 xhey mcap 经 WiLoR 的 episode 目录（预训练用）")
     ap.add_argument("--seeds", type=int, default=3, help="每个配比训练几个随机种子")
     ap.add_argument("--steps", type=int, default=3000, help="iPhone（微调）阶段最大步数，按内部验证集挑最佳步")
     ap.add_argument("--pre-steps", type=int, default=6000, help="开源数据预训练步数")

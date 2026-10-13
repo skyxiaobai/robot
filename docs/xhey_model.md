@@ -156,3 +156,35 @@ zeno_lidar 预训练把最好配比从「只 iPhone」推到了 **iPhone+EgoDex+
 - 评测指标复用 `scripts/egodex_act_eval.py`。
 - 状态/动作打包复用 `scripts/egodata/lerobot_export.py` 的 `pack_state` / `pack_action`。
 - 脚本：`scripts/train_xhey.py`；HF 转换：`scripts/convert_hf_iphone.py`、`scripts/wilor_video_to_episodes.py`。
+
+---
+
+## 2026-10 Kaggle 重训结果（20 段 xhey 录像）
+
+![结果](xhey/xhey_kaggle_results.png)
+
+**怎么看这张图：** 柱子越矮越好。灰色虚线是「猜手不动」（什么都不学）。柱子要低于虚线，模型才算学到东西。
+
+| 方案 | 用了什么数据 | 误差 (cm) | 比「猜手不动」 |
+|---|---|---|---|
+| 猜手不动 | — | **11.03** | 基准 |
+| 线性 | 3 段深度 | 11.04 | +0.01 |
+| XHEY 只用 3 段 | 3 段深度 | 11.29 | +0.27 ❌ |
+| + 合成 | 3 段 + 镜像/2 倍速 | 11.19 | +0.16 |
+| + 17 段预训练 | 先学 17 段无深度，再学 3 段 | 11.11 | +0.08 |
+| **+ 17 段 + 合成** | 全部 | **11.06** | +0.04（最好） |
+
+**三句话结论**
+1. ✅ 管线（路径 A）跑通：3 段深度录像全长 46,617 帧，QC 全部通过，标注覆盖 92–99%；另外 17 段无深度录像共 30,583 帧，WiLoR 认手有效率 91%。
+2. ✅ 你自己的 17 段录像预训练有用（路径 C）：误差从 11.29 降到 11.06 cm，3 个随机种子都稳定。
+3. ❌ 但还没赢过「猜手不动」：差距只剩 0.04 cm。主要原因是录像里手大部分时间在慢动，要多录有明显伸手、抓取动作的片段。
+
+> 和旧数字（猜手不动 16.68 / 最佳 16.45 cm）**不能直接比**：这次用了 PR #46 修正后的对齐与评测，标签也是在 Kaggle 上重新生成的，基准本身降到了 11.03。只看同一次运行里的相对差距。
+
+**怎么复现**：box 上的 `/workspace/xhey_kaggle/prep_all.sh` 预处理 → Kaggle 私有数据集 `justinz2010/xhey-iphone-sessions` → 内核 `justinz2010/xhey-wilor-labels`（T4，约 10.5 小时，其中 WiLoR 认手约 7.5 小时）。训练命令：
+
+```bash
+python scripts/train_xhey.py --run run_s2 --ablation \
+  --mixes iphone,iphone+aug,iphone+xhey_rgb,iphone+xhey_rgb+aug \
+  --mix iphone+xhey_rgb+aug --xhey-rgb xhey_rgb_unified --seeds 3
+```
