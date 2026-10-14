@@ -31,12 +31,22 @@ from egodata.schema import iter_episode_paths  # noqa: E402
 
 H, STEP, IDENT = ht.H, ht.STEP, ht.IDENT
 K_HIST = 8
-QC_EXCLUDE = set()  # --qc-filter：QC 成绩单不合格的段（episode 文件名去掉 .json）
+QC_EXCLUDE = set()  # scorecard failures
+QC_SCORED = set()   # clips named by the supplied scorecards
+QC_STRICT = False   # --strict-qc: missing-from-scorecard is an error; default warns and keeps
 
 
 def _qc_keep(paths, kind):
-    if not QC_EXCLUDE:
+    paths = list(paths)
+    if not QC_SCORED:
         return paths
+    unseen = [p for p in paths if Path(p).stem not in QC_SCORED]
+    if unseen:
+        shown = [str(p) for p in unseen[:10]]
+        if QC_STRICT:
+            raise ValueError("Unreviewed QC episodes for %s: %s" % (kind, shown))
+        print("QC 警告 %s：%d 段不在成绩单里，保留（--strict-qc 才会报错）：%s" % (
+            kind, len(unseen), shown), flush=True)
     kept = [p for p in paths if Path(p).stem not in QC_EXCLUDE]
     if len(kept) != len(paths):
         print("QC 排除 %s：%d/%d 段" % (kind, len(paths) - len(kept), len(paths)), flush=True)
@@ -46,7 +56,8 @@ def _qc_keep(paths, kind):
 # ---------------- 数据 ----------------
 def load_episodes(run):
     paths = _qc_keep(sorted((Path(run) / "episodes").glob("*.json")), "iphone")
-    eps = [json.loads(p.read_text()) for p in paths]
+    from common.frames import canonicalize_for_xhey
+    eps = [canonicalize_for_xhey(json.loads(p.read_text())) for p in paths]
     return eps, [p.stem for p in paths]
 
 
@@ -174,7 +185,7 @@ def build_external(kind, root, cache_dir):
     """开源数据 → 和 iPhone 同样 140 维状态 / 14 维动作，30 fps 下采样到 15 fps。没有画面特征（has_image=0）。"""
     paths = _qc_keep(iter_episode_paths(root), kind)
     signature = json.dumps([(str(p.resolve()), p.stat().st_size, p.stat().st_mtime_ns) for p in paths])
-    f = Path(cache_dir) / ("%s_arrays.npz" % kind)
+    f = Path(cache_dir) / ("%s_arrays_p0v1.npz" % kind)
     if f.exists():
         with np.load(f) as cached:
             if "metric_checked" in cached and bool(cached["metric_checked"]) and (
@@ -193,7 +204,8 @@ def build_external(kind, root, cache_dir):
         if (ep.get("fps") or 30) >= 25:
             ep = subsample_episode(ep, 2)
         if ep["num_frames"] > H + 1:
-            eps.append(ep)
+            from common.frames import canonicalize_for_xhey
+            eps.append(canonicalize_for_xhey(ep))
     if not eps:
         raise SystemExit("找不到 %s 数据：%s（见 docs/xhey_model.md 的准备步骤）" % (kind, root))
     d = ht.to_arrays(eps)
@@ -548,22 +560,33 @@ def main():
     ap.add_argument("--loss-move-cm", type=float, default=0.0,
                     help=">0 时微调只保留 GT 手腕位移超过该 cm 的训练块（逼模型学「会动」）")
     ap.add_argument("--qc-filter", nargs="*", default=None,
-                    help="QC 成绩单 scorecards.json（scripts/qc_scorecard.py 生成，可给多个）；不合格的段不进训练")
+                    help="可选。QC 成绩单 scorecards.json（可给多个）；成绩单里不合格的段不进训练。"
+                         "成绩单没覆盖到的段默认警告并保留")
+    ap.add_argument("--strict-qc", action="store_true",
+                    help="和 --qc-filter 一起用：成绩单里没有的段直接报错。"
+                         "默认只警告并保留（Open-AoE、Stera b02–b05 等还没有成绩单）")
     ap.add_argument("--seeds", type=int, default=3, help="每个配比训练几个随机种子")
     ap.add_argument("--steps", type=int, default=3000, help="iPhone（微调）阶段最大步数，按内部验证集挑最佳步")
     ap.add_argument("--pre-steps", type=int, default=6000, help="开源数据预训练步数")
     ap.add_argument("--no-eval", action="store_true", help="跳过留一段评测，只用全部片段训最终模型")
     a = ap.parse_args()
+    global QC_STRICT
+    QC_EXCLUDE.clear()
+    QC_SCORED.clear()
+    QC_STRICT = bool(a.strict_qc)
     if a.qc_filter:
-        from qc_scorecard import load_filter
+        from qc_scorecard import load_filter, load_scored
         for f in a.qc_filter:
             QC_EXCLUDE.update(load_filter(f))
+            QC_SCORED.update(load_scored(f))
         print("QC 过滤：共 %d 段不合格，训练时排除" % len(QC_EXCLUDE), flush=True)
     TUNE.update(hidden=a.hidden, dropout=a.dropout, lr_scale=a.lr_scale, aug_noise=a.aug_noise)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     mixes = (a.mixes.split(",") if a.mixes else DEFAULT_ABLATION) if a.ablation else [a.mix]
     iph, eps, names = build_iphone(a.run, out / "cache")
+    if not eps:
+        raise ValueError("No approved iPhone episodes remain after QC")
     ext = prepare_external(mixes + [a.mix], iph, eps, names, a)
     print("clips", names, "rows", len(iph["state"]), "valid", round(float(iph["valid"].mean()), 4), flush=True)
     if not a.no_eval:

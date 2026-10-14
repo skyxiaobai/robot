@@ -4,7 +4,9 @@
 
 指标（每段）：
   move_frac     手在动的帧占比：任一只手 1 秒内手腕位移 > --move-cm（默认 5 cm）
-  depth_valid   有深度源时：检测到手的帧里，深度检查通过（状态 ok）的比例；没有深度信息记 null
+  depth_valid   有逐帧深度状态时：检测到手的帧里，深度检查通过（状态 ok）的比例。
+                没有逐帧证据记 null，并报 unknown（警告，不判失败）；不再把缺失证据当成 100%。
+                只有 lowconf / fit / depth 这类实测坏深度才会拉低比例并判失败。
   detect_rate   至少一只手被认到的帧占比
   jitter_cm     手腕逐帧位移的中位数（cm，原生帧率；越小越稳）
   swaps         左右手互换次数（egodata.hand_fix 按手腕连续性检出）
@@ -12,7 +14,8 @@
   frame_ok      坐标单位 / 轴向检查（common.frames.sanity_check）
 
 合格规则（默认，可改）：detect_rate ≥ 0.5、gap_ratio ≤ 0.5、jitter_cm ≤ 2.5、move_frac ≥ 0.05、
-swaps ≤ 每分钟 10 次、depth_valid ≥ 0.5（有深度时）、frame_ok。
+swaps ≤ 每分钟 10 次、depth_valid ≥ 0.5（有实测深度时）、frame_ok。
+stera / dynamic_intelligence / zeno_lidar / iphone_lidar 若转换器没写逐帧深度状态，记 unknown 警告，仍可合格。
 
 用法：
   python scripts/qc_scorecard.py --episodes data/stera/unified --out outputs/qc/stera
@@ -27,6 +30,9 @@ from common import frames as F  # noqa: E402
 from egodata.hand_fix import SIDES, _good, fix_episode_hands  # noqa: E402
 
 DEPTH_BAD = {"lowconf", "fit", "depth"}
+DEPTH_UNKNOWN = {"none", "missing", "unknown"}
+# 这些源的转换器经常不写逐帧深度状态；缺失证据报 unknown，不当作失败，也不再记成 100%。
+DEPTH_UNKNOWN_SOURCES = ("stera", "dynamic_intelligence", "zeno_lidar", "iphone_lidar")
 RULES = {"detect_rate_min": 0.5, "gap_ratio_max": 0.5, "jitter_cm_max": 2.5, "move_frac_min": 0.05,
          "swaps_per_min_max": 10.0, "depth_valid_min": 0.5}
 
@@ -41,29 +47,32 @@ def score_episode(ep, name="", move_cm=5.0, max_gap_s=0.3, rules=RULES):
     had_fix = isinstance(ep.get("hand_fix"), dict)
     e2 = ep if had_fix else copy.deepcopy(ep)
     fixed = e2["hand_fix"] if had_fix else fix_episode_hands(e2, fps, max_gap_s=max_gap_s)
-    det = np.zeros(n, bool); steps = []; moving = np.zeros(n, bool); one_s = max(1, int(round(fps)))
+    det = np.zeros(n, bool); residuals = []; moving = np.zeros(n, bool); one_s = max(1, int(round(fps)))
     depth_ok = depth_all = 0
     for side in SIDES:
         h = e2["hands"][side]
         ok, W = _good(h, n, 0.5)
         st = h.get("label_status") or [""] * n
         detected = np.isfinite(W).all(1) & np.array([str(s) not in ("missing", "none_detected") for s in st[:n]])
-        det |= detected
+        det |= ok   # QC detect_rate requires genuinely measured, unfilled, trusted wrist
         Wg = np.where(ok[:, None], W, np.nan)
-        dd = np.linalg.norm(np.diff(Wg, axis=0), axis=1)
-        steps.append(dd[np.isfinite(dd)])
+        if n >= 3:
+            residual = np.linalg.norm(Wg[2:] - 2 * Wg[1:-1] + Wg[:-2], axis=1) * (15.0 / fps) ** 2
+            residuals.append(residual[np.isfinite(residual)])
         if n > one_s:
             mv = np.linalg.norm(Wg[one_s:] - Wg[:-one_s], axis=1)
             moving[:-one_s] |= np.nan_to_num(mv, nan=0.0) > move_cm / 100.0
     if _has_depth_status(ep):
         for side in SIDES:
             for s in ep["iphone"]["per_frame"][side]:
-                if s in ("none", "missing", None):
+                token = "" if s is None else str(s).lower()
+                if token in DEPTH_UNKNOWN:
                     continue
-                depth_all += 1; depth_ok += int(s == "ok")
-    elif "lidar" in str((ep.get("hand_pose") or {}).get("backend", "")) or "depth" in str((ep.get("hand_pose") or {}).get("backend", "")):
-        depth_all = int(det.sum()); depth_ok = depth_all  # 转换器只留下了深度锚定的帧，逐帧失败原因没导出
-    st = np.concatenate(steps) if steps else np.array([])
+                # 只有 ok 和明确的坏深度才算证据；unknown / 没写状态不算失败，也不记成 100%。
+                if token == "ok" or token in DEPTH_BAD:
+                    depth_all += 1
+                    depth_ok += int(token == "ok")
+    st = np.concatenate(residuals) if residuals else np.array([])
     gap = np.mean([fixed[s]["gap_frames"] / max(n, 1) for s in SIDES])
     sanity = F.sanity_check(ep)
     card = {"clip": name or ep.get("episode_id"), "source": ep.get("source"), "frames": n, "fps": round(fps, 2),
@@ -76,6 +85,7 @@ def score_episode(ep, name="", move_cm=5.0, max_gap_s=0.3, rules=RULES):
             "interp_frames": int(sum(fixed[s]["interp_frames"] for s in SIDES)),
             "frame_ok": bool(sanity["ok"]), "frame_flags": sanity["flags"], "median_hand_dist_m": sanity["median_dist_m"]}
     card["fails"] = check(card, rules)
+    card["warnings"] = depth_warnings(card)
     card["pass"] = not card["fails"]
     return card
 
@@ -99,12 +109,35 @@ def check(c, r=RULES):
     return f
 
 
+def _depth_source(c):
+    src = str(c.get("source") or "").lower()
+    return any(k in src for k in DEPTH_UNKNOWN_SOURCES)
+
+
+def depth_warnings(c):
+    """没有实测深度证据时报告 unknown。警告不进入 fails，合格与否只看实测坏深度。"""
+    if c.get("depth_valid") is None and _depth_source(c):
+        return ["深度状态未知"]
+    return []
+
+
 def one_line(c):
-    dv = "—" if c["depth_valid"] is None else "%.0f%%" % (100 * c["depth_valid"])
+    warns = c.get("warnings")
+    if warns is None:
+        warns = depth_warnings(c)
+    if c["depth_valid"] is None and "深度状态未知" in warns:
+        dv = "unknown"
+    elif c["depth_valid"] is None:
+        dv = "—"
+    else:
+        dv = "%.0f%%" % (100 * c["depth_valid"])
+    tail = "合格" if c["pass"] else "、".join(c["fails"])
+    if warns:
+        tail += "（警告：" + "、".join(warns) + "）"
     return "%s %s | 动 %.0f%% 深度 %s 认手 %.0f%% 抖 %.2fcm 换手 %d 缺口 %.0f%% | %s" % (
         "✅" if c["pass"] else "❌", c["clip"], 100 * c["move_frac"], dv, 100 * c["detect_rate"],
         c["jitter_cm"] if c["jitter_cm"] is not None else float("nan"), c["swaps"], 100 * c["gap_ratio"],
-        "合格" if c["pass"] else "、".join(c["fails"]))
+        tail)
 
 
 def chart(cards, path, title):
@@ -135,6 +168,12 @@ def chart(cards, path, title):
     ax.set_yticklabels([("+ " if c["pass"] else "x ") + str(c["clip"])[-28:] for c in cards], fontsize=6)
     ax.set_title(title + "  pass %d/%d" % (sum(c["pass"] for c in cards), len(cards)), fontsize=9)
     fig.tight_layout(); fig.savefig(path, dpi=130); plt.close(fig)
+
+
+def load_scored(path):
+    data = json.loads(Path(path).read_text())
+    cards = data["cards"] if isinstance(data, dict) else data
+    return {str(c["clip"]) for c in cards}
 
 
 def load_filter(path):

@@ -92,6 +92,44 @@ class FramesTest(unittest.TestCase):
             np.testing.assert_allclose(R @ (np.array(up) / np.linalg.norm(up)), [0, 1, 0], atol=1e-9)
             np.testing.assert_allclose(R @ R.T, np.eye(3), atol=1e-9)
 
+    def test_world_up_alignment_negative_z(self):
+        R = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], float)
+        A, label = F.world_up_alignment(np.stack([R] * 5))
+        self.assertEqual(label, "z")
+        np.testing.assert_allclose(A.T @ A, np.eye(3), atol=1e-8)
+        self.assertAlmostEqual(float(np.linalg.det(A)), 1.0)
+        np.testing.assert_allclose(A @ [0, 0, -1], [0, 1, 0], atol=1e-8)
+
+    def test_canonicalization_rejects_missing_world_poses(self):
+        ep = make_ep(frame="slam_world")
+        ep["camera_poses"] = []
+        with self.assertRaisesRegex(ValueError, "camera pose"):
+            F.canonicalize_for_xhey(ep)
+
+    def test_canonicalization_camera_yup(self):
+        # make_ep 的默认数字是 OpenCV（y 下、z 前）。camera_yup 是 x 右、y 上、z 后，
+        # 手在相机前方必须先翻到 z<0；把 OpenCV 数字直接标成 camera_yup 会在正确翻转后落到相机背后。
+        src = make_ep(frame="camera")
+        left = F.cv_to_yup([p[:3] for p in src["hands"]["left"]["wrist_pose"]])
+        right = F.cv_to_yup([p[:3] for p in src["hands"]["right"]["wrist_pose"]])
+        ep = make_ep(frame="camera_yup", left=left, right=right)
+        normalized = F.canonicalize_for_xhey(ep)
+        self.assertEqual(F.convention_of(normalized), F.CAMERA)
+        self.assertEqual(F.convention_of(ep), F.CAMERA_YUP)
+        np.testing.assert_allclose(normalized["hands"]["left"]["wrist_pose"][0][:3],
+                                   F.cv_to_yup(ep["hands"]["left"]["wrist_pose"][0][:3]))
+        np.testing.assert_allclose(normalized["hands"]["left"]["wrist_pose"][0][:3],
+                                   src["hands"]["left"]["wrist_pose"][0][:3])
+        np.testing.assert_allclose(normalized["hands"]["left"]["joints"][0][0],
+                                   F.cv_to_yup(ep["hands"]["left"]["joints"][0][0]))
+        self.assertGreater(normalized["hands"]["left"]["wrist_pose"][0][2], 0)
+        self.assertTrue(F.sanity_check(normalized)["ok"], F.sanity_check(normalized)["flags"])
+
+    def test_opencv_numbers_are_not_a_camera_yup_pose(self):
+        ep = make_ep(frame="camera_yup")
+        with self.assertRaisesRegex(ValueError, "sanity"):
+            F.canonicalize_for_xhey(ep)
+
     def test_world_up_alignment_ros_zup(self):
         # 光学系 → ROS z 朝上世界：相机朝 +x 看，「上」(-y 光学) = +z
         R = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], float)
@@ -120,6 +158,10 @@ class FramesTest(unittest.TestCase):
                 p[0] += 1; p[1] += 2; p[2] += 3
         np.testing.assert_allclose(F.wrist_positions(w, F.CAMERA), F.wrist_positions(ep, F.CAMERA), atol=1e-9)
 
+    def test_arkit_world_is_yup_world(self):
+        ep = make_ep(frame="arkit_world")
+        self.assertEqual(F.convention_of(ep), F.WORLD_YUP)
+
     def test_align_world_to_yup(self):
         ep = make_ep(frame="slam_world")
         self.assertEqual(F.convention_of(ep), F.WORLD)
@@ -130,6 +172,55 @@ class FramesTest(unittest.TestCase):
 
 
 class ScorecardTest(unittest.TestCase):
+    def test_constant_velocity_not_jitter(self):
+        for fps in (15.0, 30.0, 60.0):
+            n = int(fps * 5)
+            t = np.arange(n) / fps
+            left = np.column_stack((0.4 * t - 0.2, np.full(n, 0.15), np.full(n, 0.5)))
+            ep = make_ep(n=n, fps=fps, left=left, right=left + [0.2, 0, 0])
+            card = Q.score_episode(ep, "constant_velocity")
+            self.assertLess(card["jitter_cm"], 1e-5)
+
+    def test_missing_depth_is_unknown(self):
+        for source in ("stera", "dynamic_intelligence", "zeno_lidar", "iphone_lidar"):
+            ep = make_ep()
+            ep["source"] = source
+            ep["hand_pose"] = {"backend": source + "_lidar"}
+            c = Q.score_episode(ep, "no_depth_evidence")
+            line = Q.one_line(c)
+            self.assertIsNone(c["depth_valid"])
+            self.assertNotIn("深度状态未知", c["fails"])
+            self.assertNotIn("深度有效率低", c["fails"])
+            self.assertIn("深度状态未知", c["warnings"])
+            self.assertIn("深度 unknown", line)
+            self.assertNotIn("深度 100%", line)
+            self.assertTrue(c["pass"], c["fails"])
+
+    def test_explicit_unknown_depth_status_is_warning(self):
+        ep = make_ep()
+        n = ep["num_frames"]
+        ep["source"] = "zeno_lidar"
+        ep["hand_pose"] = {"backend": "wilor_lidar"}
+        ep["iphone"] = {"per_frame": {"left": ["unknown"] * n, "right": ["unknown"] * n}}
+        c = Q.score_episode(ep, "unknown_status")
+        self.assertIsNone(c["depth_valid"])
+        self.assertNotIn("深度有效率低", c["fails"])
+        self.assertIn("深度状态未知", c["warnings"])
+        self.assertTrue(c["pass"], c["fails"])
+
+    def test_bad_depth_evidence_fails(self):
+        ep = make_ep()
+        n = ep["num_frames"]
+        ep["source"] = "iphone_lidar"
+        ep["hand_pose"] = {"backend": "wilor_lidar"}
+        ep["iphone"] = {"per_frame": {"left": ["depth"] * n, "right": ["lowconf"] * n}}
+        c = Q.score_episode(ep, "bad_depth")
+        self.assertIsNotNone(c["depth_valid"])
+        self.assertLess(c["depth_valid"], 0.5)
+        self.assertIn("深度有效率低", c["fails"])
+        self.assertNotIn("深度状态未知", c.get("warnings") or [])
+        self.assertFalse(c["pass"])
+
     def test_card_and_filter(self):
         good = make_ep(150)
         still = make_ep(150, left=np.tile([-0.1, 0.15, 0.45], (150, 1)), right=np.tile([0.1, 0.15, 0.45], (150, 1)))
@@ -142,14 +233,46 @@ class ScorecardTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "scorecards.json"; p.write_text(json.dumps({"cards": [cg, cs]}))
             self.assertEqual(Q.load_filter(p), {"still"})
+            self.assertEqual(Q.load_scored(p), {"good", "still"})
 
     def test_train_xhey_qc_keep(self):
         import train_xhey as T
         T.QC_EXCLUDE.clear(); T.QC_EXCLUDE.update({"b"})
+        T.QC_SCORED.clear(); T.QC_SCORED.update({"a", "b"})
+        T.QC_STRICT = False
         try:
             self.assertEqual([p.stem for p in T._qc_keep([Path("a.json"), Path("b.json")], "x")], ["a"])
+            kept = [p.stem for p in T._qc_keep([Path("a.json"), Path("new.json")], "x")]
+            self.assertEqual(kept, ["a", "new"])
+            T.QC_STRICT = True
+            with self.assertRaisesRegex(ValueError, "Unreviewed"):
+                T._qc_keep([Path("a.json"), Path("new.json")], "x")
         finally:
             T.QC_EXCLUDE.clear()
+            T.QC_SCORED.clear()
+            T.QC_STRICT = False
+
+    def test_qc_filter_optional(self):
+        import io
+        import train_xhey as T
+        old_argv, old_err = sys.argv, sys.stderr
+        with tempfile.TemporaryDirectory() as d:
+            sys.argv = ["train_xhey.py", "--run", "missing-run-dir", "--out", d, "--strict-qc", "--no-final"]
+            sys.stderr = io.StringIO()
+            try:
+                with self.assertRaises(BaseException) as ctx:
+                    T.main()
+                err = sys.stderr.getvalue()
+                if isinstance(ctx.exception, SystemExit) and ctx.exception.code not in (0, None):
+                    self.assertNotIn("qc-filter", err)
+                    self.assertNotIn("unrecognized arguments", err)
+                else:
+                    self.assertIsInstance(ctx.exception, ValueError)
+            finally:
+                sys.argv, sys.stderr = old_argv, old_err
+                T.QC_EXCLUDE.clear()
+                T.QC_SCORED.clear()
+                T.QC_STRICT = False
 
 
 if __name__ == "__main__":

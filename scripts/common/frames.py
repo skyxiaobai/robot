@@ -20,7 +20,9 @@ CV_TO_YUP = np.diag([1.0, -1.0, -1.0])  # 光学系 ↔ y 朝上相机系（自�
 ROS_ZUP_TO_YUP = np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]], float)  # ROS x前 y左 z上 → x右 y上 z后
 # 旧 coordinate_frame 名字 → 统一约定
 ALIASES = {"camera": CAMERA, "camera_yup": CAMERA_YUP, "arkit_world_yup": WORLD_YUP, "slam_world": WORLD,
-           "world_yup": WORLD_YUP}
+           "world_yup": WORLD_YUP,
+           # EgoDex 旧名：ARKit 重力 y 朝上世界，相机位姿按 OpenCV 光学系解释。
+           "arkit_world": WORLD_YUP}
 
 
 def cm_to_m(x):
@@ -56,7 +58,7 @@ def world_up_alignment(R_cv2w):
     if ax == 1 and sgn > 0:
         return np.eye(3), "y"
     if ax == 2:
-        return ROS_ZUP_TO_YUP * np.array([1, sgn, 1])[:, None], "z"
+        return (ROS_ZUP_TO_YUP if sgn > 0 else rotation_up_to_y([0, 0, -1])), "z"
     u = np.zeros(3); u[ax] = sgn
     R = rotation_up_to_y(u)
     return R, ("y-" if ax == 1 else "axis%d" % ax)
@@ -84,6 +86,8 @@ def _quat_mul(a, b):
 def align_world_to_yup(episode, A, label=""):
     """把 world 系 episode 左乘旋转 A 变成 world_yup（手腕、关节、相机位姿一起转）。"""
     A = np.asarray(A, float)
+    if A.shape != (3, 3) or not np.isfinite(A).all() or not np.allclose(A.T @ A, np.eye(3), atol=1e-5) or not np.isclose(np.linalg.det(A), 1.0, atol=1e-5):
+        raise ValueError("world alignment must be a proper rotation")
     for side in ("left", "right"):
         h = episode["hands"][side]
         for i, p in enumerate(h["wrist_pose"]):
@@ -136,6 +140,67 @@ def _cam_poses(episode, n):
     if not cp or len(cp) != n:
         return np.tile(np.eye(4), (n, 1, 1))
     return np.asarray(cp, float)
+
+
+def canonicalize_for_xhey(episode):
+    """Express all metric hand measurements in OpenCV camera axes for XHEY.
+    Reject world coordinates lacking valid camera poses; do not relabel alone.
+    Future deltas in moving camera frames still contain egomotion.
+    """
+    import copy
+    ep = copy.deepcopy(episode)
+    conv = convention_of(ep)
+    if conv not in CONVENTIONS:
+        raise ValueError("unknown coordinate convention: %s" % conv)
+    n = int(ep["num_frames"])
+    world = conv in (WORLD, WORLD_YUP)
+    P = None
+    if world:
+        cp = ep.get("camera_poses")
+        if not isinstance(cp, list) or len(cp) != n:
+            raise ValueError("world-frame episode requires one camera pose per frame")
+        P = np.asarray(cp, float)
+        if P.shape != (n, 4, 4) or not np.isfinite(P).all():
+            raise ValueError("invalid camera poses")
+        R = P[:, :3, :3]
+        if not np.allclose(R @ np.transpose(R, (0, 2, 1)), np.eye(3), atol=2e-3) or not np.allclose(np.linalg.det(R), 1.0, atol=2e-3):
+            raise ValueError("camera poses must contain proper rotations")
+        if not np.allclose(P[:, 3, :], [0, 0, 0, 1], atol=1e-5):
+            raise ValueError("invalid camera pose homogeneous row")
+    flip = conv == CAMERA_YUP or (world and (ep.get("frame_convention") or {}).get("camera_axes", "cv") != "cv")
+    for side in ("left", "right"):
+        h = ep["hands"][side]
+        for i in range(n):
+            p = h["wrist_pose"][i]
+            if p and len(p) >= 7 and all(v is not None for v in p[:7]):
+                pos = np.asarray(p[:3], float)
+                quat = np.asarray(p[3:7], float)
+                if np.isfinite(pos).all() and np.isfinite(quat).all() and np.linalg.norm(quat) > 1e-8:
+                    if world:
+                        pos = P[i, :3, :3].T @ (pos - P[i, :3, 3])
+                        quat = _quat_mul(_rot_to_quat(P[i, :3, :3].T), quat)
+                    if flip:
+                        pos = cv_to_yup(pos)
+                        quat = _quat_mul(_rot_to_quat(CV_TO_YUP), quat)
+                    quat = quat / np.linalg.norm(quat)
+                    h["wrist_pose"][i] = pos.tolist() + quat.tolist() + list(p[7:])
+            j = h["joints"][i]
+            if j is not None:
+                J = np.asarray([[np.nan if v is None else v for v in joint] for joint in j], float)
+                if J.shape == (21, 3) and np.isfinite(J).all():
+                    if world:
+                        J = (J - P[i, :3, 3]) @ P[i, :3, :3]
+                    if flip:
+                        J = cv_to_yup(J)
+                    h["joints"][i] = J.tolist()
+    ep["coordinate_frame"] = CAMERA
+    ep["camera_poses"] = [np.eye(4).tolist()] * n
+    tag(ep, CAMERA, gravity_aligned=False, source_frame=conv)
+    ep["frame_convention"]["canonicalized_for_xhey"] = True
+    check = sanity_check(ep)
+    if not check["ok"]:
+        raise ValueError("canonicalized frame sanity failed: " + "; ".join(check["flags"]))
+    return ep
 
 
 def wrist_positions(episode, variant=None):
