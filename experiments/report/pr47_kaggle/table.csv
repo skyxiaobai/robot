@@ -1,0 +1,8 @@
+﻿组,整体ADE_cm,比不动_cm,手在动ADE_cm,手在动比不动_cm,95%CI,种子数
+zero,11.026,0.0,nan,nan,,1
+linear,11.037,0.011,nan,nan,,1
+history_revert,11.026,0.0,nan,nan,,1
+iphone,11.292,0.266,nan,nan,,3
+iphone+aug,11.188,0.162,nan,nan,,3
+iphone+xhey_rgb,11.106,0.081,nan,nan,,3
+iphone+xhey_rgb+aug,11.062,0.037,nan,nan,,3

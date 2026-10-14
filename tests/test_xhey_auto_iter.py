@@ -131,14 +131,12 @@ class MirrorAndIngest(unittest.TestCase):
 
 
 class CommittedState(unittest.TestCase):
-    def test_iteration_2_still_inflight(self):
+    def test_iteration_2_ingested(self):
         state = json.loads((ROOT / "experiments" / "auto_state.json").read_text(encoding="utf-8"))
-        run = state["running"]
-        self.assertEqual(run["iteration"], 2)
-        self.assertEqual(run["kernel"], "justinz2010/xhey-auto-iter")
-        self.assertEqual(run["version"], 2)
-        self.assertEqual(len(run["candidates"]), 3)
-        self.assertTrue(all(c["openaoe"] == "nano_cam" for c in run["candidates"]))
+        self.assertIsNone(state["running"])
+        self.assertEqual(state["last_iteration"], 2)
+        ids = {json.loads(l)["id"] for l in (ROOT / "experiments" / "ledger.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()}
+        self.assertTrue({"iter002_c0", "iter002_c1", "iter002_c2", "C1", "C8"} <= ids)
 
 
 def _kernel_metrics(mix, moving=-0.05):
