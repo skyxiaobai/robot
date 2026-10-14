@@ -188,3 +188,54 @@ python scripts/train_xhey.py --run run_s2 --ablation \
   --mixes iphone,iphone+aug,iphone+xhey_rgb,iphone+xhey_rgb+aug \
   --mix iphone+xhey_rgb+aug --xhey-rgb xhey_rgb_unified --seeds 3
 ```
+
+---
+
+## 2026-10 加入 Open-AoE 预训练（开源手机第一视角数据）
+
+![结果](xhey/xhey_openaoe_results.png)
+
+**怎么看：** 左图是全部片段，右图只看「手真的在动」的片段（未来约 1 秒手腕移动超过 5 cm，占 72%）。灰色虚线是「猜手不动」。**绿色柱子 = 赢过它**，红色 = 没赢。
+
+| 方案 | 全部 (cm) | 手在动 (cm) | 手在动时比「猜不动」 |
+|---|---|---|---|
+| 猜手不动 | 11.03 | 14.08 | 基准 |
+| 只用 3 段 | 11.29 | 14.19 | +0.11 ❌ |
+| **+17 段 + 合成（PR #47）** | 11.06 | **14.06** | **−0.02 ✅**（95% 区间 −0.028 ~ −0.015） |
+| + Open-AoE nano | 11.25 | 14.19 | +0.11 ❌ |
+| + Open-AoE nano + 17 段 | 11.23 | 14.18 | +0.10 ❌ |
+| + Open-AoE tiny 切片 | 11.24 | 14.17 | +0.09 ❌ |
+| + Open-AoE tiny 切片 + 17 段 | 11.25 | 14.18 | +0.09 ❌ |
+
+**三句话结论**
+1. ✅ 在「手在动」的片段上，PR #47 的 XHEY（17 段自有录像预训练 + 合成）**第一次小幅赢过「猜手不动」**：14.06 vs 14.08 cm，3 个种子、置信区间都在 0 以下。差距很小（0.02 cm），还不能说「很强」。
+2. ❌ 加 Open-AoE（nano 2.5 小时、tiny 切片 13.9 小时的「手在动」片段）**反而变差**约 0.1–0.2 cm，而且数据越多没有越好。
+3. 🤔 可能原因：Open-AoE 世界坐标没有重力方向（我们只是把 y 轴翻过来近似）、手的标注来自 MANO 重建而不是 LiDAR、拍摄人和动作分布不同。下一步应改成「相机坐标系」下预训练，或只拿 Open-AoE 学手指形状。
+
+**用到的数据**
+
+| 档 | 片段 | 过滤后（手在动）| 说明 |
+|---|---|---|---|
+| nano | 111 段（HF 标签 `nano`） | 503/582 个 20 秒段，13.7 万帧 @15fps | 整档 |
+| tiny 切片 | 从 main 随机抽 500 段（seed 0，见 `tiny_slice.json`） | 2630/4383 段，74.8 万帧 | 整个 tiny（约 100 h）放不进 Kaggle 内存，所以切片 |
+
+只下载了 `hands.npz` + `camera_traj.npz`（nano 约 0.24 GB），没用视频。
+
+**怎么复现**
+
+```bash
+# 1) 只下 hands.npz / camera_traj.npz（需同意 Open-AoE 许可与 MANO 许可）
+# 2) MANO 正向运动学 → 21 点、15 fps、过滤「手在动」
+python scripts/convert_openaoe.py --root data/openaoe/nano --out data/openaoe/unified/nano --mano-dir /path/to/mano_parent
+# 3) 训练 + 「手在动」子集评测
+python scripts/train_xhey.py --run run_s2 --ablation --openaoe data/openaoe/unified/nano \
+  --mixes iphone,iphone+xhey_rgb+aug,iphone+openaoe+aug,iphone+openaoe+xhey_rgb+aug --move-cm 5
+```
+
+Kaggle：私有数据集 `justinz2010/xhey-openaoe-pretrain`，内核 `justinz2010/xhey-openaoe-train`（脚本 `scripts/kaggle_xhey_openaoe.py`）。
+
+EMPIRE（arXiv:2608.22449）没有跑：它要 PaliGemma2-3B + Depth-Anything-3 和 8 卡，而且评的是整只手的 MPJPE，XHEY 目前只预测手腕。
+
+**致谢与许可**
+- 数据来自 **Open-AoE / OpenAoE-2000h**（Hugging Face `inclusionAI/OpenAoE-2000h`；论文 *Open-AoE: An Open Egocentric Manipulation Dataset and Toolchain for Embodied Learning*，arXiv:2607.14183），按 Open-AoE Dataset License 使用，需保留署名；本仓库与 Open-AoE 无隶属或背书关系。
+- `hands.npz`、`camera_traj.npz` 是 MANO 派生数据，另受 [MANO 许可](https://mano.is.tue.mpg.de/license.html)（非商业研究）约束。MANO 模型文件和转换后的数据**都不进仓库**，请各自注册下载。

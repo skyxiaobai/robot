@@ -372,7 +372,7 @@ def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True):
             Xe, Ye, Ve = xyv(extra, ex_starts, use_img)
             X, Y, V = np.vstack([X, Xe]), np.concatenate([Y, Ye]), np.concatenate([V, Ve])
     m = XHEY(X.shape[1], seed); m.set_norm(X, Y)
-    pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone", "xhey_rgb")
+    pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone", "xhey_rgb", "openaoe")
     pre = [ext[k] for k in pre_keys if k in mix and k in ext]
     if pre:
         P = concat(pre); ps = useful(P, ev.chunk_starts(P["episode"], H, 1))
@@ -450,6 +450,10 @@ def prepare_external(mixes, iph, eps, names, a):
         _d = try_external("xhey_rgb", Path(a.xhey_rgb), cache)
         if _d is not None:
             ext["xhey_rgb"] = _d
+    if "openaoe" in need:  # Open-AoE（inclusionAI/OpenAoE-2000h）MANO 手 + SLAM 世界系，已过滤「手在动」
+        _d = try_external("openaoe", Path(a.openaoe), cache)
+        if _d is not None:
+            ext["openaoe"] = _d
     if "aug" in need:
         mir = mirror_arrays({k: iph[k] for k in ("state", "action", "valid", "episode", "index")})
         img = np.vstack([image_features(e, n, cache, flip=True)[: e["num_frames"] - 1] for e, n in zip(eps, names)])
@@ -492,6 +496,10 @@ def main():
                     help="zeno phone sample 经 WiLoR 的 episode 目录")
     ap.add_argument("--xhey-rgb", default="data/xhey_rgb/unified",
                     help="另外 17 段无深度 xhey mcap 经 WiLoR 的 episode 目录（预训练用）")
+    ap.add_argument("--openaoe", default="data/openaoe/unified",
+                    help="Open-AoE 转换后的 episode 目录（scripts/convert_openaoe.py）")
+    ap.add_argument("--move-cm", type=float, default=5.0,
+                    help="「手在动」子集：未来 16 步手腕真实位移超过多少 cm")
     ap.add_argument("--seeds", type=int, default=3, help="每个配比训练几个随机种子")
     ap.add_argument("--steps", type=int, default=3000, help="iPhone（微调）阶段最大步数，按内部验证集挑最佳步")
     ap.add_argument("--pre-steps", type=int, default=6000, help="开源数据预训练步数")
@@ -504,10 +512,13 @@ def main():
     ext = prepare_external(mixes + [a.mix], iph, eps, names, a)
     print("clips", names, "rows", len(iph["state"]), "valid", round(float(iph["valid"].mean()), 4), flush=True)
     if not a.no_eval:
-        per, chunks_ade, prefix = {}, {}, {}
+        per, chunks_ade, prefix, moving = {}, {}, {}, []
         for test_ep in range(len(names)):
             train_eps = [e for e in range(len(names)) if e != test_ep]
             te, tr = ht.chunks(iph, [test_ep]), ht.chunks(iph, train_eps)
+            _t, _ = ev.gather(iph, te)
+            moving.append(np.stack([np.linalg.norm(_t[:, :, 7 * h:7 * h + 3].sum(1), axis=-1) * 100 > a.move_cm
+                                    for h in range(2)], 1))
             def add(name, pred):
                 per.setdefault(name, []).append(ev.metrics_for(iph, te, pred, [1, 8, 16]))
                 chunks_ade.setdefault(name, []).append(ht.chunk_ade(iph, te, pred))
@@ -523,7 +534,7 @@ def main():
                     m = train_mix(mix, iph, train_eps, ext, s, a.steps, a.pre_steps)
                     add("%s#%d" % (mix, s), m(feats(iph, te)))
                 print("fold", names[test_ep], mix, "done %.0fs" % (time.time() - t0), flush=True)
-        results = summarize_results(per, chunks_ade, names)
+        results = summarize_results(per, chunks_ade, names, np.concatenate(moving))
         for g in results:
             mem = [n for n in prefix if n.split("#")[0] == g]
             vals = [sum(x[0] for x in prefix[n]) / max(sum(x[1] for x in prefix[n]), 1) * 100 for n in mem]
@@ -535,7 +546,8 @@ def main():
                   "seeds": a.seeds, "steps": a.steps, "pre_steps": a.pre_steps, "mixes": mixes,
                   "external_rows": {k: int(len(v["state"])) for k, v in ext.items()}, "results": results}
         (out / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
-        print(json.dumps({g: [round(r["ade_cm_pooled"], 2), round(r["ade_minus_zero_cm"], 2), round(r["prefix_ade_cm"], 2)]
+        print(json.dumps({g: [round(r["ade_cm_pooled"], 2), round(r["ade_minus_zero_cm"], 2), round(r["prefix_ade_cm"], 2),
+                              round(r.get("moving_ade_cm", float("nan")), 2), round(r.get("moving_minus_zero_cm", float("nan")), 2)]
                           for g, r in results.items()}, indent=1), flush=True)
         plot(results, out / "xhey_results.png")
     m = train_mix(a.mix, iph, list(range(len(names))), ext, 0, a.steps, a.pre_steps)
@@ -545,7 +557,7 @@ def main():
     return 0
 
 
-def summarize_results(per, chunks_ade, names):
+def summarize_results(per, chunks_ade, names, moving=None):
     results = {}
     z = np.concatenate(chunks_ade["zero"])
     for g in dict.fromkeys(n.split("#")[0] for n in per):
@@ -564,6 +576,13 @@ def summarize_results(per, chunks_ade, names):
                       "ade_minus_zero_ci95": ht.bootstrap_ci(ca[m_] - z[m_]),
                       "per_clip_ade_cm": {names[i]: float(np.nanmean(np.stack([chunks_ade[n][i] for n in mem])))
                                           for i in range(len(names))}}
+        if moving is not None:  # 只看「手真的在动」的片段：猜不动在这里最吃亏
+            mm = m_ & moving
+            results[g]["moving_frac"] = float(mm.sum() / max(m_.sum(), 1))
+            results[g]["moving_ade_cm"] = float(ca[mm].mean())
+            results[g]["moving_zero_ade_cm"] = float(z[mm].mean())
+            results[g]["moving_minus_zero_cm"] = float((ca[mm] - z[mm]).mean())
+            results[g]["moving_minus_zero_ci95"] = ht.bootstrap_ci(ca[mm] - z[mm])
     return results
 
 
