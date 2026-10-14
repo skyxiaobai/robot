@@ -242,3 +242,53 @@ EMPIRE（arXiv:2608.22449）没有跑：它要 PaliGemma2-3B + Depth-Anything-3 
 **致谢与许可**
 - 数据来自 **Open-AoE / OpenAoE-2000h**（Hugging Face `inclusionAI/OpenAoE-2000h`；论文 *Open-AoE: An Open Egocentric Manipulation Dataset and Toolchain for Embodied Learning*，arXiv:2607.14183），按 Open-AoE Dataset License 使用，需保留署名；本仓库与 Open-AoE 无隶属或背书关系。
 - `hands.npz`、`camera_traj.npz` 是 MANO 派生数据，另受 [MANO 许可](https://mano.is.tue.mpg.de/license.html)（非商业研究）约束。MANO 模型文件和转换后的数据**都不进仓库**，请各自注册下载。
+
+---
+
+## 自动迭代：每天自己试新配置（`xhey_auto_iter.py`）
+
+![进度](../experiments/progress.png)
+
+**一句话：** 每天跑一条命令，它会自己「想 → 试 → 记 → 画」，看 XHEY 能不能在「手在动」时越来越好地赢过「猜手不动」。
+
+```bash
+python scripts/xhey_auto_iter.py step
+```
+
+```
+ ┌── 想 ──┐   ┌── 试 ──┐   ┌── 记 ──┐   ┌── 画 ──┐
+ │ 提 3 个 │ → │ Kaggle │ → │ 账本   │ → │ 进度图 │
+ │ 新配置  │   │ GPU 跑 │   │ .jsonl │   │ .png   │
+ └────────┘   └────────┘   └────────┘   └────────┘
+```
+
+| 情况 | `step` 会做什么 |
+|---|---|
+| 自动迭代内核还在跑 | 不推新内核（不抢占）。若固定内核已经跑完（例如 C1），先把结果记账 |
+| 上一轮跑完了 | 下载结果 → 写入 `ledger.jsonl` → 镜像到 `ledger.csv` → 重画进度图 |
+| 上一轮失败 | 在账本里记成 failed |
+| `queue.json` 里还有就绪候选 | **先于提议器**提交第一个（同时最多 1 个 GPU）：C2、C8；C7/C9 要等 Stera 数据存在 |
+| 固定队列空了 | 提下一轮 3 个配置并推到 `justinz2010/xhey-auto-iter` |
+
+**文件**
+
+| 文件 | 是什么 |
+|---|---|
+| `experiments/ledger.jsonl` | 账本：每行一次实验（配置、全部 ADE、手在动 ADE、比「猜不动」差多少、95% 区间）。已经写入 PR #47、Open-AoE，以及自动迭代第 1 轮 |
+| `docs/xhey/ledger.csv` | 上面每一行的镜像，并保留手写的 E/C 摘要行。`mirror` 会重写它 |
+| `docs/xhey/queue.json` | 固定候选队列。就绪的 C2、C8（以及 Stera 数据到了之后的 C7、C9）先提交，提议器排在后面 |
+| `experiments/auto_state.json` | 正在跑的自动迭代轮次。当前指向 **iteration 2**（内核 `justinz2010/xhey-auto-iter` v2） |
+| `experiments/progress.png` | 进度图：绿线是「目前最好」，越往下越好，低于虚线才算赢 |
+| `experiments/runs/iterNNN/` | 每轮下载的原始结果（不需要提交） |
+
+**它怎么挑配置**：可调的有数据配比、Open-AoE 用世界系还是相机系（`nano` / `nano_cam` / `tiny`）、预训练步数、网络宽度、dropout、学习率倍数、增强噪声、只在「手在动」帧上算损失。它用账本拟合一个很小的线性模型猜「哪种配置可能更好」，再给没试过的取值加一点探索分，挑前 3 个。第一轮固定先试**相机系 Open-AoE**（世界系没有重力方向，上一轮可能就是这个拖了后腿）。Stera / DynamicIntelligence 不进这个搜索，走 `queue.json` 里的专用内核。
+
+**想先看看会提什么、不真跑：** `python scripts/xhey_auto_iter.py propose`
+
+**每天定时（Mac 上）：** `crontab -e` 加一行（每天 9 点）：
+
+```
+0 9 * * * cd /path/to/robot && python scripts/xhey_auto_iter.py step >> experiments/auto.log 2>&1
+```
+
+需要：已装 `kaggle` 命令并登录；`matplotlib`、`numpy`。Kaggle 上要有私有数据集 `justinz2010/xhey-iphone-sessions`、`justinz2010/xhey-openaoe-pretrain`（含 `unified/nano_cam`）和内核 `justinz2010/xhey-wilor-labels` 的输出。horizon（16 步）目前是全局常量，没有放进搜索空间。

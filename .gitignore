@@ -56,3 +56,5 @@ mano_data
 # Record3D / stray captures at repo root
 *.r3d
 /data/record3d/
+experiments/runs/
+experiments/kernel/

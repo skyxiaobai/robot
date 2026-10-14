@@ -1,0 +1,49 @@
+{
+ "running": {
+  "iteration": 2,
+  "kernel": "justinz2010/xhey-auto-iter",
+  "version": 2,
+  "candidates": [
+   {
+    "mix": "iphone+openaoe+aug",
+    "openaoe": "nano_cam",
+    "pre_steps": 6000,
+    "steps": 3000,
+    "hidden": 512,
+    "dropout": 0.2,
+    "lr_scale": 2.0,
+    "aug_noise": 0.2,
+    "loss_move_cm": 0.0,
+    "seeds": 3,
+    "_pred_delta_moving_cm": -0.027
+   },
+   {
+    "mix": "iphone+openaoe+aug",
+    "openaoe": "nano_cam",
+    "pre_steps": 6000,
+    "steps": 3000,
+    "hidden": 512,
+    "dropout": 0.2,
+    "lr_scale": 2.0,
+    "aug_noise": 0.05,
+    "loss_move_cm": 0.0,
+    "seeds": 3,
+    "_pred_delta_moving_cm": -0.027
+   },
+   {
+    "mix": "iphone+openaoe+aug",
+    "openaoe": "nano_cam",
+    "pre_steps": 6000,
+    "steps": 3000,
+    "hidden": 512,
+    "dropout": 0.2,
+    "lr_scale": 0.5,
+    "aug_noise": 0.2,
+    "loss_move_cm": 0.0,
+    "seeds": 3,
+    "_pred_delta_moving_cm": -0.027
+   }
+  ],
+  "launched": "2026-10-14 13:54"
+ }
+}
