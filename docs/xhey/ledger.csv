@@ -1,0 +1,12 @@
+id,date,mix,overall_ade,moving_ade,vs_zero,status,source
+E0,baseline,zero,11.0255,14.0813,0.0,baseline,always
+E1,2026-10-13,iphone,11.2917,14.1863,0.2662,done_worse,PR47
+E2,2026-10-13,iphone+aug,11.19,,0.16,done_worse,PR47
+E3,2026-10-13,iphone+xhey_rgb,11.11,,0.08,done_worse,PR47
+E4,2026-10-13,iphone+xhey_rgb+aug,11.0622,14.0598,0.0367,best_so_far,PR47
+E5,2026-10-14,iphone+openaoe_nano+aug,11.2499,14.1922,0.2243,done_no_help,openaoe
+E6,2026-10-14,iphone+openaoe_nano+xhey_rgb+aug,11.2254,14.1797,0.1998,done_no_help,openaoe
+E7,2026-10-14,iphone+openaoe_tiny+aug,11.2402,14.1738,0.2147,done_no_help,openaoe
+E8,2026-10-14,iphone+openaoe_tiny+xhey_rgb+aug,11.2462,14.1752,0.2207,done_no_help,openaoe
+C1,2026-10-14,iphone+xhey_rgb+aug +moving_loss,,,,running_kaggle,justinz2010/xhey-rsi-c1-moveloss
+C2,2026-10-14,iphone+xhey_rgb+aug steps=10000,,,,prepared,justinz2010/xhey-rsi-c2-longft
