@@ -71,13 +71,23 @@ def convert(h5, out, seg_s, min_move_cm, stride, stats, up_axis="auto"):
     R_o2l = np.load(cal).astype(np.float64) if cal.exists() else R_O2L_DEFAULT
     with h5py.File(h5, "r") as f:
         hp, cp = f["hand-pose"], f["cam-pose"]
-        if str(hp.attrs.get("coord_frame", "camera_3d")) != "camera_3d":
-            raise ValueError("hand-pose 不是 3D（%s）" % hp.attrs.get("coord_frame"))
-        hts = np.asarray(hp["timestamps"], np.float64)
-        idx = np.arange(0, len(hts), stride)
-        Jc = {s: np.asarray(hp["%s_joints" % s][:], np.float64)[idx] for s in ("left", "right")}
-        Vd = {s: np.asarray(hp["%s_valid" % s][:]).astype(bool)[idx] for s in ("left", "right")}
         pts, Rw, tw = np.asarray(cp["timestamps"], np.float64), as_rot(cp["rotations"][:]), np.asarray(cp["translations"][:], np.float64)
+        if "joints_cam_lidar" in hp:  # 发布版布局：每行一次检测（frame_idx + side 0=左 1=右）
+            hts = np.asarray(hp["frame_timestamps"], np.float64); N = len(hts)
+            fi = np.asarray(hp["frame_idx"][:]); sd = np.asarray(hp["side"][:]); JJ = np.asarray(hp["joints_cam_lidar"][:], np.float64)
+            Jc, Vd = {}, {}
+            for si, s_ in ((0, "left"), (1, "right")):
+                J = np.zeros((N, 21, 3)); V = np.zeros(N, bool); m = (sd == si) & (fi >= 0) & (fi < N)
+                J[fi[m]] = JJ[m]; V[fi[m]] = True
+                Jc[s_], Vd[s_] = J, V
+        else:  # SDK 导出布局
+            if str(hp.attrs.get("coord_frame", "camera_3d")) != "camera_3d":
+                raise ValueError("hand-pose 不是 3D（%s）" % hp.attrs.get("coord_frame"))
+            hts = np.asarray(hp["timestamps"], np.float64)
+            Jc = {s_: np.asarray(hp["%s_joints" % s_][:], np.float64) for s_ in ("left", "right")}
+            Vd = {s_: np.asarray(hp["%s_valid" % s_][:]).astype(bool) for s_ in ("left", "right")}
+        idx = np.arange(0, len(hts), stride)
+        Jc = {k_: v_[idx] for k_, v_ in Jc.items()}; Vd = {k_: v_[idx] for k_, v_ in Vd.items()}
     hts = hts[idx]; n = len(hts)
     k = nearest(pts, hts); okpose = np.abs(pts[k] - hts) < 0.1
     Rw, tw = Rw[k], tw[k]
@@ -137,8 +147,8 @@ def main():
     ap.add_argument("--min-move-cm", type=float, default=3.0)
     ap.add_argument("--stride", type=int, default=1, help="原生 15 fps，保持 1")
     ap.add_argument("--limit", type=int, default=None)
-    ap.add_argument("--up-axis", default="auto", choices=["auto", "y", "z"],
-                    help="世界系哪根轴朝上；auto = 用相机「上」方向的平均值判断（首次拿到数据请人工核对一段）")
+    ap.add_argument("--up-axis", default="y", choices=["auto", "y", "z"],
+                    help="世界系哪根轴朝上；默认 y（2026-10 实测发布版是 ARKit 世界，y 朝上，相机高度方差 1–3 cm）；auto = 用相机「上」方向的平均值判断（首次拿到数据请人工核对一段）")
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     files = sorted(glob.glob(str(Path(a.root) / "**/annotation.hdf5"), recursive=True))[: a.limit]

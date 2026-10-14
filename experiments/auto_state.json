@@ -47,8 +47,15 @@
   "launched": "2026-10-14 13:54"
  },
  "queue_running": {
-  "id": "C8",
-  "slug": "justinz2010/xhey-rsi-c8-di",
-  "launched": "2026-10-14 14:18"
- }
+  "id": "C7",
+  "slug": "justinz2010/xhey-rsi-c7-stera",
+  "launched": "2026-10-14 14:40"
+ },
+ "queue_running_also": [
+  {
+   "id": "C8",
+   "slug": "justinz2010/xhey-rsi-c8-di",
+   "launched": "2026-10-14 14:18"
+  }
+ ]
 }
