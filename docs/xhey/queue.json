@@ -26,21 +26,45 @@
       }
     },
     {
+      "id": "C7b",
+      "name": "stera all batches, QC-passed only",
+      "dir": "kaggle/rsi_c7b",
+      "slug": "justinz2010/xhey-rsi-c7b-stera-all",
+      "status": "ready",
+      "mix": "iphone+stera+xhey_rgb+aug",
+      "protocol": "same as C7: seeds 3, pre-steps 6000, steps 3000, move-cm 5; --qc-filter on Stera b01-b05 + iPhone depth clips + xhey_rgb",
+      "qc": {
+        "stera_pass": {
+          "b01": "213/757",
+          "b02": "285/742",
+          "b03": "256/674",
+          "b04": "283/752",
+          "b05": "260/659"
+        },
+        "stera_kept_segments": 1297,
+        "stera_kept_hours": 7.14,
+        "stera_total_hours": 19.66,
+        "iphone_depth_pass": "2/3 (09-05_17-16 fails: jitter 4.07cm, 134 swaps)",
+        "xhey_rgb_pass": "14/17",
+        "eval": "LOO over the 2 passing depth clips (08-22_18-21, 08-24_21-18); not directly comparable to 3-clip numbers, compare vs zero within run"
+      },
+      "note": "Kernel v1 was pushed by mistake WITHOUT QC filter (all 3584 segs) and is running; treat as unfiltered control. QC version must be pushed when a GPU slot frees (Kaggle max 2 batch GPU sessions)."
+    },
+    {
       "id": "C9",
       "dir": "kaggle/rsi_c9",
       "slug": "justinz2010/xhey-rsi-c9-stera-di",
       "status": "ready",
       "stera_batches": {
         "uploaded": [
-          "b01"
-        ],
-        "pending_local": [
+          "b01",
           "b02",
           "b03",
           "b04",
           "b05"
         ],
-        "note": "172 sessions (smallest-first, 39.8 GB raw annotations) converted in 5 batches; raw deleted. b01 = 59 sessions, 757 moving segs, 225,863 frames = 4.2 h. b02–b05 (+14.3 h) staged at /workspace/sd/stera_unified on the box; add as new dataset versions in later loop iterations."
+        "pending_local": [],
+        "note": "dataset xhey-stera-pretrain now holds all 5 batches + qc/*/scorecards.json"
       }
     },
     {
