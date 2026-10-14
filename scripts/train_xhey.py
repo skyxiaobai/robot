@@ -416,10 +416,38 @@ def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True, lo
     if pre:
         P = concat(pre); ps = useful(P, ev.chunk_starts(P["episode"], H, 1))
         Xp, Yp, Vp = xyv(P, ps, use_img)
-        m.fit(Xp, Yp, Vp, Xv, Yv, Vv, steps=pre_steps, lr=3e-4 * TUNE["lr_scale"])
-    m.fit(X, Y, V, Xv, Yv, Vv, steps=steps, lr=(1e-4 if pre else 3e-4) * TUNE["lr_scale"],
-          noise=TUNE["aug_noise"] if "aug" in mix else 0.0)
+        m.curves = {"pretrain": m.fit(Xp, Yp, Vp, Xv, Yv, Vv, steps=pre_steps, lr=3e-4 * TUNE["lr_scale"])}
+    else:
+        m.curves = {}
+    m.curves["finetune"] = m.fit(X, Y, V, Xv, Yv, Vv, steps=steps, lr=(1e-4 if pre else 3e-4) * TUNE["lr_scale"],
+                                 noise=TUNE["aug_noise"] if "aug" in mix else 0.0)
     return m
+
+
+def horizon_parts(pred, Y, V):
+    """每个预测步 k（1..H）的累计手腕位置误差：返回 (误差和[cm], 计数)，只算连续有效前缀。"""
+    num = np.zeros(pred.shape[1]); den = np.zeros(pred.shape[1])
+    for h in range(2):
+        s = slice(7 * h, 7 * h + 3)
+        c = np.cumprod(V[:, :, h] >= 0.5, 1)
+        e = np.linalg.norm(np.cumsum(pred[:, :, s], 1) - np.cumsum(Y[:, :, s], 1), axis=-1) * 100
+        num += (e * c).sum(0); den += c.sum(0)
+    return num, den
+
+
+def trajectory_examples(pred, Y, V, n=3):
+    """挑手腕走得最远的几段（全有效），保存预测/真值的累计轨迹（cm，相对起点）。"""
+    out = []
+    for h in range(2):
+        s = slice(7 * h, 7 * h + 3)
+        full = np.cumprod(V[:, :, h] >= 0.5, 1)[:, -1].astype(bool)
+        gt = np.cumsum(Y[:, :, s], 1) * 100; pr = np.cumsum(pred[:, :, s], 1) * 100
+        dist = np.where(full, np.linalg.norm(gt[:, -1], axis=-1), -1)
+        for i in np.argsort(-dist)[:n]:
+            if dist[i] > 0:
+                out.append({"hand": h, "chunk": int(i), "gt_cm": gt[i].round(3).tolist(), "pred_cm": pr[i].round(3).tolist()})
+    out.sort(key=lambda e: -np.linalg.norm(e["gt_cm"][-1]))
+    return out[:n]
 
 
 DEFAULT_ABLATION = [
@@ -591,6 +619,7 @@ def main():
     print("clips", names, "rows", len(iph["state"]), "valid", round(float(iph["valid"].mean()), 4), flush=True)
     if not a.no_eval:
         per, chunks_ade, prefix, moving = {}, {}, {}, []
+        horizon, curves, examples = {}, [], {}
         for test_ep in range(len(names)):
             train_eps = [e for e in range(len(names)) if e != test_ep]
             te, tr = ht.chunks(iph, [test_ep]), ht.chunks(iph, train_eps)
@@ -600,7 +629,12 @@ def main():
             def add(name, pred):
                 per.setdefault(name, []).append(ev.metrics_for(iph, te, pred, [1, 8, 16]))
                 chunks_ade.setdefault(name, []).append(ht.chunk_ade(iph, te, pred))
-                prefix.setdefault(name, []).append(prefix_parts(pred, *ev.gather(iph, te)))
+                Yte, Vte = ev.gather(iph, te)
+                prefix.setdefault(name, []).append(prefix_parts(pred, Yte, Vte))
+                horizon.setdefault(name, []).append(horizon_parts(pred, Yte, Vte))
+                g0 = name.split("#")[0]
+                if test_ep == 0 and g0 not in examples:
+                    examples[g0] = {"clip": names[test_ep], "chunks": trajectory_examples(pred, Yte, Vte)}
             add("zero", np.tile(IDENT, (len(te), H, 1)))
             X, (Y, V) = ht.features(iph["state"][tr]), ev.gather(iph, tr)
             add("linear", ht.fit_linear(X, Y, V, ht.tune(iph, train_eps, "linear"))(ht.features(iph["state"][te])))
@@ -611,6 +645,7 @@ def main():
                 for s in range(a.seeds):
                     m = train_mix(mix, iph, train_eps, ext, s, a.steps, a.pre_steps, loss_move_cm=a.loss_move_cm)
                     add("%s#%d" % (mix, s), m(feats(iph, te)))
+                    curves.append({"mix": mix, "seed": s, "fold": names[test_ep], **getattr(m, "curves", {})})
                 print("fold", names[test_ep], mix, "done %.0fs" % (time.time() - t0), flush=True)
         results = summarize_results(per, chunks_ade, names, np.concatenate(moving))
         for g in results:
@@ -619,10 +654,14 @@ def main():
             results[g]["prefix_ade_cm"] = float(np.mean(vals))
             results[g]["prefix_steps"] = int(sum(x[1] for x in prefix[mem[0]]))
             results[g]["n_full_chunks"] = int(np.isfinite(np.concatenate(chunks_ade[mem[0]])).sum())
+            hv = [sum(x[0] for x in horizon[n]) / np.maximum(sum(x[1] for x in horizon[n]), 1) for n in mem]
+            results[g]["horizon_ade_cm"] = np.mean(hv, 0).tolist()
+            results[g]["horizon_ade_cm_seed_std"] = np.std(hv, 0).tolist()
         report = {"model": "XHEY", "run": a.run, "clips": names, "n_rows": int(len(iph["state"])),
                   "valid_frac": float(iph["valid"].mean()), "fps": 15, "horizon": H, "k_hist": K_HIST,
                   "seeds": a.seeds, "steps": a.steps, "pre_steps": a.pre_steps, "loss_move_cm": a.loss_move_cm, "mixes": mixes,
-                  "external_rows": {k: int(len(v["state"])) for k, v in ext.items()}, "results": results}
+                  "external_rows": {k: int(len(v["state"])) for k, v in ext.items()}, "results": results,
+                  "curves": curves, "examples": examples}
         (out / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
         print(json.dumps({g: [round(r["ade_cm_pooled"], 2), round(r["ade_minus_zero_cm"], 2), round(r["prefix_ade_cm"], 2),
                               round(r.get("moving_ade_cm", float("nan")), 2), round(r.get("moving_minus_zero_cm", float("nan")), 2)]

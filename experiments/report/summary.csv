@@ -1,0 +1,19 @@
+﻿id,数据配比,整体ADE,比不动,手在动ADE,手在动比不动,95%CI
+pr47_iphone,iphone,11.292,+0.266,-,-,-
+pr47_iphone+aug,iphone+aug,11.188,+0.162,-,-,-
+pr47_iphone+xhey_rgb,iphone+xhey_rgb,11.106,+0.081,-,-,-
+pr47_iphone+xhey_rgb+aug,iphone+xhey_rgb+aug,11.062,+0.037,-,-,-
+openaoe_nano_iphone,iphone,11.292,+0.266,14.186,+0.105,"[+0.096, +0.114]"
+openaoe_nano_iphone+xhey_rgb+aug,iphone+xhey_rgb+aug,11.062,+0.037,14.060,-0.021,"[-0.028, -0.015]"
+openaoe_nano_iphone+openaoe+aug,iphone+openaoe+aug,11.250,+0.224,14.192,+0.111,"[+0.099, +0.122]"
+openaoe_nano_iphone+openaoe+xhey_rgb+aug,iphone+openaoe+xhey_rgb+aug,11.225,+0.200,14.180,+0.098,"[+0.087, +0.109]"
+openaoe_tiny_iphone+openaoe+aug,iphone+openaoe+aug,11.240,+0.215,14.174,+0.092,"[+0.082, +0.102]"
+openaoe_tiny_iphone+openaoe+xhey_rgb+aug,iphone+openaoe+xhey_rgb+aug,11.246,+0.221,14.175,+0.094,"[+0.084, +0.103]"
+iter001_c0,iphone+openaoe+xhey_rgb+aug,11.067,+0.041,14.051,-0.031,"[-0.038, -0.025]"
+iter001_c1,iphone+openaoe+aug,11.070,+0.044,14.046,-0.036,"[-0.043, -0.029]"
+iter001_c2,iphone+xhey_rgb+aug,11.151,+0.126,14.104,+0.023,"[+0.013, +0.031]"
+C1,iphone+xhey_rgb+aug,11.062,+0.036,14.060,-0.021,"[-0.028, -0.015]"
+C8,iphone+di+xhey_rgb+aug,11.054,+0.028,14.052,-0.029,"[-0.036, -0.023]"
+iter002_c0,iphone+openaoe+aug,11.133,+0.108,14.082,+0.001,"[-0.007, +0.008]"
+iter002_c1,iphone+openaoe+aug,11.143,+0.117,14.086,+0.005,"[-0.003, +0.012]"
+iter002_c2,iphone+openaoe+aug,11.054,+0.028,14.037,-0.044,"[-0.051, -0.037]"

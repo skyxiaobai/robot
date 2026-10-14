@@ -396,6 +396,16 @@ def _find_metrics(dest):
     return hits[0] if hits else None
 
 
+def report_charts(metrics_path, name):
+    """每收一次结果就出一组详细图表（失败不影响入账）。"""
+    try:
+        import xhey_report
+        xhey_report.run_report(metrics_path, name, out_root=EXP / "report")
+        xhey_report.summary(ledger_path=LEDGER, out_root=EXP / "report")
+    except Exception as e:  # noqa: BLE001
+        print("图表生成失败：", e)
+
+
 def _record_metrics(spec, metrics, iteration=0):
     row = row_from_metrics(metrics, spec["mix"], spec.get("config") or {}, spec["id"], iteration, spec["slug"])
     append_ledger([row])
@@ -410,7 +420,9 @@ def ingest_metrics_file(path, spec, iteration=0):
         mirror_ledger_csv()
         return None
     metrics = json.loads(Path(path).read_text(encoding="utf-8"))
-    return _record_metrics(spec, metrics, iteration)
+    row = _record_metrics(spec, metrics, iteration)
+    report_charts(path, spec["id"])
+    return row
 
 
 def ingest_kernel_output(spec, iteration=0, status=None):
@@ -431,6 +443,7 @@ def ingest_kernel_output(spec, iteration=0, status=None):
     mf = _find_metrics(dest)
     if mf is not None:
         row = _record_metrics(spec, json.loads(mf.read_text(encoding="utf-8")), iteration)
+        report_charts(mf, spec["id"])
     else:
         row = {"id": spec["id"], "iteration": iteration, "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
                "source": spec["slug"], "config": norm_cfg(spec.get("config") or {}), "status": "failed:" + str(status)}
@@ -539,6 +552,10 @@ def ingest(state, status):
         for big in (od / ("c%d" % i)).glob("*.pt"):
             big.unlink()
     append_ledger(rows)
+    for i in range(len(run["candidates"])):
+        mf = od / ("c%d" % i) / "metrics.json"
+        if mf.exists():
+            report_charts(mf, "iter%03d_c%d" % (it, i))
     state = load_state()
     state["running"] = None
     state["last_iteration"] = it
