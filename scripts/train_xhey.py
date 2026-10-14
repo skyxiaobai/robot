@@ -46,7 +46,8 @@ def _qc_keep(paths, kind):
 # ---------------- 数据 ----------------
 def load_episodes(run):
     paths = _qc_keep(sorted((Path(run) / "episodes").glob("*.json")), "iphone")
-    eps = [json.loads(p.read_text()) for p in paths]
+    from common.frames import canonicalize_for_xhey
+    eps = [canonicalize_for_xhey(json.loads(p.read_text())) for p in paths]
     return eps, [p.stem for p in paths]
 
 
@@ -174,7 +175,7 @@ def build_external(kind, root, cache_dir):
     """开源数据 → 和 iPhone 同样 140 维状态 / 14 维动作，30 fps 下采样到 15 fps。没有画面特征（has_image=0）。"""
     paths = _qc_keep(iter_episode_paths(root), kind)
     signature = json.dumps([(str(p.resolve()), p.stat().st_size, p.stat().st_mtime_ns) for p in paths])
-    f = Path(cache_dir) / ("%s_arrays.npz" % kind)
+    f = Path(cache_dir) / ("%s_arrays_p0v1.npz" % kind)
     if f.exists():
         with np.load(f) as cached:
             if "metric_checked" in cached and bool(cached["metric_checked"]) and (
@@ -193,7 +194,8 @@ def build_external(kind, root, cache_dir):
         if (ep.get("fps") or 30) >= 25:
             ep = subsample_episode(ep, 2)
         if ep["num_frames"] > H + 1:
-            eps.append(ep)
+            from common.frames import canonicalize_for_xhey
+            eps.append(canonicalize_for_xhey(ep))
     if not eps:
         raise SystemExit("找不到 %s 数据：%s（见 docs/xhey_model.md 的准备步骤）" % (kind, root))
     d = ht.to_arrays(eps)
