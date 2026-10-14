@@ -181,14 +181,19 @@ class ScorecardTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "scorecards.json"; p.write_text(json.dumps({"cards": [cg, cs]}))
             self.assertEqual(Q.load_filter(p), {"still"})
+            self.assertEqual(Q.load_scored(p), {"good", "still"})
 
     def test_train_xhey_qc_keep(self):
         import train_xhey as T
         T.QC_EXCLUDE.clear(); T.QC_EXCLUDE.update({"b"})
+        T.QC_SCORED.clear(); T.QC_SCORED.update({"a", "b"})
         try:
             self.assertEqual([p.stem for p in T._qc_keep([Path("a.json"), Path("b.json")], "x")], ["a"])
+            with self.assertRaisesRegex(ValueError, "Unreviewed"):
+                T._qc_keep([Path("a.json"), Path("new.json")], "x")
         finally:
             T.QC_EXCLUDE.clear()
+            T.QC_SCORED.clear()
 
 
 if __name__ == "__main__":
