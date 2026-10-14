@@ -77,6 +77,15 @@ class HandFixTest(unittest.TestCase):
         s = fix_episode_hands(ep)
         self.assertEqual(s["left"]["occluded_or_lowconf"], 1)
         self.assertEqual(ep["hands"]["left"]["label_status"][10], "interp")
+        self.assertTrue(ep["hands"]["left"]["filled"][10])
+        # 短缺口插值留下手腕数字，但这一帧不算实测，进出它的动作都不能监督。
+        self.assertEqual(action_valid_flags(ep, 9)[0], 0.0)
+        self.assertEqual(action_valid_flags(ep, 10)[0], 0.0)
+        ep["hands"]["left"]["confidence"][10] = 0.9
+        ep["hands"]["left"]["filled"][10] = False
+        self.assertEqual(action_valid_flags(ep, 9)[0], 0.0)
+        ep["hands"]["left"]["label_status"][10] = "ok"
+        self.assertEqual(action_valid_flags(ep, 9)[0], 1.0)
 
 
 class FramesTest(unittest.TestCase):

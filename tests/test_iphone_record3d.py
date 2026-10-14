@@ -216,13 +216,15 @@ def test_export_action_valid_matches_measured_wrists(tmp_path):
     ep = json.loads((tmp_path / "out" / "episodes" / "sess.json").read_text())
     assert ep["iphone"]["per_frame"] == ep["stereo"]["per_frame"]
     assert ep["hands"]["right"]["label_status"] == ep["iphone"]["per_frame"]["right"]
-    assert ep["iphone"]["per_frame"]["right"][3] == "lowconf"
+    # ≤0.3 s 的低置信帧会被补上，逐帧状态从 lowconf 改成 interp。插值不是实测。
+    assert ep["iphone"]["per_frame"]["right"][3] == "interp"
+    assert wrist_measured(ep, "right", 3) is False
     expected = episode_action_valid(ep)
     assert expected.shape == (11, 2)
     assert np.all(expected[:, 0] == 0.0)
     assert expected[2, 1] == 0.0 and expected[3, 1] == 0.0
     assert expected[0, 1] == 1.0 and expected[5, 1] == 1.0
-    # 手腕数字补全之后，仍因 lowconf 状态判成没测到。清掉三处状态才算实测。
+    # 手腕数字补全之后，仍因 interp 状态判成没测到。清掉三处状态才算实测。
     planted = json.loads(json.dumps(ep))
     planted["hands"]["right"]["wrist_pose"][3] = [0.0, 0.0, 0.4, 0.0, 0.0, 0.0, 1.0]
     planted["hands"]["right"]["confidence"][3] = 0.9
