@@ -35,6 +35,12 @@
 | 4 | C4 | **解冻 ResNet 最后 block** + 更强图像条件 | 有画面的 xhey_rgb 有帮助，图像侧可能还弱 | 全量 |
 | 5 | C5 | 再采 **≥10 段 iPhone Pro 深度**（数据，不是训） | 3 段 LOO 方差大；论文路线本来就要加数据 | 采集 |
 | 6 | C6 | 停做更大 Open-AoE / 无画面姿态预训练 | E5–E8 已证伪 | 跳过 |
+| 7 | C7 | **Stera-10M 预训练 → XHEY 精调**（iPhone Pro LiDAR + ARKit 重力世界系，WiLoR 21 点） | 设备/坐标系和 XHEY 最像，直接避开 Open-AoE 的两个疑似失败原因（无重力、手是重建的） | 全量 Kaggle；**卡在 gated 授权** |
+| 8 | C8 | **DynamicIntelligence 预训练 → 精调**（Record3D iPhone 13 Pro，MediaPipe+深度，每手 3 点） | 已就绪；但只有 25 段「手在动」、约 4 分钟，姿态不可用（相机系），预期增益小 | 全量 Kaggle |
+| 9 | C9 | C7 + C8 一起预训练 | 看两份是否叠加 | 等 C7 |
+
+**新的提交顺序**（机器可读：[`docs/xhey/queue.json`](xhey/queue.json)）：C2 → **C8** →（Stera 授权后）C7 → C9。C1 不抢占。  
+数据来源与许可见 [`docs/public_iphone_lidar.md`](public_iphone_lidar.md)。
 
 本轮启动：**C1、C2**（见 Kaggle slug）；C3 做短代理后再决定。
 
