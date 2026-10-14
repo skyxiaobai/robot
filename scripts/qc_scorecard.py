@@ -48,7 +48,7 @@ def score_episode(ep, name="", move_cm=5.0, max_gap_s=0.3, rules=RULES):
         ok, W = _good(h, n, 0.5)
         st = h.get("label_status") or [""] * n
         detected = np.isfinite(W).all(1) & np.array([str(s) not in ("missing", "none_detected") for s in st[:n]])
-        det |= detected
+        det |= ok   # QC detect_rate requires genuinely measured, unfilled, trusted wrist
         Wg = np.where(ok[:, None], W, np.nan)
         if n >= 3:
             residual = np.linalg.norm(Wg[2:] - 2 * Wg[1:-1] + Wg[:-2], axis=1) * (15.0 / fps) ** 2
@@ -136,6 +136,12 @@ def chart(cards, path, title):
     ax.set_yticklabels([("+ " if c["pass"] else "x ") + str(c["clip"])[-28:] for c in cards], fontsize=6)
     ax.set_title(title + "  pass %d/%d" % (sum(c["pass"] for c in cards), len(cards)), fontsize=9)
     fig.tight_layout(); fig.savefig(path, dpi=130); plt.close(fig)
+
+
+def load_scored(path):
+    data = json.loads(Path(path).read_text())
+    cards = data["cards"] if isinstance(data, dict) else data
+    return {str(c["clip"]) for c in cards}
 
 
 def load_filter(path):
