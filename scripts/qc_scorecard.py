@@ -41,7 +41,7 @@ def score_episode(ep, name="", move_cm=5.0, max_gap_s=0.3, rules=RULES):
     had_fix = isinstance(ep.get("hand_fix"), dict)
     e2 = ep if had_fix else copy.deepcopy(ep)
     fixed = e2["hand_fix"] if had_fix else fix_episode_hands(e2, fps, max_gap_s=max_gap_s)
-    det = np.zeros(n, bool); steps = []; moving = np.zeros(n, bool); one_s = max(1, int(round(fps)))
+    det = np.zeros(n, bool); residuals = []; moving = np.zeros(n, bool); one_s = max(1, int(round(fps)))
     depth_ok = depth_all = 0
     for side in SIDES:
         h = e2["hands"][side]
@@ -50,8 +50,9 @@ def score_episode(ep, name="", move_cm=5.0, max_gap_s=0.3, rules=RULES):
         detected = np.isfinite(W).all(1) & np.array([str(s) not in ("missing", "none_detected") for s in st[:n]])
         det |= detected
         Wg = np.where(ok[:, None], W, np.nan)
-        dd = np.linalg.norm(np.diff(Wg, axis=0), axis=1)
-        steps.append(dd[np.isfinite(dd)])
+        if n >= 3:
+            residual = np.linalg.norm(Wg[2:] - 2 * Wg[1:-1] + Wg[:-2], axis=1) * (15.0 / fps) ** 2
+            residuals.append(residual[np.isfinite(residual)])
         if n > one_s:
             mv = np.linalg.norm(Wg[one_s:] - Wg[:-one_s], axis=1)
             moving[:-one_s] |= np.nan_to_num(mv, nan=0.0) > move_cm / 100.0
@@ -61,9 +62,7 @@ def score_episode(ep, name="", move_cm=5.0, max_gap_s=0.3, rules=RULES):
                 if s in ("none", "missing", None):
                     continue
                 depth_all += 1; depth_ok += int(s == "ok")
-    elif "lidar" in str((ep.get("hand_pose") or {}).get("backend", "")) or "depth" in str((ep.get("hand_pose") or {}).get("backend", "")):
-        depth_all = int(det.sum()); depth_ok = depth_all  # 转换器只留下了深度锚定的帧，逐帧失败原因没导出
-    st = np.concatenate(steps) if steps else np.array([])
+    st = np.concatenate(residuals) if residuals else np.array([])
     gap = np.mean([fixed[s]["gap_frames"] / max(n, 1) for s in SIDES])
     sanity = F.sanity_check(ep)
     card = {"clip": name or ep.get("episode_id"), "source": ep.get("source"), "frames": n, "fps": round(fps, 2),
@@ -92,7 +91,9 @@ def check(c, r=RULES):
         f.append("手几乎不动")
     if c["swaps"] / max(c["seconds"] / 60.0, 1e-6) > r["swaps_per_min_max"] and c["swaps"] > 2:
         f.append("左右手常认反")
-    if c["depth_valid"] is not None and c["depth_valid"] < r["depth_valid_min"]:
+    if c["depth_valid"] is None and any(k in str(c.get("source") or "").lower() for k in ("stera", "iphone_lidar", "dynamic_intelligence", "zeno_lidar")):
+        f.append("深度状态未知")
+    elif c["depth_valid"] is not None and c["depth_valid"] < r["depth_valid_min"]:
         f.append("深度有效率低")
     if not c["frame_ok"]:
         f.append("坐标轴/单位不对")
