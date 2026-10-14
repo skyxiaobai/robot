@@ -1,10 +1,31 @@
 {
-  "note": "每日迭代按顺序取第一个 status=ready 的候选提交到 Kaggle（同时最多 1 个 GPU kernel；不抢占正在跑的）。跑完把结果写进 ledger.csv 并把 status 改成 done_*。",
+  "note": "Justin 10-14 要求 DI / Stera 优先：顺序 C8 → C7 → C9 → C2。每日迭代按顺序取第一个 status=ready 的候选提交到 Kaggle（同时最多 1 个 GPU kernel；不抢占正在跑的）。跑完把结果写进 ledger.csv 并把 status 改成 done_*。",
   "queue": [
-    {"id": "C2", "dir": "kaggle/rsi_c2", "slug": "justinz2010/xhey-rsi-c2-longft", "status": "ready"},
-    {"id": "C7", "dir": "kaggle/rsi_c7", "slug": "justinz2010/xhey-rsi-c7-stera", "status": "blocked",
-     "blocked_by": "fpvlabs/stera-10m 是 gated 数据集：Justin 需在 HF 上同意条款并给 HF_TOKEN；然后跑 scripts/stera_fetch.py + convert_stera.py，上传私有数据集 justinz2010/xhey-stera-pretrain（stera_unified/ + scripts.tgz）"},
-    {"id": "C8", "dir": "kaggle/rsi_c8", "slug": "justinz2010/xhey-rsi-c8-di", "status": "ready"},
-    {"id": "C9", "dir": "kaggle/rsi_c9", "slug": "justinz2010/xhey-rsi-c9-stera-di", "status": "blocked", "blocked_by": "同 C7"}
+    {
+      "id": "C8",
+      "dir": "kaggle/rsi_c8",
+      "slug": "justinz2010/xhey-rsi-c8-di",
+      "status": "running"
+    },
+    {
+      "id": "C7",
+      "dir": "kaggle/rsi_c7",
+      "slug": "justinz2010/xhey-rsi-c7-stera",
+      "status": "blocked",
+      "blocked_by": "fpvlabs/stera-10m 是 gated 数据集：Justin 需在 HF 上同意条款并给 HF_TOKEN；然后跑 scripts/stera_fetch.py + convert_stera.py，上传私有数据集 justinz2010/xhey-stera-pretrain（stera_unified/ + scripts.tgz）"
+    },
+    {
+      "id": "C9",
+      "dir": "kaggle/rsi_c9",
+      "slug": "justinz2010/xhey-rsi-c9-stera-di",
+      "status": "blocked",
+      "blocked_by": "同 C7"
+    },
+    {
+      "id": "C2",
+      "dir": "kaggle/rsi_c2",
+      "slug": "justinz2010/xhey-rsi-c2-longft",
+      "status": "ready"
+    }
   ]
 }
