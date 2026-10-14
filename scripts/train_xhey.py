@@ -385,7 +385,7 @@ def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True, lo
             Xe, Ye, Ve = xyv(extra, ex_starts, use_img)
             X, Y, V = np.vstack([X, Xe]), np.concatenate([Y, Ye]), np.concatenate([V, Ve])
     m = XHEY(X.shape[1], seed); m.set_norm(X, Y)
-    pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone", "xhey_rgb", "openaoe")
+    pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone", "xhey_rgb", "openaoe", "stera", "di")
     pre = [ext[k] for k in pre_keys if k in mix and k in ext]
     if pre:
         P = concat(pre); ps = useful(P, ev.chunk_starts(P["episode"], H, 1))
@@ -467,6 +467,14 @@ def prepare_external(mixes, iph, eps, names, a):
         _d = try_external("openaoe", Path(a.openaoe), cache)
         if _d is not None:
             ext["openaoe"] = _d
+    if "stera" in need:  # Stera-10M（fpvlabs/stera-10m）iPhone Pro LiDAR + ARKit 世界系（y 朝上），已过滤「手在动」
+        _d = try_external("stera", Path(a.stera), cache)
+        if _d is not None:
+            ext["stera"] = _d
+    if "di" in need:  # DynamicIntelligence Record3D，MediaPipe+深度 3 点/手，相机系 y 朝上，已过滤「手在动」
+        _d = try_external("di", Path(a.di), cache)
+        if _d is not None:
+            ext["di"] = _d
     if "aug" in need:
         mir = mirror_arrays({k: iph[k] for k in ("state", "action", "valid", "episode", "index")})
         img = np.vstack([image_features(e, n, cache, flip=True)[: e["num_frames"] - 1] for e, n in zip(eps, names)])
@@ -511,6 +519,10 @@ def main():
                     help="另外 17 段无深度 xhey mcap 经 WiLoR 的 episode 目录（预训练用）")
     ap.add_argument("--openaoe", default="data/openaoe/unified",
                     help="Open-AoE 转换后的 episode 目录（scripts/convert_openaoe.py）")
+    ap.add_argument("--stera", default="data/stera/unified",
+                    help="Stera-10M 转换后的 episode 目录（scripts/convert_stera.py）")
+    ap.add_argument("--di", default="data/di/unified",
+                    help="DynamicIntelligence 转换后的 episode 目录（scripts/convert_di.py）")
     ap.add_argument("--move-cm", type=float, default=5.0,
                     help="「手在动」子集：未来 16 步手腕真实位移超过多少 cm")
     ap.add_argument("--loss-move-cm", type=float, default=0.0,
