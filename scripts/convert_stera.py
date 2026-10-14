@@ -22,6 +22,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from egodata.schema import empty_interaction  # noqa: E402
 from headcam.hand_pose import wrist_poses_from_joints  # noqa: E402
+from common import frames as FR  # noqa: E402
 
 
 def quat_to_rot(x, y, z, w):
@@ -43,20 +44,8 @@ def as_rot(r):
 
 
 def world_to_yup(Rw, R_o2l):
-    """世界系 → y 朝上：用光学系 -y（相机「上」）在世界里的平均方向判断哪根轴是上（重力反方向）。"""
-    up_world = (Rw @ (R_o2l @ np.array([0.0, -1.0, 0.0]))).mean(0)
-    ax = int(np.argmax(np.abs(up_world))); sgn = np.sign(up_world[ax])
-    if ax == 1 and sgn > 0:
-        return np.eye(3), "y"
-    if ax == 2:  # ROS: x前 y左 z上 → ARKit: x右 y上 z后
-        return (np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]], float) * np.array([1, sgn, 1])[:, None]), "z"
-    # 其他情况：把 up 轴旋到 +y
-    u = np.zeros(3); u[ax] = sgn
-    v = np.cross(u, [0, 1, 0]); s = np.linalg.norm(v); c = float(np.dot(u, [0, 1, 0]))
-    if s < 1e-8:
-        return (np.diag([1, -1, -1]) if c < 0 else np.eye(3)), "y-"
-    vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
-    return np.eye(3) + vx + vx @ vx * ((1 - c) / s ** 2), "axis%d" % ax
+    """世界系 → y 朝上（共用实现见 common.frames.world_up_alignment）。"""
+    return FR.world_up_alignment(Rw @ R_o2l)
 
 
 def nearest(ts_src, ts_q):
@@ -94,7 +83,7 @@ def convert(h5, out, seg_s, min_move_cm, stride, stats, up_axis="auto"):
     if up_axis == "auto":
         A, up = world_to_yup(Rw, R_o2l)
     elif up_axis == "z":
-        A, up = np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]], float), "z(forced)"
+        A, up = FR.ROS_ZUP_TO_YUP.copy(), "z(forced)"
     else:
         A, up = np.eye(3), "y(forced)"
     stats["up_axis"][up] = stats["up_axis"].get(up, 0) + 1
@@ -135,6 +124,10 @@ def convert(h5, out, seg_s, min_move_cm, stride, stats, up_axis="auto"):
                             "move_median_cm_per_s": med, "world_up_axis": up},
               "license_note": "Stera-10M License (CC BY-NC 4.0; attribution FPV Labs, arXiv:2605.05945); WiLoR/MANO-derived"}
         ep.update(empty_interaction(m))
+        FR.tag(ep, FR.WORLD_YUP, gravity_aligned=True, source_frame="arkit_world_yup(up=%s)" % up)
+        chk = FR.sanity_check(ep)
+        if not chk["ok"]:
+            stats.setdefault("frame_flagged", []).append(ep["episode_id"])
         (out / ("stera_%s_%05d.json" % (name, s0))).write_text(json.dumps(ep))
         kept += 1; stats["kept"] += 1; stats["frames"] += m
     return kept

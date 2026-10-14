@@ -27,6 +27,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from egodata.schema import empty_interaction
+from egodata.hand_fix import fix_episode_hands
+from common import frames as FR
 
 
 def _empty_hand(n):
@@ -74,7 +76,7 @@ def load_video_calibration(path):
 
 
 def process_video(path: Path, out_dir: Path, backend, source: str, stride: int,
-                  max_frames: int, min_conf: float, license_note: str, calib=None):
+                  max_frames: int, min_conf: float, license_note: str, calib=None, fix_hands=True):
     if calib is None or calib.get("K_left") is None:
         raise ValueError("公制 WiLoR 标签需要真实相机标定；请提供 --calib")
     K = np.asarray(calib["K_left"], dtype=float).copy()
@@ -158,6 +160,9 @@ def process_video(path: Path, out_dir: Path, backend, source: str, stride: int,
                       "src_frames": total, "kept": n},
         "license_note": license_note,
     }
+    FR.tag(ep, FR.CAMERA, gravity_aligned=False, source_frame="wilor_camera")
+    if fix_hands:  # 左右手互换 + 遮挡补帧（≤0.3 s 插值，更长的标 gap）
+        fix_episode_hands(ep, ep.get("fps"))
     out_dir.mkdir(parents=True, exist_ok=True)
     # include parent folder(s) so video.mp4 / RGB.mp4 under different dirs do not collide
     parts = []
@@ -185,6 +190,7 @@ def main():
                     help="每段最多输出帧数（stride 后）。900≈30s@30fps stride2")
     ap.add_argument("--min-conf", type=float, default=0.5)
     ap.add_argument("--license-note", default="")
+    ap.add_argument("--no-hand-fix", action="store_true", help="不做左右手互换修正和遮挡补帧（对照用）")
     a = ap.parse_args()
     calib = load_video_calibration(a.calib)
 
@@ -213,7 +219,8 @@ def main():
     manifest = []
     for p in paths:
         print("video", p, flush=True)
-        row = process_video(p, out, backend, a.source, a.stride, a.max_frames, a.min_conf, a.license_note, calib=calib)
+        row = process_video(p, out, backend, a.source, a.stride, a.max_frames, a.min_conf, a.license_note, calib=calib,
+                            fix_hands=not a.no_hand_fix)
         if row:
             manifest.append(row)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

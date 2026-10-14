@@ -23,8 +23,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from egodata.schema import empty_interaction  # noqa: E402
 from headcam.hand_pose import wrist_poses_from_joints  # noqa: E402
+from common import frames as FR  # noqa: E402
 
-FLIP = np.diag([1.0, -1.0, -1.0])  # 相机系 y下 z前 → y上 z后
+FLIP = FR.CV_TO_YUP  # 相机系 y下 z前 → y上 z后（common.frames 统一约定）
 SLOTS = {"left": (0, 4, 8), "right": (0, 8, 12)}  # 3 个点在 21 点里的位置
 
 
@@ -45,7 +46,7 @@ def convert(pq, out, min_move_cm, stats):
     for side, col in (("left", "observation.left_hand"), ("right", "observation.right_hand")):
         P = np.stack(df[col].values)[idx].astype(np.float64)
         valid = (np.abs(P).sum(1) > 0) & (P[:, 2] > 1.0)
-        J = to21(P / 100.0, side) @ FLIP.T
+        J = FR.cv_to_yup(to21(FR.cm_to_m(P), side))
         J[~valid] = np.nan
         poses = wrist_poses_from_joints(list(J))
         # 只有 3 个点时常算不出手腕朝向：用单位四元数占位（XHEY 只预测手腕位置）
@@ -72,6 +73,9 @@ def convert(pq, out, min_move_cm, stats):
                         "joints_present": "wrist+2 fingertips", "wrist_quat": "identity placeholder when degenerate", "move_median_cm_per_s": med},
           "license_note": "CC BY-NC 4.0, Dynamic Intelligence humanoid-robots-training-dataset (non-commercial)"}
     ep.update(empty_interaction(n))
+    FR.tag(ep, FR.CAMERA_YUP, gravity_aligned=False, source_frame="record3d_camera_cm")
+    if not FR.sanity_check(ep)["ok"]:
+        stats.setdefault("frame_flagged", []).append(ep["episode_id"])
     (out / ("di_%06d.json" % ei)).write_text(json.dumps(ep))
     stats["kept"] += 1; stats["frames"] += n; stats["hand_frames"] += nvalid
     return 1

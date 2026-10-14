@@ -22,9 +22,10 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from egodata.schema import empty_interaction  # noqa: E402
 from headcam.hand_pose import wrist_poses_from_joints  # noqa: E402
+from common import frames as FR  # noqa: E402
 
 TIPS = {"right": [745, 317, 444, 556, 673], "left": [745, 317, 444, 556, 673]}
-FLIP = np.diag([1.0, -1.0, -1.0])
+FLIP = FR.CV_TO_YUP
 MANO2OP = [0, 13, 14, 15, 16, 1, 2, 3, 17, 4, 5, 6, 18, 10, 11, 12, 19, 7, 8, 9, 20]
 
 
@@ -86,6 +87,10 @@ def convert(npz, out, models, seg_s, min_move_cm, stats, frame="world"):
                             "move_median_cm_per_s": med},
               "license_note": "Open-AoE Dataset License (attribution: Open-AoE / OpenAoE-2000h, arXiv:2607.14183); MANO-derived"}
         ep.update(empty_interaction(m))
+        # camera：MANO 相机系（光学系）；world：首帧相机系翻 y 朝上，没有重力 → 记成 world（上轴未核实）
+        FR.tag(ep, FR.CAMERA if frame == "camera" else FR.WORLD, gravity_aligned=False, source_frame="openaoe_" + frame)
+        if not FR.sanity_check(ep)["ok"]:
+            stats.setdefault("frame_flagged", []).append(ep["episode_id"])
         (out / ("%s_%04d.json" % (name, s0))).write_text(json.dumps(ep))
         kept += 1; stats["kept"] += 1; stats["frames"] += m
     return kept
