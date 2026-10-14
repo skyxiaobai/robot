@@ -32,7 +32,8 @@ class RGBDParams(object):
     def __init__(self, min_conf=2, hand_band_m=0.10, near_percentile=10.0, patch=1, joint_offset_m=0.01,
                  min_joints=8, depth_range_m=(0.2, 2.5), max_fit_residual_m=0.035, scale_range=(0.75, 1.33),
                  palm_range_m=(0.05, 0.15), min_conf_frac=0.3, max_pose_jump_m=0.10, max_pose_jump_deg=20.0,
-                 pose_jump_unit="seconds", max_pose_speed_mps=3.0, max_pose_ang_speed_dps=600.0):
+                 pose_jump_unit="seconds", max_pose_speed_mps=3.0, max_pose_ang_speed_dps=600.0,
+                 hand_fix=True, max_gap_s=0.3):
         self.min_conf = int(min_conf)            # Record3D：0 低 / 1 中 / 2 高
         self.hand_band_m = float(hand_band_m)    # 近层之后多厚还算手
         self.near_percentile = float(near_percentile)
@@ -53,6 +54,8 @@ class RGBDParams(object):
             raise ValueError("pose_jump_unit 只能是 seconds 或 frames")
         self.max_pose_speed_mps = float(max_pose_speed_mps)
         self.max_pose_ang_speed_dps = float(max_pose_ang_speed_dps)
+        self.hand_fix = bool(hand_fix)           # 左右手互换修正 + 遮挡补帧（egodata.hand_fix）
+        self.max_gap_s = float(max_gap_s)        # 不超过这么长的缺口插值，更长的标 gap
 
     def to_dict(self):
         return dict(self.__dict__)
@@ -243,6 +246,13 @@ def make_session_builder(rgbd_params=None):
         for side in SIDES:
             episode["hands"][side]["label_status"] = list(statuses[side])
         episode["iphone"] = {"per_frame": {side: list(statuses[side]) for side in SIDES}}
+        if rp.hand_fix:  # 左右手互换 + 遮挡补帧（egodata.hand_fix）；补的帧 filled=True，不当监督
+            from egodata.hand_fix import fix_episode_hands
+            fix_episode_hands(episode, episode.get("fps"), max_gap_s=rp.max_gap_s)
+            for side in SIDES:
+                episode["stereo"]["per_frame"][side] = list(episode["iphone"]["per_frame"][side])
+        from common import frames as FR
+        FR.tag(episode, FR.WORLD, gravity_aligned=False, source_frame="arkit_tf")
         episode["stereo"]["rgbd"] = {
             "params": rp.to_dict(), "pose_jump_frames": int(jumps.sum()),
             "conf_frac": {s: [d.get("conf_frac") for d in extra["diag"][s]] for s in SIDES},
