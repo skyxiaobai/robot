@@ -11,15 +11,37 @@
       "id": "C7",
       "dir": "kaggle/rsi_c7",
       "slug": "justinz2010/xhey-rsi-c7-stera",
-      "status": "blocked",
-      "blocked_by": "fpvlabs/stera-10m 是 gated 数据集：Justin 需在 HF 上同意条款并给 HF_TOKEN；然后跑 scripts/stera_fetch.py + convert_stera.py，上传私有数据集 justinz2010/xhey-stera-pretrain（stera_unified/ + scripts.tgz）"
+      "status": "running",
+      "stera_batches": {
+        "uploaded": [
+          "b01"
+        ],
+        "pending_local": [
+          "b02",
+          "b03",
+          "b04",
+          "b05"
+        ],
+        "note": "172 sessions (smallest-first, 39.8 GB raw annotations) converted in 5 batches; raw deleted. b01 = 59 sessions, 757 moving segs, 225,863 frames = 4.2 h. b02–b05 (+14.3 h) staged at /workspace/sd/stera_unified on the box; add as new dataset versions in later loop iterations."
+      }
     },
     {
       "id": "C9",
       "dir": "kaggle/rsi_c9",
       "slug": "justinz2010/xhey-rsi-c9-stera-di",
-      "status": "blocked",
-      "blocked_by": "同 C7"
+      "status": "ready",
+      "stera_batches": {
+        "uploaded": [
+          "b01"
+        ],
+        "pending_local": [
+          "b02",
+          "b03",
+          "b04",
+          "b05"
+        ],
+        "note": "172 sessions (smallest-first, 39.8 GB raw annotations) converted in 5 batches; raw deleted. b01 = 59 sessions, 757 moving segs, 225,863 frames = 4.2 h. b02–b05 (+14.3 h) staged at /workspace/sd/stera_unified on the box; add as new dataset versions in later loop iterations."
+      }
     },
     {
       "id": "C2",

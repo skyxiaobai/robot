@@ -141,6 +141,180 @@ class CommittedState(unittest.TestCase):
         self.assertTrue(all(c["openaoe"] == "nano_cam" for c in run["candidates"]))
 
 
+def _kernel_metrics(mix, moving=-0.05):
+    return {"results": {
+        "zero": {"ade_cm_pooled": 11.0255},
+        mix: {
+            "ade_cm_pooled": 11.0, "ade_minus_zero_cm": -0.0255,
+            "ade_minus_zero_ci95": [-0.04, -0.01],
+            "moving_ade_cm": 14.03, "moving_zero_ade_cm": 14.0813,
+            "moving_minus_zero_cm": moving, "moving_minus_zero_ci95": [-0.08, -0.02],
+            "ade_cm_seed_std": 0.01,
+        },
+    }}
+
+
+class ManyQueueRunning(unittest.TestCase):
+    """C7 与 C8 可以同时在跑：queue_running 为列表，或另有 queue_running_also，都要入账。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.ledger = root / "ledger.jsonl"
+        self.csv = root / "ledger.csv"
+        self.state = root / "auto_state.json"
+        self.queue = root / "queue.json"
+        self.chart = root / "progress.png"
+        self.csv.write_text("id,date,mix,overall_ade,moving_ade,vs_zero,status,source\r\n", encoding="utf-8")
+        q = _queue()
+        for item in q["queue"]:
+            if item["id"] in ("C7", "C8"):
+                item["status"] = "ready"
+        self.queue.write_text(json.dumps(q), encoding="utf-8")
+        self.patches = [
+            patch.object(ai, "LEDGER", self.ledger),
+            patch.object(ai, "CSV_PATH", self.csv),
+            patch.object(ai, "STATE", self.state),
+            patch.object(ai, "QUEUE_PATH", self.queue),
+            patch.object(ai, "CHART", self.chart),
+            patch.object(ai, "EXP", root),
+        ]
+        for p in self.patches:
+            p.start()
+        self.mixes = {
+            "justinz2010/xhey-rsi-c7-stera": "iphone+stera+xhey_rgb+aug",
+            "justinz2010/xhey-rsi-c8-di": "iphone+di+xhey_rgb+aug",
+        }
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tmp.cleanup()
+
+    def _kaggle(self, *args, check=True):
+        if args[:2] == ("kernels", "output") and args[2] in self.mixes:
+            slug = args[2]
+            dest = Path(args[4])
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "metrics.json").write_text(
+                json.dumps(_kernel_metrics(self.mixes[slug])), encoding="utf-8")
+        return ""
+
+    def _run(self, state, statuses, no_launch):
+        self.state.write_text(json.dumps(state), encoding="utf-8")
+        pushed = []
+
+        def status(slug=None):
+            return statuses.get(slug, "UNKNOWN:none")
+
+        with patch.object(ai, "kernel_status", side_effect=status), \
+                patch.object(ai, "kaggle", side_effect=self._kaggle), \
+                patch.object(ai, "chart"), \
+                patch.object(ai, "submit_queue_item", side_effect=lambda item: pushed.append(item["id"])), \
+                patch.object(ai, "launch", side_effect=AssertionError("proposer must wait")):
+            rc = ai.step(type("A", (), {"no_launch": no_launch, "k": 3})())
+        return rc, pushed
+
+    def test_queue_running_also_ingests_c7_and_c8(self):
+        state = {
+            "running": None,
+            "queue_running": {
+                "id": "C7", "slug": "justinz2010/xhey-rsi-c7-stera", "launched": "2026-10-14 14:40",
+            },
+            "queue_running_also": [{
+                "id": "C8", "slug": "justinz2010/xhey-rsi-c8-di", "launched": "2026-10-14 14:18",
+            }],
+        }
+        done = {slug: "COMPLETE" for slug in self.mixes}
+        rc, pushed = self._run(state, done, no_launch=True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(pushed, [])
+        rows = {r["id"]: r for r in ai.load_ledger()}
+        self.assertEqual(set(rows), {"C7", "C8"})
+        self.assertEqual(rows["C7"]["status"], "ok")
+        self.assertEqual(rows["C8"]["status"], "ok")
+        self.assertEqual(rows["C7"]["source"], "justinz2010/xhey-rsi-c7-stera")
+        self.assertEqual(rows["C8"]["source"], "justinz2010/xhey-rsi-c8-di")
+        self.assertAlmostEqual(rows["C7"]["delta_moving_cm"], -0.05)
+        self.assertAlmostEqual(rows["C8"]["delta_moving_cm"], -0.05)
+
+    def test_queue_running_list_ingests_both_when_finished(self):
+        state = {
+            "running": None,
+            "queue_running": [
+                {"id": "C7", "slug": "justinz2010/xhey-rsi-c7-stera", "launched": "2026-10-14 14:40"},
+                {"id": "C8", "slug": "justinz2010/xhey-rsi-c8-di", "launched": "2026-10-14 14:18"},
+            ],
+        }
+        done = {slug: "COMPLETE" for slug in self.mixes}
+        rc, pushed = self._run(state, done, no_launch=True)
+        self.assertEqual(rc, 0)
+        rows = {r["id"]: r for r in ai.load_ledger()}
+        self.assertEqual(rows["C7"]["status"], "ok")
+        self.assertEqual(rows["C8"]["status"], "ok")
+        self.assertEqual(pushed, [])
+
+    def test_second_kernel_holds_slot_after_first_finishes(self):
+        state = {
+            "running": None,
+            "queue_running": {
+                "id": "C7", "slug": "justinz2010/xhey-rsi-c7-stera", "launched": "2026-10-14 14:40",
+            },
+            "queue_running_also": [{
+                "id": "C8", "slug": "justinz2010/xhey-rsi-c8-di", "launched": "2026-10-14 14:18",
+            }],
+        }
+        statuses = {
+            "justinz2010/xhey-rsi-c7-stera": "COMPLETE",
+            "justinz2010/xhey-rsi-c8-di": "RUNNING",
+        }
+        rc, pushed = self._run(state, statuses, no_launch=False)
+        self.assertEqual(rc, 0)
+        self.assertEqual(pushed, [])
+        rows = {r["id"]: r for r in ai.load_ledger()}
+        self.assertEqual(rows["C7"]["status"], "ok")
+        self.assertNotIn("C8", rows)
+        saved = json.loads(self.state.read_text(encoding="utf-8"))
+        still = saved.get("queue_running")
+        also = saved.get("queue_running_also") or []
+        ids = []
+        if isinstance(still, dict) and still.get("id"):
+            ids.append(still["id"])
+        elif isinstance(still, list):
+            ids.extend(item.get("id") for item in still)
+        ids.extend(item.get("id") for item in also if isinstance(item, dict))
+        self.assertEqual(ids, ["C8"])
+
+    def test_finished_auto_iter_does_not_drop_other_running_kernels(self):
+        state = {
+            "running": {"iteration": 2, "kernel": ai.KERNEL, "version": 2, "candidates": []},
+            "queue_running": {
+                "id": "C7", "slug": "justinz2010/xhey-rsi-c7-stera", "launched": "2026-10-14 14:40",
+            },
+            "queue_running_also": [{
+                "id": "C8", "slug": "justinz2010/xhey-rsi-c8-di", "launched": "2026-10-14 14:18",
+            }],
+        }
+        statuses = {
+            ai.KERNEL: "COMPLETE",
+            "justinz2010/xhey-rsi-c7-stera": "RUNNING",
+            "justinz2010/xhey-rsi-c8-di": "RUNNING",
+        }
+        rc, pushed = self._run(state, statuses, no_launch=False)
+        self.assertEqual(rc, 0)
+        self.assertEqual(pushed, [])
+        saved = json.loads(self.state.read_text(encoding="utf-8"))
+        self.assertIsNone(saved.get("running"))
+        ids = []
+        still = saved.get("queue_running")
+        if isinstance(still, dict) and still.get("id"):
+            ids.append(still["id"])
+        elif isinstance(still, list):
+            ids.extend(item.get("id") for item in still)
+        ids.extend(item.get("id") for item in (saved.get("queue_running_also") or []) if isinstance(item, dict))
+        self.assertEqual(ids, ["C7", "C8"])
+
+
 class TrainFlags(unittest.TestCase):
     def test_stera_di_and_tune_flags(self):
         src = (ROOT / "scripts" / "train_xhey.py").read_text(encoding="utf-8")

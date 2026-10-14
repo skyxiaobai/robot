@@ -9,10 +9,12 @@
     python scripts/xhey_auto_iter.py ingest-c1   # 把已完成的 justinz2010/xhey-rsi-c1-moveloss 写入账本
 
 step 的逻辑：
-  1. 收已完成的固定内核（C1，以及 queue.json 里跑完的 slug），写入 ledger.jsonl 并镜像 CSV。
+  1. 收已完成的固定内核（C1，queue.json 里跑完的 slug，以及 auto_state 里
+     queue_running——单个对象或列表——和 queue_running_also），写入 ledger.jsonl 并镜像 CSV。
   2. experiments/auto_state.json 里的自动迭代内核还在 RUNNING/QUEUED → 不提交任何新内核。
   3. 上一轮自动迭代跑完（COMPLETE）→ 下载、记账、镜像、重画。跑挂（ERROR）→ 记成 failed。
   4. 有空闲 GPU 时，先提交 docs/xhey/queue.json 里就绪的固定候选（同时最多 1 个）：
+     只要还有正在跑的队列内核（含 queue_running 列表和 queue_running_also），就不提交新内核。
      C2、C8；C7/C9 仅在 Stera 数据已存在时。队列没清空之前不跑提议器。
   5. 队列空了才提议：岭回归代理 + 探索奖励，去掉已跑过的，挑前 K 个（默认 3），
      推送到 justinz2010/xhey-auto-iter。
@@ -447,16 +449,58 @@ def ingest_kernel_output(spec, iteration=0, status=None):
     return row
 
 
+def queue_running_items(state=None):
+    """正在跑的固定候选。queue_running 可以是一个对象或列表；queue_running_also 追加其余内核。"""
+    if state is None:
+        state = load_state()
+    items = []
+
+    def add(raw):
+        if isinstance(raw, dict):
+            if raw.get("slug"):
+                items.append(raw)
+        elif isinstance(raw, list):
+            for one in raw:
+                add(one)
+
+    add(state.get("queue_running"))
+    add(state.get("queue_running_also"))
+    seen, out = set(), []
+    for item in items:
+        slug = item.get("slug")
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        out.append(item)
+    return out
+
+
+def _spec_from_queue_item(item):
+    cfg = dict(DEFAULT, **QUEUE_CONFIG.get(item.get("id"), {}))
+    if item.get("config"):
+        cfg.update(item["config"])
+    return {"id": item.get("id"), "slug": item.get("slug"), "mix": cfg["mix"], "config": cfg}
+
+
 def external_specs():
-    """C1 总是尝试收；队列里只有已经提交（running）的才下载，避免把还没推的 ready 记成失败。"""
-    specs = [C1_SPEC]
+    """C1 总是尝试收；queue.json 里已提交的，以及 auto_state 里记下的正在跑的内核，都下载。"""
+    specs, seen_ids, seen_slugs = [], set(), set()
+
+    def add(spec):
+        slug = spec.get("slug")
+        if not slug or spec.get("id") in seen_ids or slug in seen_slugs:
+            return
+        seen_ids.add(spec.get("id"))
+        seen_slugs.add(slug)
+        specs.append(spec)
+
+    add(C1_SPEC)
     for item in load_queue().get("queue", []):
         if (item.get("status") or "") not in INFLIGHT_STATUS or not item.get("slug"):
             continue
-        cfg = dict(DEFAULT, **QUEUE_CONFIG.get(item["id"], {}))
-        if item.get("config"):
-            cfg.update(item["config"])
-        specs.append({"id": item["id"], "slug": item["slug"], "mix": cfg["mix"], "config": cfg})
+        add(_spec_from_queue_item(item))
+    for item in queue_running_items():
+        add(_spec_from_queue_item(item))
     return specs
 
 
@@ -522,22 +566,41 @@ def chart():
     fig.tight_layout(); fig.savefig(CHART, dpi=120); print("chart", CHART)
 
 
-def _queue_slot_busy(state):
-    q = state.get("queue_running")
-    if not q or not q.get("slug"):
-        return False
-    s = kernel_status(q["slug"])
-    if s in ("RUNNING", "QUEUED"):
-        print("固定候选 %s 还在跑（%s），不提交新内核。" % (q.get("id"), s))
-        return True
-    if s == "COMPLETE" or s == "ERROR" or str(s).startswith("CANCEL"):
-        spec = next((x for x in external_specs() if x["slug"] == q["slug"]), None)
-        if spec:
-            ingest_kernel_output(spec, status=s)
-        state = load_state()
+def _remember_queue_running(items):
+    state = load_state()
+    state.pop("queue_running_also", None)
+    if not items:
         state["queue_running"] = None
-        save_state(state)
-    return False
+    elif len(items) == 1:
+        state["queue_running"] = items[0]
+    else:
+        state["queue_running"] = list(items)
+    save_state(state)
+
+
+def _queue_slot_busy(state):
+    """任一队列内核还在跑就占住 GPU。跑完的全部入账，剩下的继续记在 queue_running。"""
+    items = queue_running_items(state)
+    if not items:
+        return False
+    kept, changed, busy = [], False, False
+    for q in items:
+        s = kernel_status(q["slug"])
+        if s in ("RUNNING", "QUEUED"):
+            print("固定候选 %s 还在跑（%s），不提交新内核。" % (q.get("id"), s))
+            kept.append(q)
+            busy = True
+            continue
+        if s == "COMPLETE" or s == "ERROR" or str(s).startswith("CANCEL"):
+            spec = next((x for x in external_specs() if x.get("slug") == q.get("slug")), None)
+            if spec:
+                ingest_kernel_output(spec, status=s)
+            changed = True
+            continue
+        kept.append(q)
+    if changed:
+        _remember_queue_running(kept)
+    return busy
 
 
 def step(a):
@@ -558,7 +621,7 @@ def step(a):
             print("拿不到内核状态，稍后再试：", s)
             return 1
         ingest(load_state(), s); chart()
-    elif _queue_slot_busy(load_state()):
+    if _queue_slot_busy(load_state()):
         mirror_ledger_csv()
         return 0
     if a.no_launch:
