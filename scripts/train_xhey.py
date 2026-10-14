@@ -315,6 +315,14 @@ def hist_revert(d, starts, alpha):
     return p
 
 
+def moving_mask_from_Y(Y, thresh_cm):
+    """True if either hand moves > thresh_cm over the horizon (GT cumulative xyz, cm)."""
+    m = np.zeros(len(Y), dtype=bool)
+    for h in range(2):
+        m |= np.linalg.norm(Y[:, :, 7 * h:7 * h + 3].sum(1), axis=-1) * 100 > thresh_cm
+    return m
+
+
 def useful(d, starts):
     """只用至少一只手有有效动作的块（全无效的块对掩码损失没贡献）。"""
     _, V = ev.gather(d, starts)
@@ -357,13 +365,18 @@ MIX_HELP = (
 )
 
 
-def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True):
+def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True, loss_move_cm=0.0):
     """在 iPhone 训练片段（+ 选中的开源/合成数据）上训一个 XHEY。返回模型。"""
     tr_all = ht.chunks(iph, train_eps)
     tr, va = split_inner(iph, tr_all)
     aug_train = tr.copy()
     tr, va = useful(iph, tr), useful(iph, va)
     X, Y, V = xyv(iph, tr, use_img); Xv, Yv, Vv = xyv(iph, va, use_img)
+    if loss_move_cm and loss_move_cm > 0:
+        keep = moving_mask_from_Y(Y, loss_move_cm)
+        if keep.any():
+            X, Y, V = X[keep], Y[keep], V[keep]
+            print("loss_move_cm", loss_move_cm, "kept", int(keep.sum()), "/", int(len(keep)), flush=True)
     if "aug" in mix:  # 合成数据：镜像（只取训练片段，画面用翻转后的特征）+ 2 倍速
         for extra in (ext["mirror"], ext["fast"]):
             ex_starts = augmentation_train_starts(extra, aug_train, len(iph["state"]))
@@ -500,6 +513,8 @@ def main():
                     help="Open-AoE 转换后的 episode 目录（scripts/convert_openaoe.py）")
     ap.add_argument("--move-cm", type=float, default=5.0,
                     help="「手在动」子集：未来 16 步手腕真实位移超过多少 cm")
+    ap.add_argument("--loss-move-cm", type=float, default=0.0,
+                    help=">0 时微调只保留 GT 手腕位移超过该 cm 的训练块（逼模型学「会动」）")
     ap.add_argument("--seeds", type=int, default=3, help="每个配比训练几个随机种子")
     ap.add_argument("--steps", type=int, default=3000, help="iPhone（微调）阶段最大步数，按内部验证集挑最佳步")
     ap.add_argument("--pre-steps", type=int, default=6000, help="开源数据预训练步数")
@@ -531,7 +546,7 @@ def main():
             add("history_revert", hist_revert(iph, te, al))
             for mix in mixes:
                 for s in range(a.seeds):
-                    m = train_mix(mix, iph, train_eps, ext, s, a.steps, a.pre_steps)
+                    m = train_mix(mix, iph, train_eps, ext, s, a.steps, a.pre_steps, loss_move_cm=a.loss_move_cm)
                     add("%s#%d" % (mix, s), m(feats(iph, te)))
                 print("fold", names[test_ep], mix, "done %.0fs" % (time.time() - t0), flush=True)
         results = summarize_results(per, chunks_ade, names, np.concatenate(moving))
@@ -543,14 +558,14 @@ def main():
             results[g]["n_full_chunks"] = int(np.isfinite(np.concatenate(chunks_ade[mem[0]])).sum())
         report = {"model": "XHEY", "run": a.run, "clips": names, "n_rows": int(len(iph["state"])),
                   "valid_frac": float(iph["valid"].mean()), "fps": 15, "horizon": H, "k_hist": K_HIST,
-                  "seeds": a.seeds, "steps": a.steps, "pre_steps": a.pre_steps, "mixes": mixes,
+                  "seeds": a.seeds, "steps": a.steps, "pre_steps": a.pre_steps, "loss_move_cm": a.loss_move_cm, "mixes": mixes,
                   "external_rows": {k: int(len(v["state"])) for k, v in ext.items()}, "results": results}
         (out / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
         print(json.dumps({g: [round(r["ade_cm_pooled"], 2), round(r["ade_minus_zero_cm"], 2), round(r["prefix_ade_cm"], 2),
                               round(r.get("moving_ade_cm", float("nan")), 2), round(r.get("moving_minus_zero_cm", float("nan")), 2)]
                           for g, r in results.items()}, indent=1), flush=True)
         plot(results, out / "xhey_results.png")
-    m = train_mix(a.mix, iph, list(range(len(names))), ext, 0, a.steps, a.pre_steps)
+    m = train_mix(a.mix, iph, list(range(len(names))), ext, 0, a.steps, a.pre_steps, loss_move_cm=a.loss_move_cm)
     m.save(out / "xhey.pt", {"clips": names, "mix": a.mix, "fps": 15,
                              "features": "state_local137+hist48+resnet18_512+has_image1"})
     print("saved", out / "xhey.pt", "%.0fs" % (time.time() - t0), flush=True)

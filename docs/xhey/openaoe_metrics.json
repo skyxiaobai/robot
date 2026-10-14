@@ -1,0 +1,67 @@
+{
+  "experiment": "xhey-openaoe-train",
+  "kernel": "justinz2010/xhey-openaoe-train",
+  "date": "2026-10-14",
+  "eval": "leave-one-clip LOO on 3 iPhone LiDAR clips, seeds=3, horizon=16 @15fps",
+  "nano": {
+    "pre_steps": 6000,
+    "openaoe_rows": 136773,
+    "variants": {
+      "zero": {
+        "ade_cm_pooled": 11.0255,
+        "moving_ade_cm": 14.0813,
+        "ade_minus_zero_cm": 0.0,
+        "moving_minus_zero_cm": 0.0
+      },
+      "iphone": {
+        "ade_cm_pooled": 11.2917,
+        "moving_ade_cm": 14.1863,
+        "ade_minus_zero_cm": 0.2662,
+        "moving_minus_zero_cm": 0.105
+      },
+      "iphone+xhey_rgb+aug": {
+        "ade_cm_pooled": 11.0622,
+        "moving_ade_cm": 14.0598,
+        "ade_minus_zero_cm": 0.0367,
+        "moving_minus_zero_cm": -0.0215
+      },
+      "iphone+openaoe+aug": {
+        "ade_cm_pooled": 11.2499,
+        "moving_ade_cm": 14.1922,
+        "ade_minus_zero_cm": 0.2243,
+        "moving_minus_zero_cm": 0.1109
+      },
+      "iphone+openaoe+xhey_rgb+aug": {
+        "ade_cm_pooled": 11.2254,
+        "moving_ade_cm": 14.1797,
+        "ade_minus_zero_cm": 0.1998,
+        "moving_minus_zero_cm": 0.0984
+      }
+    }
+  },
+  "tiny": {
+    "pre_steps": 20000,
+    "openaoe_rows": 745909,
+    "variants": {
+      "zero": {
+        "ade_cm_pooled": 11.0255,
+        "moving_ade_cm": 14.0813,
+        "ade_minus_zero_cm": 0.0,
+        "moving_minus_zero_cm": 0.0
+      },
+      "iphone+openaoe+aug": {
+        "ade_cm_pooled": 11.2402,
+        "moving_ade_cm": 14.1738,
+        "ade_minus_zero_cm": 0.2147,
+        "moving_minus_zero_cm": 0.0925
+      },
+      "iphone+openaoe+xhey_rgb+aug": {
+        "ade_cm_pooled": 11.2462,
+        "moving_ade_cm": 14.1752,
+        "ade_minus_zero_cm": 0.2207,
+        "moving_minus_zero_cm": 0.0939
+      }
+    }
+  },
+  "conclusion": "Open-AoE pretraining does not help XHEY wrist ADE on iPhone LOO; all +openaoe mixes are worse than zero-motion and worse than best non-AoE mix (iphone+xhey_rgb+aug)."
+}

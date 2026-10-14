@@ -33,8 +33,11 @@
 | **hub_rgb / hub_imu**（HF Hubdata） | 预训练（WiLoR 相机系） | 各截取前约 300 帧/段 | **other**（见数据集 LICENSE） |
 | **zeno_raw / zeno_phone**（HF 开放样例） | 预训练（WiLoR） | 样例视频截取 | **CC BY-NC 4.0** |
 | **合成增强 `aug`** | 扩大 iPhone 训练集 | 镜像换手、2 倍速、输入噪声 | — |
+| **Open-AoE**（inclusionAI/OpenAoE-2000h） | 预训练（本次未帮上忙） | nano ~13.7 万行 / tiny ~74.6 万行 | 详见 [`openaoe_pretrain.md`](openaoe_pretrain.md) |
 
 本地镜像与转换说明：[`docs/hf_iphone_data.md`](hf_iphone_data.md)。媒体很大，不进 git。
+
+Open-AoE 预训练写在 [`openaoe_pretrain.md`](openaoe_pretrain.md)（本次未帮上忙）。自动迭代台账在 [`xhey_ledger.md`](xhey_ledger.md)。
 
 所有来源都统一成：**140 维状态、14 维手腕增量、horizon=16**。开源数据没有画面时，画面特征置 0，并加一个 `has_image` 开关，模型知道「这次没画面」。
 
@@ -65,7 +68,7 @@ python scripts/train_xhey.py --ablation
 
 | 参数 | 含义 | 默认 |
 |---|---|---|
-| `--mix` | 最终模型用哪些数据，用 `+` 连接（含 `zeno_lidar` / `hub_rgb` / `hub_imu` / `zeno_raw` / `zeno_phone`） | `iphone+egodex+aug` |
+| `--mix` | 最终模型用哪些数据，用 `+` 连接（含 `zeno_lidar` / `hub_rgb` / `hub_imu` / `zeno_raw` / `zeno_phone` / `openaoe`） | `iphone+egodex+aug` |
 | `--ablation` | 跑一整套配比对比 | 关 |
 | `--seeds` | 每种配比训几个随机种子 | 3 |
 | `--steps` | iPhone 微调最大步数 | 3000 |
