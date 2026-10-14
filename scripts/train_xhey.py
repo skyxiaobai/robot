@@ -31,12 +31,16 @@ from egodata.schema import iter_episode_paths  # noqa: E402
 
 H, STEP, IDENT = ht.H, ht.STEP, ht.IDENT
 K_HIST = 8
-QC_EXCLUDE = set()  # --qc-filter：QC 成绩单不合格的段（episode 文件名去掉 .json）
+QC_EXCLUDE = set()  # scorecard failures
+QC_SCORED = set()   # every episode must be represented in the supplied scorecards
 
 
 def _qc_keep(paths, kind):
-    if not QC_EXCLUDE:
+    if not QC_SCORED:
         return paths
+    unseen = [str(p) for p in paths if Path(p).stem not in QC_SCORED]
+    if unseen:
+        raise ValueError("Unreviewed QC episodes for %s: %s" % (kind, unseen[:10]))
     kept = [p for p in paths if Path(p).stem not in QC_EXCLUDE]
     if len(kept) != len(paths):
         print("QC 排除 %s：%d/%d 段" % (kind, len(paths) - len(kept), len(paths)), flush=True)
@@ -549,7 +553,7 @@ def main():
     ap.add_argument("--aug-noise", type=float, default=0.1, help="合成增强时的输入噪声")
     ap.add_argument("--loss-move-cm", type=float, default=0.0,
                     help=">0 时微调只保留 GT 手腕位移超过该 cm 的训练块（逼模型学「会动」）")
-    ap.add_argument("--qc-filter", nargs="*", default=None,
+    ap.add_argument("--qc-filter", nargs="+", required=True,
                     help="QC 成绩单 scorecards.json（scripts/qc_scorecard.py 生成，可给多个）；不合格的段不进训练")
     ap.add_argument("--seeds", type=int, default=3, help="每个配比训练几个随机种子")
     ap.add_argument("--steps", type=int, default=3000, help="iPhone（微调）阶段最大步数，按内部验证集挑最佳步")
@@ -557,15 +561,18 @@ def main():
     ap.add_argument("--no-eval", action="store_true", help="跳过留一段评测，只用全部片段训最终模型")
     a = ap.parse_args()
     if a.qc_filter:
-        from qc_scorecard import load_filter
+        from qc_scorecard import load_filter, load_scored
         for f in a.qc_filter:
             QC_EXCLUDE.update(load_filter(f))
+            QC_SCORED.update(load_scored(f))
         print("QC 过滤：共 %d 段不合格，训练时排除" % len(QC_EXCLUDE), flush=True)
     TUNE.update(hidden=a.hidden, dropout=a.dropout, lr_scale=a.lr_scale, aug_noise=a.aug_noise)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     mixes = (a.mixes.split(",") if a.mixes else DEFAULT_ABLATION) if a.ablation else [a.mix]
     iph, eps, names = build_iphone(a.run, out / "cache")
+    if not eps:
+        raise ValueError("No approved iPhone episodes remain after QC")
     ext = prepare_external(mixes + [a.mix], iph, eps, names, a)
     print("clips", names, "rows", len(iph["state"]), "valid", round(float(iph["valid"].mean()), 4), flush=True)
     if not a.no_eval:
