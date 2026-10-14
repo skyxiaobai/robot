@@ -92,6 +92,28 @@ class FramesTest(unittest.TestCase):
             np.testing.assert_allclose(R @ (np.array(up) / np.linalg.norm(up)), [0, 1, 0], atol=1e-9)
             np.testing.assert_allclose(R @ R.T, np.eye(3), atol=1e-9)
 
+    def test_world_up_alignment_negative_z(self):
+        R = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], float)
+        A, label = F.world_up_alignment(np.stack([R] * 5))
+        self.assertEqual(label, "z")
+        np.testing.assert_allclose(A.T @ A, np.eye(3), atol=1e-8)
+        self.assertAlmostEqual(float(np.linalg.det(A)), 1.0)
+        np.testing.assert_allclose(A @ [0, 0, -1], [0, 1, 0], atol=1e-8)
+
+    def test_canonicalization_rejects_missing_world_poses(self):
+        ep = make_ep(frame="slam_world")
+        ep["camera_poses"] = []
+        with self.assertRaisesRegex(ValueError, "camera pose"):
+            F.canonicalize_for_xhey(ep)
+
+    def test_canonicalization_camera_yup(self):
+        ep = make_ep(frame="camera_yup")
+        normalized = F.canonicalize_for_xhey(ep)
+        self.assertEqual(F.convention_of(normalized), F.CAMERA)
+        self.assertEqual(F.convention_of(ep), F.CAMERA_YUP)
+        np.testing.assert_allclose(normalized["hands"]["left"]["wrist_pose"][0][:3],
+                                   F.cv_to_yup(ep["hands"]["left"]["wrist_pose"][0][:3]))
+
     def test_world_up_alignment_ros_zup(self):
         # 光学系 → ROS z 朝上世界：相机朝 +x 看，「上」(-y 光学) = +z
         R = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], float)
@@ -130,6 +152,23 @@ class FramesTest(unittest.TestCase):
 
 
 class ScorecardTest(unittest.TestCase):
+    def test_constant_velocity_not_jitter(self):
+        for fps in (15.0, 30.0, 60.0):
+            n = int(fps * 5)
+            t = np.arange(n) / fps
+            left = np.column_stack((0.4 * t - 0.2, np.full(n, 0.15), np.full(n, 0.5)))
+            ep = make_ep(n=n, fps=fps, left=left, right=left + [0.2, 0, 0])
+            card = Q.score_episode(ep, "constant_velocity")
+            self.assertLess(card["jitter_cm"], 1e-5)
+
+    def test_missing_depth_is_unknown(self):
+        ep = make_ep()
+        ep["source"] = "stera"
+        ep["hand_pose"] = {"backend": "stera_wilor_lidar"}
+        c = Q.score_episode(ep, "no_depth_evidence")
+        self.assertIsNone(c["depth_valid"])
+        self.assertIn("深度状态未知", c["fails"])
+
     def test_card_and_filter(self):
         good = make_ep(150)
         still = make_ep(150, left=np.tile([-0.1, 0.15, 0.45], (150, 1)), right=np.tile([0.1, 0.15, 0.45], (150, 1)))
