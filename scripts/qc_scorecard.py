@@ -4,7 +4,9 @@
 
 指标（每段）：
   move_frac     手在动的帧占比：任一只手 1 秒内手腕位移 > --move-cm（默认 5 cm）
-  depth_valid   有深度源时：检测到手的帧里，深度检查通过（状态 ok）的比例；没有深度信息记 null
+  depth_valid   有逐帧深度状态时：检测到手的帧里，深度检查通过（状态 ok）的比例。
+                没有逐帧证据记 null，并报 unknown（警告，不判失败）；不再把缺失证据当成 100%。
+                只有 lowconf / fit / depth 这类实测坏深度才会拉低比例并判失败。
   detect_rate   至少一只手被认到的帧占比
   jitter_cm     手腕逐帧位移的中位数（cm，原生帧率；越小越稳）
   swaps         左右手互换次数（egodata.hand_fix 按手腕连续性检出）
@@ -12,7 +14,8 @@
   frame_ok      坐标单位 / 轴向检查（common.frames.sanity_check）
 
 合格规则（默认，可改）：detect_rate ≥ 0.5、gap_ratio ≤ 0.5、jitter_cm ≤ 2.5、move_frac ≥ 0.05、
-swaps ≤ 每分钟 10 次、depth_valid ≥ 0.5（有深度时）、frame_ok。
+swaps ≤ 每分钟 10 次、depth_valid ≥ 0.5（有实测深度时）、frame_ok。
+stera / dynamic_intelligence / zeno_lidar / iphone_lidar 若转换器没写逐帧深度状态，记 unknown 警告，仍可合格。
 
 用法：
   python scripts/qc_scorecard.py --episodes data/stera/unified --out outputs/qc/stera
@@ -27,6 +30,9 @@ from common import frames as F  # noqa: E402
 from egodata.hand_fix import SIDES, _good, fix_episode_hands  # noqa: E402
 
 DEPTH_BAD = {"lowconf", "fit", "depth"}
+DEPTH_UNKNOWN = {"none", "missing", "unknown"}
+# 这些源的转换器经常不写逐帧深度状态；缺失证据报 unknown，不当作失败，也不再记成 100%。
+DEPTH_UNKNOWN_SOURCES = ("stera", "dynamic_intelligence", "zeno_lidar", "iphone_lidar")
 RULES = {"detect_rate_min": 0.5, "gap_ratio_max": 0.5, "jitter_cm_max": 2.5, "move_frac_min": 0.05,
          "swaps_per_min_max": 10.0, "depth_valid_min": 0.5}
 
@@ -59,9 +65,13 @@ def score_episode(ep, name="", move_cm=5.0, max_gap_s=0.3, rules=RULES):
     if _has_depth_status(ep):
         for side in SIDES:
             for s in ep["iphone"]["per_frame"][side]:
-                if s in ("none", "missing", None):
+                token = "" if s is None else str(s).lower()
+                if token in DEPTH_UNKNOWN:
                     continue
-                depth_all += 1; depth_ok += int(s == "ok")
+                # 只有 ok 和明确的坏深度才算证据；unknown / 没写状态不算失败，也不记成 100%。
+                if token == "ok" or token in DEPTH_BAD:
+                    depth_all += 1
+                    depth_ok += int(token == "ok")
     st = np.concatenate(residuals) if residuals else np.array([])
     gap = np.mean([fixed[s]["gap_frames"] / max(n, 1) for s in SIDES])
     sanity = F.sanity_check(ep)
@@ -75,6 +85,7 @@ def score_episode(ep, name="", move_cm=5.0, max_gap_s=0.3, rules=RULES):
             "interp_frames": int(sum(fixed[s]["interp_frames"] for s in SIDES)),
             "frame_ok": bool(sanity["ok"]), "frame_flags": sanity["flags"], "median_hand_dist_m": sanity["median_dist_m"]}
     card["fails"] = check(card, rules)
+    card["warnings"] = depth_warnings(card)
     card["pass"] = not card["fails"]
     return card
 
@@ -91,21 +102,42 @@ def check(c, r=RULES):
         f.append("手几乎不动")
     if c["swaps"] / max(c["seconds"] / 60.0, 1e-6) > r["swaps_per_min_max"] and c["swaps"] > 2:
         f.append("左右手常认反")
-    if c["depth_valid"] is None and any(k in str(c.get("source") or "").lower() for k in ("stera", "iphone_lidar", "dynamic_intelligence", "zeno_lidar")):
-        f.append("深度状态未知")
-    elif c["depth_valid"] is not None and c["depth_valid"] < r["depth_valid_min"]:
+    if c["depth_valid"] is not None and c["depth_valid"] < r["depth_valid_min"]:
         f.append("深度有效率低")
     if not c["frame_ok"]:
         f.append("坐标轴/单位不对")
     return f
 
 
+def _depth_source(c):
+    src = str(c.get("source") or "").lower()
+    return any(k in src for k in DEPTH_UNKNOWN_SOURCES)
+
+
+def depth_warnings(c):
+    """没有实测深度证据时报告 unknown。警告不进入 fails，合格与否只看实测坏深度。"""
+    if c.get("depth_valid") is None and _depth_source(c):
+        return ["深度状态未知"]
+    return []
+
+
 def one_line(c):
-    dv = "—" if c["depth_valid"] is None else "%.0f%%" % (100 * c["depth_valid"])
+    warns = c.get("warnings")
+    if warns is None:
+        warns = depth_warnings(c)
+    if c["depth_valid"] is None and "深度状态未知" in warns:
+        dv = "unknown"
+    elif c["depth_valid"] is None:
+        dv = "—"
+    else:
+        dv = "%.0f%%" % (100 * c["depth_valid"])
+    tail = "合格" if c["pass"] else "、".join(c["fails"])
+    if warns:
+        tail += "（警告：" + "、".join(warns) + "）"
     return "%s %s | 动 %.0f%% 深度 %s 认手 %.0f%% 抖 %.2fcm 换手 %d 缺口 %.0f%% | %s" % (
         "✅" if c["pass"] else "❌", c["clip"], 100 * c["move_frac"], dv, 100 * c["detect_rate"],
         c["jitter_cm"] if c["jitter_cm"] is not None else float("nan"), c["swaps"], 100 * c["gap_ratio"],
-        "合格" if c["pass"] else "、".join(c["fails"]))
+        tail)
 
 
 def chart(cards, path, title):

@@ -26,3 +26,4 @@ openaoe_tiny_iphone+openaoe+xhey_rgb+aug,2026-10-14,iphone+openaoe_tiny+xhey_rgb
 iter001_c0,2026-10-14,iphone+openaoe_nano_cam+xhey_rgb+aug,11.0669,14.0506,0.0414,win_moving,justinz2010/xhey-auto-iter
 iter001_c1,2026-10-14,iphone+openaoe_nano_cam+aug,11.0700,14.0458,0.0444,win_moving,justinz2010/xhey-auto-iter
 iter001_c2,2026-10-14,iphone+xhey_rgb+aug hidden=1024 dropout=0.3,11.1515,14.1038,0.1260,done_worse,justinz2010/xhey-auto-iter
+NOTE_pr55_camera_frame,2026-10-14,iPhone clips canonicalized to camera frame; 11.03 cm world-frame zero baseline is not comparable; a new camera-frame baseline is required,,,,baseline_needs_rerun,PR55

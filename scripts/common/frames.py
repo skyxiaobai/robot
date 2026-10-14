@@ -20,7 +20,9 @@ CV_TO_YUP = np.diag([1.0, -1.0, -1.0])  # 光学系 ↔ y 朝上相机系（自�
 ROS_ZUP_TO_YUP = np.array([[0, -1, 0], [0, 0, 1], [-1, 0, 0]], float)  # ROS x前 y左 z上 → x右 y上 z后
 # 旧 coordinate_frame 名字 → 统一约定
 ALIASES = {"camera": CAMERA, "camera_yup": CAMERA_YUP, "arkit_world_yup": WORLD_YUP, "slam_world": WORLD,
-           "world_yup": WORLD_YUP}
+           "world_yup": WORLD_YUP,
+           # EgoDex 旧名：ARKit 重力 y 朝上世界，相机位姿按 OpenCV 光学系解释。
+           "arkit_world": WORLD_YUP}
 
 
 def cm_to_m(x):

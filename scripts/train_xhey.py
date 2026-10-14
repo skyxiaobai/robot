@@ -32,15 +32,21 @@ from egodata.schema import iter_episode_paths  # noqa: E402
 H, STEP, IDENT = ht.H, ht.STEP, ht.IDENT
 K_HIST = 8
 QC_EXCLUDE = set()  # scorecard failures
-QC_SCORED = set()   # every episode must be represented in the supplied scorecards
+QC_SCORED = set()   # clips named by the supplied scorecards
+QC_STRICT = False   # --strict-qc: missing-from-scorecard is an error; default warns and keeps
 
 
 def _qc_keep(paths, kind):
+    paths = list(paths)
     if not QC_SCORED:
         return paths
-    unseen = [str(p) for p in paths if Path(p).stem not in QC_SCORED]
+    unseen = [p for p in paths if Path(p).stem not in QC_SCORED]
     if unseen:
-        raise ValueError("Unreviewed QC episodes for %s: %s" % (kind, unseen[:10]))
+        shown = [str(p) for p in unseen[:10]]
+        if QC_STRICT:
+            raise ValueError("Unreviewed QC episodes for %s: %s" % (kind, shown))
+        print("QC 警告 %s：%d 段不在成绩单里，保留（--strict-qc 才会报错）：%s" % (
+            kind, len(unseen), shown), flush=True)
     kept = [p for p in paths if Path(p).stem not in QC_EXCLUDE]
     if len(kept) != len(paths):
         print("QC 排除 %s：%d/%d 段" % (kind, len(paths) - len(kept), len(paths)), flush=True)
@@ -553,13 +559,21 @@ def main():
     ap.add_argument("--aug-noise", type=float, default=0.1, help="合成增强时的输入噪声")
     ap.add_argument("--loss-move-cm", type=float, default=0.0,
                     help=">0 时微调只保留 GT 手腕位移超过该 cm 的训练块（逼模型学「会动」）")
-    ap.add_argument("--qc-filter", nargs="+", required=True,
-                    help="QC 成绩单 scorecards.json（scripts/qc_scorecard.py 生成，可给多个）；不合格的段不进训练")
+    ap.add_argument("--qc-filter", nargs="*", default=None,
+                    help="可选。QC 成绩单 scorecards.json（可给多个）；成绩单里不合格的段不进训练。"
+                         "成绩单没覆盖到的段默认警告并保留")
+    ap.add_argument("--strict-qc", action="store_true",
+                    help="和 --qc-filter 一起用：成绩单里没有的段直接报错。"
+                         "默认只警告并保留（Open-AoE、Stera b02–b05 等还没有成绩单）")
     ap.add_argument("--seeds", type=int, default=3, help="每个配比训练几个随机种子")
     ap.add_argument("--steps", type=int, default=3000, help="iPhone（微调）阶段最大步数，按内部验证集挑最佳步")
     ap.add_argument("--pre-steps", type=int, default=6000, help="开源数据预训练步数")
     ap.add_argument("--no-eval", action="store_true", help="跳过留一段评测，只用全部片段训最终模型")
     a = ap.parse_args()
+    global QC_STRICT
+    QC_EXCLUDE.clear()
+    QC_SCORED.clear()
+    QC_STRICT = bool(a.strict_qc)
     if a.qc_filter:
         from qc_scorecard import load_filter, load_scored
         for f in a.qc_filter:
