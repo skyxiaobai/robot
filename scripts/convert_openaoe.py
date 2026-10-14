@@ -28,19 +28,20 @@ FLIP = np.diag([1.0, -1.0, -1.0])
 MANO2OP = [0, 13, 14, 15, 16, 1, 2, 3, 17, 4, 5, 6, 18, 10, 11, 12, 19, 7, 8, 9, 20]
 
 
-def mano_joints(models, side, d, h, idx):
+def mano_joints(models, side, d, h, idx, frame="world"):
     import torch
     m = models[side]
     with torch.no_grad():
-        o = m(global_orient=torch.tensor(d["pred_rot"][h, idx]).float(),
+        rk, tk = ("pred_rot_cam", "pred_trans_cam") if frame == "camera" else ("pred_rot", "pred_trans")
+        o = m(global_orient=torch.tensor(d[rk][h, idx]).float(),
               hand_pose=torch.tensor(d["pred_hand_pose"][h, idx]).float(),
               betas=torch.tensor(d["pred_betas"][h, idx]).float(),
-              transl=torch.tensor(d["pred_trans"][h, idx]).float())
+              transl=torch.tensor(d[tk][h, idx]).float())
     j = torch.cat([o.joints, o.vertices[:, TIPS[side]]], 1).numpy()
     return j[:, MANO2OP]
 
 
-def convert(npz, out, models, seg_s, min_move_cm, stats):
+def convert(npz, out, models, seg_s, min_move_cm, stats, frame="world"):
     d = np.load(npz); c = np.load(str(npz).replace("hands.npz", "camera_traj.npz"))
     T = d["pred_valid"].shape[1]
     idx = np.arange(0, T, 2)  # 30 → 15 fps
@@ -48,8 +49,9 @@ def convert(npz, out, models, seg_s, min_move_cm, stats):
     hands, wpos = {}, {}
     for h, side in enumerate(("left", "right")):
         valid = d["pred_valid"][h, idx] > 0.5
-        J = mano_joints(models, side, d, h, idx)
-        J = J @ FLIP.T  # 首帧相机系（y 朝下）→ 近似 ARKit 世界（y 朝上，与 iPhone 一致）
+        J = mano_joints(models, side, d, h, idx, frame)
+        if frame == "world":
+            J = J @ FLIP.T  # 首帧相机系（y 朝下）→ 近似 ARKit 世界（y 朝上，与 iPhone 一致）
         J[~valid] = np.nan
         poses = wrist_poses_from_joints(list(J))
         hands[side] = {"joints": [jj.tolist() if v else [[None] * 3] * 21 for jj, v in zip(J, valid)],
@@ -72,15 +74,15 @@ def convert(npz, out, models, seg_s, min_move_cm, stats):
             continue
         sl = slice(s0, s1); m = s1 - s0
         ep = {"schema_version": "1.0", "episode_id": "openaoe/%s_%04d" % (name, s0), "source": "openaoe",
-              "source_path": str(npz), "video_path": None, "fps": 15.0, "coordinate_frame": "slam_world",
+              "source_path": str(npz), "video_path": None, "fps": 15.0, "coordinate_frame": "camera" if frame == "camera" else "slam_world",
               "num_frames": m, "timestamps": (np.arange(m) / 15.0).tolist(),
               "camera_intrinsic": c["intrinsic"].tolist(),
-              "camera_poses": [(np.block([[FLIP, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]) @ P).tolist()
+              "camera_poses": [np.eye(4).tolist()] * m if frame == "camera" else [(np.block([[FLIP, np.zeros((3, 1))], [np.zeros((1, 3)), np.ones((1, 1))]]) @ P).tolist()
                                for P in c["cam_c2w"][idx[sl]]],
               "hands": {k: {f: v[f][sl] for f in v} for k, v in hands.items()},
               "annotation": {"task": {"name": name, "instruction": ""}, "subtasks": [], "instructions": [],
                              "environment": {"name": "", "detail": "", "source": "missing"}},
-              "hand_pose": {"backend": "openaoe_mano", "frame": "slam_world", "metric_translation": True,
+              "hand_pose": {"backend": "openaoe_mano", "frame": frame, "metric_translation": True,
                             "move_median_cm_per_s": med},
               "license_note": "Open-AoE Dataset License (attribution: Open-AoE / OpenAoE-2000h, arXiv:2607.14183); MANO-derived"}
         ep.update(empty_interaction(m))
@@ -95,6 +97,8 @@ def main():
     ap.add_argument("--mano-dir", required=True, help="其下有 mano/MANO_RIGHT.pkl、MANO_LEFT.pkl")
     ap.add_argument("--seg-s", type=float, default=20.0)
     ap.add_argument("--min-move-cm", type=float, default=3.0, help="1 秒手腕位移中位数阈值（cm）")
+    ap.add_argument("--frame", default="world", choices=["world", "camera"],
+                    help="world=SLAM 世界系（y 翻转近似 ARKit）；camera=每帧相机系（同 xhey_rgb，避开重力方向问题）")
     ap.add_argument("--limit", type=int, default=None)
     a = ap.parse_args()
     import smplx
@@ -105,7 +109,7 @@ def main():
     stats = {"clips": 0, "segments": 0, "kept": 0, "frames": 0}
     for f in files:
         try:
-            convert(f, out, models, a.seg_s, a.min_move_cm, stats); stats["clips"] += 1
+            convert(f, out, models, a.seg_s, a.min_move_cm, stats, a.frame); stats["clips"] += 1
         except Exception as e:  # noqa: BLE001
             print("skip", f, repr(e)[:200], flush=True)
     (out / "convert_summary.json").write_text(json.dumps(stats, indent=1))

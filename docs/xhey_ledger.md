@@ -19,7 +19,9 @@
 | E7 | 10-14 | +OpenAoE tiny | 11.24 | 14.17 | +0.21 | **不帮** | 同上 |
 | E8 | 10-14 | +OpenAoE tiny +xhey_rgb | 11.25 | 14.18 | +0.22 | **不帮** | 同上 |
 
-机器可读：[`docs/xhey/ledger.csv`](xhey/ledger.csv)。日更图：[`docs/xhey/daily_progress.png`](xhey/daily_progress.png)。
+机器可读：[`docs/xhey/ledger.csv`](xhey/ledger.csv)（由 `experiments/ledger.jsonl` 镜像，手写的 E/C 行保留）。日更图：[`docs/xhey/daily_progress.png`](xhey/daily_progress.png)。进度图：[`experiments/progress.png`](../experiments/progress.png)。
+
+唯一循环驱动是 `scripts/xhey_auto_iter.py`：先收已完成的固定内核（含 `justinz2010/xhey-rsi-c1-moveloss`），再按 [`docs/xhey/queue.json`](xhey/queue.json) 提交就绪候选（C2、C8；Stera 数据存在时再加上 C7、C9），队列空了才让提议器挑新配置。正在跑的自动迭代是 **iteration 2**（`justinz2010/xhey-auto-iter` v2），有内核在跑时不抢占。
 
 ---
 
@@ -48,8 +50,8 @@
 
 ## 自动迭代规则（给 bot）
 
-1. 台账追加一行，不改历史数字。  
-2. 候选预排序 → 最多同时 1 个 Kaggle GPU kernel。  
-3. 跑完：更新 CSV + 重画 `daily_progress.png` + 写一句结论。  
+1. 台账追加一行，不改历史数字。`xhey_auto_iter.py` 把 `experiments/ledger.jsonl` 镜像进 `docs/xhey/ledger.csv`。  
+2. 候选预排序 → 最多同时 1 个 Kaggle GPU kernel。固定队列（C2、C8；Stera 就绪后 C7、C9）先于提议器。  
+3. 跑完：更新 CSV + 重画进度图 + 写一句结论。  
 4. ADE 低于 zero 且 CI 不跨 0 → 标「胜出」，开 PR。  
 5. 连续 3 次同方向失败 → 该方向降权或关掉。

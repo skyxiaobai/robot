@@ -365,6 +365,10 @@ MIX_HELP = (
 )
 
 
+# 自动迭代（scripts/xhey_auto_iter.py）可调的超参；默认值 = PR #47
+TUNE = {"hidden": 512, "dropout": 0.2, "lr_scale": 1.0, "aug_noise": 0.1}
+
+
 def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True, loss_move_cm=0.0):
     """在 iPhone 训练片段（+ 选中的开源/合成数据）上训一个 XHEY。返回模型。"""
     tr_all = ht.chunks(iph, train_eps)
@@ -384,14 +388,15 @@ def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True, lo
                 continue
             Xe, Ye, Ve = xyv(extra, ex_starts, use_img)
             X, Y, V = np.vstack([X, Xe]), np.concatenate([Y, Ye]), np.concatenate([V, Ve])
-    m = XHEY(X.shape[1], seed); m.set_norm(X, Y)
+    m = XHEY(X.shape[1], seed, hidden=TUNE["hidden"], dropout=TUNE["dropout"]); m.set_norm(X, Y)
     pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone", "xhey_rgb", "openaoe", "stera", "di")
     pre = [ext[k] for k in pre_keys if k in mix and k in ext]
     if pre:
         P = concat(pre); ps = useful(P, ev.chunk_starts(P["episode"], H, 1))
         Xp, Yp, Vp = xyv(P, ps, use_img)
-        m.fit(Xp, Yp, Vp, Xv, Yv, Vv, steps=pre_steps, lr=3e-4)
-    m.fit(X, Y, V, Xv, Yv, Vv, steps=steps, lr=1e-4 if pre else 3e-4, noise=0.1 if "aug" in mix else 0.0)
+        m.fit(Xp, Yp, Vp, Xv, Yv, Vv, steps=pre_steps, lr=3e-4 * TUNE["lr_scale"])
+    m.fit(X, Y, V, Xv, Yv, Vv, steps=steps, lr=(1e-4 if pre else 3e-4) * TUNE["lr_scale"],
+          noise=TUNE["aug_noise"] if "aug" in mix else 0.0)
     return m
 
 
@@ -525,6 +530,11 @@ def main():
                     help="DynamicIntelligence 转换后的 episode 目录（scripts/convert_di.py）")
     ap.add_argument("--move-cm", type=float, default=5.0,
                     help="「手在动」子集：未来 16 步手腕真实位移超过多少 cm")
+    ap.add_argument("--no-final", action="store_true", help="只做留一段评测，不再训最终模型（自动迭代省时间）")
+    ap.add_argument("--hidden", type=int, default=512, help="MLP 隐层宽度")
+    ap.add_argument("--dropout", type=float, default=0.2)
+    ap.add_argument("--lr-scale", type=float, default=1.0, help="学习率倍数（预训练和微调一起缩放）")
+    ap.add_argument("--aug-noise", type=float, default=0.1, help="合成增强时的输入噪声")
     ap.add_argument("--loss-move-cm", type=float, default=0.0,
                     help=">0 时微调只保留 GT 手腕位移超过该 cm 的训练块（逼模型学「会动」）")
     ap.add_argument("--seeds", type=int, default=3, help="每个配比训练几个随机种子")
@@ -532,6 +542,7 @@ def main():
     ap.add_argument("--pre-steps", type=int, default=6000, help="开源数据预训练步数")
     ap.add_argument("--no-eval", action="store_true", help="跳过留一段评测，只用全部片段训最终模型")
     a = ap.parse_args()
+    TUNE.update(hidden=a.hidden, dropout=a.dropout, lr_scale=a.lr_scale, aug_noise=a.aug_noise)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     mixes = (a.mixes.split(",") if a.mixes else DEFAULT_ABLATION) if a.ablation else [a.mix]
@@ -577,6 +588,8 @@ def main():
                               round(r.get("moving_ade_cm", float("nan")), 2), round(r.get("moving_minus_zero_cm", float("nan")), 2)]
                           for g, r in results.items()}, indent=1), flush=True)
         plot(results, out / "xhey_results.png")
+    if a.no_final:
+        return 0
     m = train_mix(a.mix, iph, list(range(len(names))), ext, 0, a.steps, a.pre_steps, loss_move_cm=a.loss_move_cm)
     m.save(out / "xhey.pt", {"clips": names, "mix": a.mix, "fps": 15,
                              "features": "state_local137+hist48+resnet18_512+has_image1"})
