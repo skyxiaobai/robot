@@ -1,9 +1,9 @@
 {
  "running": null,
  "queue_running": {
-  "id": "C7",
-  "slug": "justinz2010/xhey-rsi-c7-stera",
-  "launched": "2026-10-14 14:40"
+  "id": "C2",
+  "slug": "justinz2010/xhey-rsi-c2-longft",
+  "launched": "2026-10-14 21:26"
  },
  "last_iteration": 2,
  "last_kernel": "justinz2010/xhey-auto-iter"

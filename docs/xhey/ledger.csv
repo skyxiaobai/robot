@@ -10,7 +10,7 @@ E7,2026-10-14,iphone+openaoe_tiny+aug,11.2402,14.1738,0.2147,done_no_help,openao
 E8,2026-10-14,iphone+openaoe_tiny+xhey_rgb+aug,11.2462,14.1752,0.2207,done_no_help,openaoe
 C1,2026-10-14,iphone+xhey_rgb+aug loss_move_cm=5.0,11.0619,14.0599,0.0363,win_moving,justinz2010/xhey-rsi-c1-moveloss
 C2,2026-10-14,iphone+xhey_rgb+aug steps=10000,,,,prepared,justinz2010/xhey-rsi-c2-longft
-C7,2026-10-14,iphone+stera+xhey_rgb+aug (Stera-10M pretrain→finetune),,,,blocked_access,justinz2010/xhey-rsi-c7-stera
+C7,2026-10-14,iphone+stera+xhey_rgb+aug,11.1017,14.0928,0.0761,done_worse,justinz2010/xhey-rsi-c7-stera
 C8,2026-10-14,iphone+di+xhey_rgb+aug,11.0536,14.0522,0.0281,win_moving,justinz2010/xhey-rsi-c8-di
 C9,2026-10-14,iphone+stera+di+xhey_rgb+aug,,,,blocked_access,justinz2010/xhey-rsi-c9-stera-di
 pr47_iphone,2026-10-14,iphone,11.2917,,0.2662,done_worse,justinz2010/xhey-wilor-labels (PR #47)

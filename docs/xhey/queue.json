@@ -11,7 +11,7 @@
       "id": "C7",
       "dir": "kaggle/rsi_c7",
       "slug": "justinz2010/xhey-rsi-c7-stera",
-      "status": "running",
+      "status": "done_worse",
       "stera_batches": {
         "uploaded": [
           "b01"
@@ -47,7 +47,7 @@
       "id": "C2",
       "dir": "kaggle/rsi_c2",
       "slug": "justinz2010/xhey-rsi-c2-longft",
-      "status": "ready"
+      "status": "running"
     }
   ]
 }
