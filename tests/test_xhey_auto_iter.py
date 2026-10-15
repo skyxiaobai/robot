@@ -92,7 +92,15 @@ class MirrorAndIngest(unittest.TestCase):
         }}
         path = Path(self.tmp.name) / "metrics.json"
         path.write_text(json.dumps(metrics), encoding="utf-8")
-        ai.ingest_metrics_file(path, ai.C1_SPEC)
+        # 入账日期来自 row_from_metrics 的 datetime.now()。钉在 CSV 里已有的实验日，
+        # 避免断言跟墙上时钟走（这条用例写于 2026-10-14，次日会把日期写成当天）。
+        class _Clock(ai.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 10, 14, 12, 0, 0)
+
+        with patch.object(ai, "datetime", _Clock):
+            ai.ingest_metrics_file(path, ai.C1_SPEC)
         rows = {r["id"]: r for r in ai.load_ledger()}
         self.assertEqual(rows["C1"]["status"], "ok")
         self.assertAlmostEqual(rows["C1"]["delta_moving_cm"], -0.0713)
