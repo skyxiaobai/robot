@@ -1,0 +1,20 @@
+{
+  "id": "justinz2010/xhey-rsi-c9b-stera-di-qc",
+  "title": "xhey-rsi-c9b-stera-di-qc",
+  "code_file": "run.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "justinz2010/xhey-stera-pretrain",
+    "justinz2010/xhey-di-pretrain",
+    "justinz2010/xhey-c11-di-cam",
+    "justinz2010/xhey-openaoe-pretrain",
+    "justinz2010/xhey-iphone-sessions"
+  ],
+  "kernel_sources": [
+    "justinz2010/xhey-wilor-labels"
+  ]
+}

@@ -131,11 +131,77 @@ class MirrorAndIngest(unittest.TestCase):
         pushed = []
         with patch.object(ai, "kernel_status", return_value="UNKNOWN:none"), \
                 patch.object(ai, "stera_data_exists", return_value=False), \
+                patch.object(ai, "kernel_has_qc_filter", return_value=True), \
                 patch.object(ai, "submit_queue_item", side_effect=lambda item: pushed.append(item["id"])), \
                 patch.object(ai, "launch", side_effect=AssertionError("proposer must wait")):
             rc = ai.step(type("A", (), {"no_launch": False, "k": 3})())
         self.assertEqual(rc, 0)
         self.assertEqual(pushed, ["C2"])
+
+    def test_unfiltered_ready_is_not_submitted_and_blocks_proposer(self):
+        """C9 v1 没有 --qc-filter。循环不能再交这种候选，也不能因此改跑提议器。"""
+        self.state.write_text(json.dumps({"running": None, "queue_running": None}), encoding="utf-8")
+        self.queue.write_text(json.dumps({"queue": [{
+            "id": "C9", "dir": "kaggle/rsi_c9",
+            "slug": "justinz2010/xhey-rsi-c9-stera-di", "status": "ready",
+        }]}), encoding="utf-8")
+        pushed = []
+        with patch.object(ai, "kernel_status", return_value="UNKNOWN:none"), \
+                patch.object(ai, "stera_data_exists", return_value=True), \
+                patch.object(ai, "submit_queue_item", side_effect=lambda item: pushed.append(item["id"])), \
+                patch.object(ai, "launch", side_effect=AssertionError("proposer must wait")):
+            rc = ai.step(type("A", (), {"no_launch": False, "k": 3})())
+        self.assertEqual(rc, 0)
+        self.assertEqual(pushed, [])
+
+    def test_qc_candidate_is_submitted_ahead_of_unfiltered(self):
+        self.state.write_text(json.dumps({"running": None, "queue_running": None}), encoding="utf-8")
+        self.queue.write_text(json.dumps({"queue": [
+            {"id": "C9", "dir": "kaggle/rsi_c9", "slug": "justinz2010/xhey-rsi-c9-stera-di", "status": "ready"},
+            {"id": "C9b", "dir": "kaggle/rsi_c9b", "slug": "justinz2010/xhey-rsi-c9b-stera-di-qc", "status": "ready"},
+        ]}), encoding="utf-8")
+        pushed = []
+        with patch.object(ai, "kernel_status", return_value="UNKNOWN:none"), \
+                patch.object(ai, "stera_data_exists", return_value=True), \
+                patch.object(ai, "submit_queue_item", side_effect=lambda item: pushed.append(item["id"])), \
+                patch.object(ai, "launch", side_effect=AssertionError("proposer must wait")):
+            rc = ai.step(type("A", (), {"no_launch": False, "k": 3})())
+        self.assertEqual(rc, 0)
+        self.assertEqual(pushed, ["C9b"])
+
+    def test_running_unfiltered_c9_still_ingests(self):
+        mix = "iphone+stera+di+xhey_rgb+aug"
+        slug = "justinz2010/xhey-rsi-c9-stera-di"
+        self.queue.write_text(json.dumps({"queue": [{
+            "id": "C9", "dir": "kaggle/rsi_c9", "slug": slug, "status": "running", "mix": mix,
+        }]}), encoding="utf-8")
+        self.state.write_text(json.dumps({
+            "running": None,
+            "queue_running": {"id": "C9", "slug": slug, "mix": mix, "launched": "2026-10-15 21:24"},
+        }), encoding="utf-8")
+
+        def kaggle(*args, check=True):
+            if args[:2] == ("kernels", "output") and args[2] == slug:
+                dest = Path(args[4])
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / "metrics.json").write_text(json.dumps(_kernel_metrics(mix)), encoding="utf-8")
+            return ""
+
+        def status(slug_arg=None):
+            return "COMPLETE" if slug_arg == slug else "UNKNOWN:none"
+
+        with patch.object(ai, "kernel_status", side_effect=status), \
+                patch.object(ai, "kaggle", side_effect=kaggle), \
+                patch.object(ai, "chart"), \
+                patch.object(ai, "report_charts"), \
+                patch.object(ai, "submit_queue_item", side_effect=AssertionError("must not resubmit")), \
+                patch.object(ai, "launch", side_effect=AssertionError("proposer must wait")):
+            rc = ai.step(type("A", (), {"no_launch": True, "k": 3})())
+        self.assertEqual(rc, 0)
+        rows = {r["id"]: r for r in ai.load_ledger()}
+        self.assertEqual(rows["C9"]["status"], "ok")
+        self.assertEqual(rows["C9"]["config"]["mix"], mix)
+        self.assertEqual(rows["C9"]["source"], slug)
 
 
 class CommittedState(unittest.TestCase):
@@ -145,6 +211,48 @@ class CommittedState(unittest.TestCase):
         self.assertEqual(state["last_iteration"], 2)
         ids = {json.loads(l)["id"] for l in (ROOT / "experiments" / "ledger.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()}
         self.assertTrue({"iter002_c0", "iter002_c1", "iter002_c2", "C1", "C8"} <= ids)
+
+    def test_c9_running_and_c9b_next(self):
+        state = json.loads((ROOT / "experiments" / "auto_state.json").read_text(encoding="utf-8"))
+        self.assertIsNone(state["running"])
+        self.assertEqual(state["queue_running"]["id"], "C9")
+        self.assertEqual(state["queue_running"]["slug"], "justinz2010/xhey-rsi-c9-stera-di")
+        self.assertEqual(state["queue_running"]["mix"], "iphone+stera+di+xhey_rgb+aug")
+        self.assertEqual(state["queue_running"]["launched"], "2026-10-15 21:24")
+        q = json.loads((ROOT / "docs" / "xhey" / "queue.json").read_text(encoding="utf-8"))
+        ids = [i["id"] for i in q["queue"]]
+        self.assertEqual(ids[ids.index("C9") + 1], "C9b")
+        by_id = {i["id"]: i for i in q["queue"]}
+        self.assertEqual(by_id["C9"]["status"], "running")
+        self.assertEqual(by_id["C9"]["control"], "unfiltered/world-frame")
+        self.assertFalse(by_id["C9"]["qc_filter"])
+        self.assertEqual(by_id["C8"]["status"], "done_better_moving")
+        self.assertEqual(by_id["C7"]["status"], "done_worse")
+        self.assertEqual(by_id["C7b"]["status"], "done_better_moving")
+        self.assertEqual(by_id["C2"]["status"], "done_better_moving")
+        self.assertEqual(by_id["C11"]["status"], "done_no_gain_vs_ctl")
+        c9b = by_id["C9b"]
+        self.assertEqual(c9b["status"], "ready")
+        self.assertEqual(c9b["slug"], "justinz2010/xhey-rsi-c9b-stera-di-qc")
+        self.assertEqual(c9b["mix"], "iphone+stera+di+xhey_rgb+aug")
+        self.assertEqual(c9b["qc"]["stera_pass"]["b01"], "213/757")
+        self.assertEqual(c9b["qc"]["stera_kept_segments"], 1297)
+        self.assertEqual(c9b["qc"]["di_pass"], "25/25")
+        self.assertEqual(c9b["qc"]["iphone_depth_pass"], by_id["C7b"]["qc"]["iphone_depth_pass"])
+        self.assertEqual(c9b["qc"]["xhey_rgb_pass"], "14/17")
+        self.assertIn("--qc-filter", c9b["protocol"])
+        self.assertIn("6000", c9b["protocol"])
+        self.assertIn("3000", c9b["protocol"])
+        ok, skipped = ai.split_qc_ready(ai.ready_queue_items(stera_exists=True, queue=q))
+        self.assertEqual([i["id"] for i in ok], ["C9b"])
+        self.assertEqual(skipped, [])
+        self.assertIn("--qc-filter", ai.KERNEL_TEMPLATE)
+        meta = json.loads((ROOT / "kaggle" / "rsi_c9b" / "kernel-metadata.json").read_text(encoding="utf-8"))
+        self.assertEqual(meta["id"], "justinz2010/xhey-rsi-c9b-stera-di-qc")
+        self.assertIn("justinz2010/xhey-c11-di-cam", meta["dataset_sources"])
+        self.assertIn("justinz2010/xhey-stera-pretrain", meta["dataset_sources"])
+        self.assertTrue(ai.kernel_has_qc_filter(c9b))
+        self.assertFalse(ai.kernel_has_qc_filter(by_id["C9"]))
 
 
 def _kernel_metrics(mix, moving=-0.05):

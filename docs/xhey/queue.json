@@ -1,5 +1,5 @@
 {
- "note": "Justin 10-14 要求 DI / Stera 优先：顺序 C8 → C7 → C9 → C2。每日迭代按顺序取第一个 status=ready 的候选提交到 Kaggle（同时最多 1 个 GPU kernel；不抢占正在跑的）。跑完把结果写进 ledger.csv 并把 status 改成 done_*。",
+ "note": "Justin 10-14 要求 DI / Stera 优先：顺序 C8 → C7 → C9 → C2。每日迭代按顺序取第一个 status=ready 的候选提交到 Kaggle（同时最多 1 个 GPU kernel；不抢占正在跑的）。跑完把结果写进 ledger.csv 并把 status 改成 done_*。C9 v1（2026-10-15 21:24）是未质检、未用 C11 相机系 DI 的对照，保持 running 并入账。下一候选是 C9b（质检 + 相机系 DI）。新候选默认必须带 --qc-filter。",
  "queue": [
   {
    "id": "C8",
@@ -52,9 +52,16 @@
   },
   {
    "id": "C9",
+   "name": "Stera all 5 batches + original DI, unfiltered/world-frame control (v1)",
    "dir": "kaggle/rsi_c9",
    "slug": "justinz2010/xhey-rsi-c9-stera-di",
-   "status": "ready",
+   "status": "running",
+   "mix": "iphone+stera+di+xhey_rgb+aug",
+   "launched": "2026-10-15 21:24",
+   "control": "unfiltered/world-frame",
+   "qc_filter": false,
+   "frame": "original di_unified from xhey-di-pretrain (convert_di.py camera_yup) via that dataset's scripts.tgz. Not xhey-c11-di-cam, so train_xhey is not the C11 build that canonicalizes to camera optical.",
+   "note": "Kernel v1 pushed 2026-10-15 21:24. Confirmed: kaggle/rsi_c9/run.py has no --qc-filter, and dataset_sources are xhey-stera-pretrain + xhey-di-pretrain (original DI), not xhey-c11-di-cam. Keep running and ingest as the unfiltered/world-frame control. QC + camera-frame rerun is C9b.",
    "stera_batches": {
     "uploaded": [
      "b01",
@@ -66,6 +73,40 @@
     "pending_local": [],
     "note": "dataset xhey-stera-pretrain now holds all 5 batches + qc/*/scorecards.json"
    }
+  },
+  {
+   "id": "C9b",
+   "name": "Stera all 5 batches + DI camera frame + iPhone + xhey_rgb + aug, QC-filtered",
+   "dir": "kaggle/rsi_c9b",
+   "slug": "justinz2010/xhey-rsi-c9b-stera-di-qc",
+   "status": "ready",
+   "mix": "iphone+stera+di+xhey_rgb+aug",
+   "protocol": "same as C7b/C9: seeds 3, pre-steps 6000, steps 3000, move-cm 5; --qc-filter on Stera b01-b05 + iPhone depth clips + xhey_rgb (qc/*/scorecards.json) and DI (qc_di/scorecards.json). DI episodes come from xhey-di-pretrain but are loaded with xhey-c11-di-cam scripts.tgz (canonicalize_for_xhey → camera optical, same as C11). Held-out eval stays the depth-clip LOO: failing depth clips drop out the same way as C7b (2/3 pass) and are not replaced.",
+   "qc": {
+    "stera_pass": {
+     "b01": "213/757",
+     "b02": "285/742",
+     "b03": "256/674",
+     "b04": "283/752",
+     "b05": "260/659"
+    },
+    "stera_kept_segments": 1297,
+    "stera_kept_hours": 7.14,
+    "stera_total_hours": 19.66,
+    "iphone_depth_pass": "2/3 (09-05_17-16 fails: jitter 4.07cm, 134 swaps)",
+    "xhey_rgb_pass": "14/17",
+    "di_pass": "25/25",
+    "frame": "DI converter camera_yup -> camera optical via common.frames.canonicalize_for_xhey; sanity_check ok 25/25 (wrist z>0, median dist 0.35 m)",
+    "eval": "LOO over the 2 passing depth clips (08-22_18-21, 08-24_21-18); not directly comparable to 3-clip numbers, compare vs zero within run"
+   },
+   "datasets": [
+    "justinz2010/xhey-stera-pretrain",
+    "justinz2010/xhey-di-pretrain",
+    "justinz2010/xhey-c11-di-cam",
+    "justinz2010/xhey-openaoe-pretrain",
+    "justinz2010/xhey-iphone-sessions"
+   ],
+   "note": "Next ready candidate after C9 v1. Do not push by hand; the loop submits it when the single GPU slot frees."
   },
   {
    "id": "C2",

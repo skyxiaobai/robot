@@ -15,7 +15,8 @@ step 的逻辑：
   3. 上一轮自动迭代跑完（COMPLETE）→ 下载、记账、镜像、重画。跑挂（ERROR）→ 记成 failed。
   4. 有空闲 GPU 时，先提交 docs/xhey/queue.json 里就绪的固定候选（同时最多 1 个）：
      只要还有正在跑的队列内核（含 queue_running 列表和 queue_running_also），就不提交新内核。
-     C2、C8；C7/C9 仅在 Stera 数据已存在时。队列没清空之前不跑提议器。
+     C2、C8；C7/C9 仅在 Stera 数据已存在时。内核脚本没有 --qc-filter 的就绪候选不提交
+     （已经在跑的照常入账），队列里还有这种候选时也不交给提议器。队列没清空之前不跑提议器。
   5. 队列空了才提议：岭回归代理 + 探索奖励，去掉已跑过的，挑前 K 个（默认 3），
      推送到 justinz2010/xhey-auto-iter。
 
@@ -44,6 +45,7 @@ QUEUE_CONFIG = {
     "C7": {"mix": "iphone+stera+xhey_rgb+aug"},
     "C8": {"mix": "iphone+di+xhey_rgb+aug"},
     "C9": {"mix": "iphone+stera+di+xhey_rgb+aug"},
+    "C9b": {"mix": "iphone+stera+di+xhey_rgb+aug"},
     "C11": {"mix": "iphone+di+xhey_rgb+aug"},
 }
 
@@ -213,6 +215,37 @@ def _closed(status):
     return st in INFLIGHT_STATUS or st.startswith("done") or st.startswith("failed")
 
 
+def kernel_has_qc_filter(item):
+    """内核脚本的代码（去掉行内注释）里要有 --qc-filter，才允许新提交。
+
+    只挡提交。status 已经是 running 的内核走入账，不经过这里，所以 C9 v1 这种
+    未质检对照仍会记进账本。
+    """
+    path = ROOT / (item.get("dir") or "")
+    meta = path / "kernel-metadata.json"
+    name = "run.py"
+    if meta.is_file():
+        try:
+            name = json.loads(meta.read_text(encoding="utf-8")).get("code_file") or name
+        except json.JSONDecodeError:
+            return False
+    script = path / name
+    if not script.is_file():
+        return False
+    for line in script.read_text(encoding="utf-8").splitlines():
+        if "--qc-filter" in line.split("#", 1)[0]:
+            return True
+    return False
+
+
+def split_qc_ready(items):
+    """把就绪候选分成「脚本里带了 --qc-filter」和「没有，不能提交」。"""
+    ok, skipped = [], []
+    for item in items:
+        (ok if kernel_has_qc_filter(item) else skipped).append(item)
+    return ok, skipped
+
+
 def ready_queue_items(stera_exists=None, queue=None):
     """按 queue.json 顺序返回可以提交的固定候选。C2、C8 为 ready；C7/C9 要等 Stera 数据。"""
     if stera_exists is None:
@@ -339,12 +372,17 @@ for p in glob.glob(LAB + '/episodes/*.json'):
     e = json.load(open(p)); n = os.path.basename(p)[:-5]
     e['video_path'] = f'{SES}/depth/{n}/rgb.mp4'; json.dump(e, open(f'{run}/episodes/{n}.json', 'w'))
 os.environ['PYTHONPATH'] = f'{R}/scripts'; os.makedirs('/kaggle/tmp/cache', exist_ok=True)
+QC_FILES = sorted(set(glob.glob('/kaggle/input/**/qc/*/scorecards.json', recursive=True) + glob.glob('/kaggle/input/**/qc_*/scorecards.json', recursive=True)))
+QC = ('--qc-filter ' + ' '.join(QC_FILES)) if QC_FILES else ''
+print('qc scorecards:', QC_FILES, flush=True)
+if not QC_FILES:
+    print('QC 警告：这次提议没有找到 scorecards.json，训练不会过滤。固定候选必须在内核脚本里写 --qc-filter。', flush=True)
 for i, c in enumerate(CANDS):
     out = f'{W}/c{i}'; os.makedirs(out, exist_ok=True)
     if not os.path.exists(out + '/cache'): os.symlink('/kaggle/tmp/cache', out + '/cache')
     oa = f"--openaoe {UN}/{c['openaoe']}" if c.get('openaoe') else ''
     sh(f"cd {R} && python scripts/train_xhey.py --run {run} --out {out} --ablation --mixes {c['mix']} --mix {c['mix']} "
-       f"--xhey-rgb {XR} {oa} --seeds {c['seeds']} --steps {c['steps']} --pre-steps {c['pre_steps']} "
+       f"--xhey-rgb {XR} {oa} {QC} --seeds {c['seeds']} --steps {c['steps']} --pre-steps {c['pre_steps']} "
        f"--hidden {c['hidden']} --dropout {c['dropout']} --lr-scale {c['lr_scale']} --aug-noise {c['aug_noise']} --loss-move-cm {c.get('loss_move_cm', 0.0)} --no-final "
        f"> {W}/log_c{i}.txt 2>&1; tail -15 {W}/log_c{i}.txt")
     os.unlink(out + '/cache')
@@ -383,6 +421,8 @@ def submit_queue_item(item):
     path = ROOT / item["dir"]
     if not (path / "kernel-metadata.json").exists():
         raise SystemExit("固定候选 %s 缺少 %s" % (item.get("id"), path))
+    if not kernel_has_qc_filter(item):
+        raise SystemExit("固定候选 %s 的内核没有 --qc-filter，拒绝提交。已经在跑的结果仍会入账。" % item.get("id"))
     print("提交固定候选 %s → %s（先于提议器）" % (item.get("id"), item.get("slug")))
     print(kaggle("kernels", "push", "-p", str(path)).strip())
     set_queue_status(item["id"], "running")
@@ -659,10 +699,17 @@ def step(a):
     if a.no_launch:
         mirror_ledger_csv()
         return 0
-    ready = ready_queue_items()
+    ready, skipped = split_qc_ready(ready_queue_items())
+    if skipped:
+        print("跳过没有 --qc-filter 的就绪候选（新实验默认只训练质检通过的片段；已经在跑的内核照常入账）：",
+              ", ".join(i.get("id") or "?" for i in skipped))
     if ready:
         print("固定候选优先于提议器：", ", ".join(i["id"] for i in ready))
         submit_queue_item(ready[0])
+        return 0
+    if skipped:
+        print("队列里还有未质检的就绪候选，不交给提议器。")
+        mirror_ledger_csv()
         return 0
     it = max([r["iteration"] for r in load_ledger()] + [0]) + 1
     cands = propose(a.k)
@@ -681,12 +728,19 @@ def main():
     ap.add_argument("--metrics", default=None, help="ingest-c1 时用本地 metrics.json，不访问 Kaggle")
     a = ap.parse_args()
     if a.cmd == "propose":
-        ready = ready_queue_items()
+        ready, skipped = split_qc_ready(ready_queue_items())
+        if skipped:
+            print("没有 --qc-filter，不会提交（已在跑的仍入账）：")
+            for item in skipped:
+                print(" ", item["id"], item.get("slug"), item.get("status"))
         if ready:
             print("固定候选优先（提议器之前）：")
             for item in ready:
                 print(" ", item["id"], item.get("slug"), item.get("status"))
             print("队列清空后才会提议：")
+        elif skipped:
+            print("队列里还有未质检的就绪候选，提议器先不跑。")
+            return 0
         else:
             print("队列里没有可提交的固定候选，下面才是提议器：")
         for c in propose(a.k):

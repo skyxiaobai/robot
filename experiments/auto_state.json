@@ -1,6 +1,11 @@
 {
  "running": null,
- "queue_running": null,
+ "queue_running": {
+  "id": "C9",
+  "slug": "justinz2010/xhey-rsi-c9-stera-di",
+  "mix": "iphone+stera+di+xhey_rgb+aug",
+  "launched": "2026-10-15 21:24"
+ },
  "last_iteration": 2,
  "last_kernel": "justinz2010/xhey-auto-iter"
 }
