@@ -23,6 +23,8 @@
 
 机器可读：[`docs/xhey/ledger.csv`](xhey/ledger.csv)（由 `experiments/ledger.jsonl` 镜像，手写的 E/C 行保留）。日更图：[`docs/xhey/daily_progress.png`](xhey/daily_progress.png)。进度图：[`experiments/progress.png`](../experiments/progress.png)。
 
+**C10（2026-10-15）**：C10 = 按质检分段裁掉坏片段后的 iPhone 训练（`qc_segments: true`）；C10ctl = 同一套代码、不裁剪的对照（`qc_segments: false`）。两边用同一 3 段留出评测片段，内核都是 `justinz2010/xhey-rsi-c10-segtrim`。这是相机系结果（zero overall 9.78 cm），不能和上面世界系 11.03 cm 基线直接比。C10 整体 ADE 9.735 cm（比 zero −0.044）、手在动 12.599 cm（−0.084）；C10ctl 整体 9.759 cm（−0.020）、手在动 12.546 cm（−0.137）。两边的 95% 区间都在 0 以下。
+
 唯一循环驱动是 `scripts/xhey_auto_iter.py`：先收已完成的固定内核（含 `justinz2010/xhey-rsi-c1-moveloss`），再按 [`docs/xhey/queue.json`](xhey/queue.json) 提交就绪候选（C2、C8；Stera 数据存在时再加上 C7、C9），队列空了才让提议器挑新配置。正在跑的自动迭代是 **iteration 2**（`justinz2010/xhey-auto-iter` v2），有内核在跑时不抢占。
 
 ---
