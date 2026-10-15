@@ -1,77 +1,96 @@
 {
-  "note": "Justin 10-14 要求 DI / Stera 优先：顺序 C8 → C7 → C9 → C2。每日迭代按顺序取第一个 status=ready 的候选提交到 Kaggle（同时最多 1 个 GPU kernel；不抢占正在跑的）。跑完把结果写进 ledger.csv 并把 status 改成 done_*。",
-  "queue": [
-    {
-      "id": "C8",
-      "dir": "kaggle/rsi_c8",
-      "slug": "justinz2010/xhey-rsi-c8-di",
-      "status": "done_better_moving"
+ "note": "Justin 10-14 要求 DI / Stera 优先：顺序 C8 → C7 → C9 → C2。每日迭代按顺序取第一个 status=ready 的候选提交到 Kaggle（同时最多 1 个 GPU kernel；不抢占正在跑的）。跑完把结果写进 ledger.csv 并把 status 改成 done_*。",
+ "queue": [
+  {
+   "id": "C8",
+   "dir": "kaggle/rsi_c8",
+   "slug": "justinz2010/xhey-rsi-c8-di",
+   "status": "done_better_moving"
+  },
+  {
+   "id": "C7",
+   "dir": "kaggle/rsi_c7",
+   "slug": "justinz2010/xhey-rsi-c7-stera",
+   "status": "done_worse",
+   "stera_batches": {
+    "uploaded": [
+     "b01"
+    ],
+    "pending_local": [
+     "b02",
+     "b03",
+     "b04",
+     "b05"
+    ],
+    "note": "172 sessions (smallest-first, 39.8 GB raw annotations) converted in 5 batches; raw deleted. b01 = 59 sessions, 757 moving segs, 225,863 frames = 4.2 h. b02–b05 (+14.3 h) staged at /workspace/sd/stera_unified on the box; add as new dataset versions in later loop iterations."
+   }
+  },
+  {
+   "id": "C7b",
+   "name": "stera all batches, QC-passed only",
+   "dir": "kaggle/rsi_c7b",
+   "slug": "justinz2010/xhey-rsi-c7b-stera-all",
+   "status": "done_better_moving",
+   "mix": "iphone+stera+xhey_rgb+aug",
+   "protocol": "same as C7: seeds 3, pre-steps 6000, steps 3000, move-cm 5; --qc-filter on Stera b01-b05 + iPhone depth clips + xhey_rgb",
+   "qc": {
+    "stera_pass": {
+     "b01": "213/757",
+     "b02": "285/742",
+     "b03": "256/674",
+     "b04": "283/752",
+     "b05": "260/659"
     },
-    {
-      "id": "C7",
-      "dir": "kaggle/rsi_c7",
-      "slug": "justinz2010/xhey-rsi-c7-stera",
-      "status": "done_worse",
-      "stera_batches": {
-        "uploaded": [
-          "b01"
-        ],
-        "pending_local": [
-          "b02",
-          "b03",
-          "b04",
-          "b05"
-        ],
-        "note": "172 sessions (smallest-first, 39.8 GB raw annotations) converted in 5 batches; raw deleted. b01 = 59 sessions, 757 moving segs, 225,863 frames = 4.2 h. b02–b05 (+14.3 h) staged at /workspace/sd/stera_unified on the box; add as new dataset versions in later loop iterations."
-      }
-    },
-    {
-      "id": "C7b",
-      "name": "stera all batches, QC-passed only",
-      "dir": "kaggle/rsi_c7b",
-      "slug": "justinz2010/xhey-rsi-c7b-stera-all",
-      "status": "done_better_moving",
-      "mix": "iphone+stera+xhey_rgb+aug",
-      "protocol": "same as C7: seeds 3, pre-steps 6000, steps 3000, move-cm 5; --qc-filter on Stera b01-b05 + iPhone depth clips + xhey_rgb",
-      "qc": {
-        "stera_pass": {
-          "b01": "213/757",
-          "b02": "285/742",
-          "b03": "256/674",
-          "b04": "283/752",
-          "b05": "260/659"
-        },
-        "stera_kept_segments": 1297,
-        "stera_kept_hours": 7.14,
-        "stera_total_hours": 19.66,
-        "iphone_depth_pass": "2/3 (09-05_17-16 fails: jitter 4.07cm, 134 swaps)",
-        "xhey_rgb_pass": "14/17",
-        "eval": "LOO over the 2 passing depth clips (08-22_18-21, 08-24_21-18); not directly comparable to 3-clip numbers, compare vs zero within run"
-      },
-      "note": "Kernel v1 was pushed by mistake WITHOUT QC filter (all 3584 segs) and is running; treat as unfiltered control. QC version must be pushed when a GPU slot frees (Kaggle max 2 batch GPU sessions)."
-    },
-    {
-      "id": "C9",
-      "dir": "kaggle/rsi_c9",
-      "slug": "justinz2010/xhey-rsi-c9-stera-di",
-      "status": "ready",
-      "stera_batches": {
-        "uploaded": [
-          "b01",
-          "b02",
-          "b03",
-          "b04",
-          "b05"
-        ],
-        "pending_local": [],
-        "note": "dataset xhey-stera-pretrain now holds all 5 batches + qc/*/scorecards.json"
-      }
-    },
-    {
-      "id": "C2",
-      "dir": "kaggle/rsi_c2",
-      "slug": "justinz2010/xhey-rsi-c2-longft",
-      "status": "done_better_moving"
-    }
-  ]
+    "stera_kept_segments": 1297,
+    "stera_kept_hours": 7.14,
+    "stera_total_hours": 19.66,
+    "iphone_depth_pass": "2/3 (09-05_17-16 fails: jitter 4.07cm, 134 swaps)",
+    "xhey_rgb_pass": "14/17",
+    "eval": "LOO over the 2 passing depth clips (08-22_18-21, 08-24_21-18); not directly comparable to 3-clip numbers, compare vs zero within run"
+   },
+   "note": "Kernel v1 was pushed by mistake WITHOUT QC filter (all 3584 segs) and is running; treat as unfiltered control. QC version must be pushed when a GPU slot frees (Kaggle max 2 batch GPU sessions)."
+  },
+  {
+   "id": "C9",
+   "dir": "kaggle/rsi_c9",
+   "slug": "justinz2010/xhey-rsi-c9-stera-di",
+   "status": "ready",
+   "stera_batches": {
+    "uploaded": [
+     "b01",
+     "b02",
+     "b03",
+     "b04",
+     "b05"
+    ],
+    "pending_local": [],
+    "note": "dataset xhey-stera-pretrain now holds all 5 batches + qc/*/scorecards.json"
+   }
+  },
+  {
+   "id": "C2",
+   "dir": "kaggle/rsi_c2",
+   "slug": "justinz2010/xhey-rsi-c2-longft",
+   "status": "done_better_moving"
+  },
+  {
+   "id": "C11",
+   "name": "DI pretrain, camera frame (rerun of C8)",
+   "dir": "kaggle/rsi_c11",
+   "slug": "justinz2010/xhey-rsi-c11-di-cam",
+   "status": "running",
+   "mix": "iphone+di+xhey_rgb+aug",
+   "protocol": "same as C10: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c11 (iphone+di+xhey_rgb+aug, --qc-filter DI scorecards) then same-code control arm B xhey_c11ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c11/metrics.json; compare to xhey_c11ctl and zero within run.",
+   "qc": {
+    "di_pass": "25/25",
+    "frame": "DI converter camera_yup -> camera optical via common.frames.canonicalize_for_xhey; sanity_check ok 25/25 (wrist z>0, median dist 0.35 m)"
+   },
+   "datasets": [
+    "justinz2010/xhey-iphone-sessions",
+    "justinz2010/xhey-di-pretrain",
+    "justinz2010/xhey-c11-di-cam (scripts.tgz from main 6da410f + qc_di/scorecards.json)"
+   ],
+   "launched": "2026-10-15 14:40"
+  }
+ ]
 }
