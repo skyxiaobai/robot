@@ -33,3 +33,5 @@ iter002_c2,2026-10-14,iphone+openaoe_nano_cam+aug lr_scale=0.5 aug_noise=0.2,11.
 C7b,2026-10-15,iphone+stera+xhey_rgb+aug,7.2316,10.3784,0.0045,win_moving,justinz2010/xhey-rsi-c7b-stera-all
 C10,2026-10-15,iphone+xhey_rgb+aug,9.7346,12.5991,-0.0445,win_moving,justinz2010/xhey-rsi-c10-segtrim
 C10ctl,2026-10-15,iphone+xhey_rgb+aug,9.7589,12.5459,-0.0202,win_moving,justinz2010/xhey-rsi-c10-segtrim
+C11,2026-10-15,iphone+di+xhey_rgb+aug,9.7716,12.5513,-0.0075,win_moving,justinz2010/xhey-rsi-c11-di-cam
+C11ctl,2026-10-15,iphone+xhey_rgb+aug,9.7589,12.5459,-0.0202,win_moving,justinz2010/xhey-rsi-c11-di-cam

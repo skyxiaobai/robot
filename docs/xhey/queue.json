@@ -78,7 +78,7 @@
    "name": "DI pretrain, camera frame (rerun of C8)",
    "dir": "kaggle/rsi_c11",
    "slug": "justinz2010/xhey-rsi-c11-di-cam",
-   "status": "running",
+   "status": "done_no_gain_vs_ctl",
    "mix": "iphone+di+xhey_rgb+aug",
    "protocol": "same as C10: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c11 (iphone+di+xhey_rgb+aug, --qc-filter DI scorecards) then same-code control arm B xhey_c11ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c11/metrics.json; compare to xhey_c11ctl and zero within run.",
    "qc": {
@@ -90,7 +90,15 @@
     "justinz2010/xhey-di-pretrain",
     "justinz2010/xhey-c11-di-cam (scripts.tgz from main 6da410f + qc_di/scorecards.json)"
    ],
-   "launched": "2026-10-15 14:40"
+   "launched": "2026-10-15 14:40",
+   "result": {
+    "C11_overall_ade_cm": 9.772,
+    "C11_moving_minus_zero_cm": -0.132,
+    "C11ctl_overall_ade_cm": 9.759,
+    "C11ctl_moving_minus_zero_cm": -0.137,
+    "zero_overall_ade_cm": 9.779,
+    "note": "DI (camera frame) did not beat the no-DI control; ingested 2026-10-15 as C11 / C11ctl, charts in experiments/report/C11_vs_ctl"
+   }
   }
  ]
 }
