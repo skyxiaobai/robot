@@ -1,11 +1,6 @@
 {
  "running": null,
- "queue_running": {
-  "id": "C11",
-  "slug": "justinz2010/xhey-rsi-c11-di-cam",
-  "mix": "iphone+di+xhey_rgb+aug",
-  "launched": "2026-10-15 14:40"
- },
+ "queue_running": null,
  "last_iteration": 2,
  "last_kernel": "justinz2010/xhey-auto-iter"
 }

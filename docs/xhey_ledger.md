@@ -25,6 +25,8 @@
 
 **C10（2026-10-15）**：C10 = 按质检分段裁掉坏片段后的 iPhone 训练（`qc_segments: true`）；C10ctl = 同一套代码、不裁剪的对照（`qc_segments: false`）。两边用同一 3 段留出评测片段，内核都是 `justinz2010/xhey-rsi-c10-segtrim`。这是相机系结果（zero overall 9.78 cm），不能和上面世界系 11.03 cm 基线直接比。C10 整体 ADE 9.735 cm（比 zero −0.044）、手在动 12.599 cm（−0.084）；C10ctl 整体 9.759 cm（−0.020）、手在动 12.546 cm（−0.137）。两边的 95% 区间都在 0 以下。
 
+**C11（2026-10-15）**：C11 = 加 DynamicIntelligence（DI，已转相机坐标系、质检 25/25 通过）做预训练（`iphone+di+xhey_rgb+aug`）；C11ctl = 同一内核、同一套代码、不加 DI 的对照（`iphone+xhey_rgb+aug`）。两边用同一 3 段留出评测片段，内核 `justinz2010/xhey-rsi-c11-di-cam`，3 个种子。C11 整体 ADE 9.772 cm（比 zero −0.008，95% 区间 [−0.015, −0.000]）、手在动 12.551 cm（−0.132，[−0.141, −0.122]）；C11ctl 整体 9.759 cm（−0.020，[−0.027, −0.014]）、手在动 12.546 cm（−0.137，[−0.146, −0.129]）。结论：加 DI 没有比不加更好（整体差 +0.013 cm、手在动差 +0.005 cm，都略差），两边都只比「猜手不动」好约 1%。对照图：[`experiments/report/C11_vs_ctl/`](../experiments/report/C11_vs_ctl/)。
+
 唯一循环驱动是 `scripts/xhey_auto_iter.py`：先收已完成的固定内核（含 `justinz2010/xhey-rsi-c1-moveloss`），再按 [`docs/xhey/queue.json`](xhey/queue.json) 提交就绪候选（C2、C8；Stera 数据存在时再加上 C7、C9），队列空了才让提议器挑新配置。正在跑的自动迭代是 **iteration 2**（`justinz2010/xhey-auto-iter` v2），有内核在跑时不抢占。
 
 ---
