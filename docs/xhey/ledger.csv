@@ -30,3 +30,4 @@ NOTE_pr55_camera_frame,2026-10-14,iPhone clips canonicalized to camera frame; 11
 iter002_c0,2026-10-14,iphone+openaoe_nano_cam+aug lr_scale=2.0 aug_noise=0.2,11.1333,14.0818,0.1078,done_worse,justinz2010/xhey-auto-iter
 iter002_c1,2026-10-14,iphone+openaoe_nano_cam+aug lr_scale=2.0 aug_noise=0.05,11.1428,14.0863,0.1173,done_worse,justinz2010/xhey-auto-iter
 iter002_c2,2026-10-14,iphone+openaoe_nano_cam+aug lr_scale=0.5 aug_noise=0.2,11.0536,14.0374,0.0281,win_moving,justinz2010/xhey-auto-iter
+C7b,2026-10-15,iphone+stera+xhey_rgb+aug,7.2316,10.3784,0.0045,win_moving,justinz2010/xhey-rsi-c7b-stera-all

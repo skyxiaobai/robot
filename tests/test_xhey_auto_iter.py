@@ -321,6 +321,110 @@ class ManyQueueRunning(unittest.TestCase):
         self.assertEqual(ids, ["C7", "C8"])
 
 
+class QueueRunningMix(unittest.TestCase):
+    """C7b 不在 QUEUE_CONFIG。正在跑的规格必须带着自己的 mix，不能记成 iphone 对照组。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.ledger = root / "ledger.jsonl"
+        self.csv = root / "ledger.csv"
+        self.state = root / "auto_state.json"
+        self.queue = root / "queue.json"
+        self.chart = root / "progress.png"
+        self.csv.write_text("id,date,mix,overall_ade,moving_ade,vs_zero,status,source\r\n", encoding="utf-8")
+        self.patches = [
+            patch.object(ai, "LEDGER", self.ledger),
+            patch.object(ai, "CSV_PATH", self.csv),
+            patch.object(ai, "STATE", self.state),
+            patch.object(ai, "QUEUE_PATH", self.queue),
+            patch.object(ai, "CHART", self.chart),
+            patch.object(ai, "EXP", root),
+        ]
+        for p in self.patches:
+            p.start()
+        self.stera = "iphone+stera+xhey_rgb+aug"
+        self.control = "iphone+xhey_rgb+aug"
+        self.slug = "justinz2010/xhey-rsi-c7b-stera-all"
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tmp.cleanup()
+
+    def _metrics(self):
+        def arm(overall, delta, moving, moving_delta):
+            return {
+                "ade_cm_pooled": overall, "ade_minus_zero_cm": delta,
+                "ade_minus_zero_ci95": [delta - 0.004, delta + 0.004],
+                "moving_ade_cm": moving, "moving_zero_ade_cm": moving - moving_delta,
+                "moving_minus_zero_cm": moving_delta,
+                "moving_minus_zero_ci95": [moving_delta - 0.006, moving_delta + 0.006],
+                "ade_cm_seed_std": 0.01,
+            }
+        return {"results": {
+            "zero": {"ade_cm_pooled": 7.227108386200057},
+            self.control: arm(7.221, -0.006, 10.364, -0.068),
+            self.stera: arm(7.232, 0.0045, 10.378, -0.054),
+        }}
+
+    def test_queue_running_c7b_records_its_mix_not_iphone_control(self):
+        q = _queue()
+        q["queue"].append({
+            "id": "C7b", "dir": "kaggle/rsi_c7b", "slug": self.slug,
+            "status": "running", "mix": self.stera,
+        })
+        self.queue.write_text(json.dumps(q), encoding="utf-8")
+        # 和线上一样：queue_running 当时没写 mix，配比在 queue.json 上。
+        self.state.write_text(json.dumps({
+            "running": None,
+            "queue_running": {"id": "C7b", "slug": self.slug, "launched": "2026-10-15 09:28"},
+        }), encoding="utf-8")
+        metrics = self._metrics()
+
+        def kaggle(*args, check=True):
+            if args[:2] == ("kernels", "output") and args[2] == self.slug:
+                dest = Path(args[4])
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+            return ""
+
+        def status(slug=None):
+            return "COMPLETE" if slug == self.slug else "UNKNOWN:none"
+
+        with patch.object(ai, "kernel_status", side_effect=status), \
+                patch.object(ai, "kaggle", side_effect=kaggle), \
+                patch.object(ai, "chart"), \
+                patch.object(ai, "report_charts"), \
+                patch.object(ai, "submit_queue_item"), \
+                patch.object(ai, "launch", side_effect=AssertionError("proposer must wait")):
+            rc = ai.step(type("A", (), {"no_launch": True, "k": 3})())
+        self.assertEqual(rc, 0)
+        rows = {r["id"]: r for r in ai.load_ledger()}
+        self.assertEqual(rows["C7b"]["config"]["mix"], self.stera)
+        self.assertAlmostEqual(rows["C7b"]["delta_moving_cm"], -0.054)
+        self.assertAlmostEqual(rows["C7b"]["moving_ade_cm"], 10.378)
+        self.assertNotAlmostEqual(rows["C7b"]["delta_moving_cm"], -0.068)
+        csv = self.csv.read_text(encoding="utf-8")
+        self.assertIn("iphone+stera+xhey_rgb+aug,7.2320,10.3780,0.0045,", csv)
+        self.assertNotIn("10.3640", csv)
+
+    def test_submit_queue_item_stores_mix_on_queue_running(self):
+        item = {"id": "C7b", "dir": "kaggle/rsi_c7b", "slug": self.slug,
+                "status": "ready", "mix": self.stera}
+        self.queue.write_text(json.dumps({"queue": [item]}), encoding="utf-8")
+        self.state.write_text(json.dumps({"running": None}), encoding="utf-8")
+        with patch.object(ai, "kaggle", return_value="pushed"):
+            ai.submit_queue_item(dict(item))
+        saved = json.loads(self.state.read_text(encoding="utf-8"))
+        self.assertEqual(saved["queue_running"]["id"], "C7b")
+        self.assertEqual(saved["queue_running"]["slug"], self.slug)
+        self.assertEqual(saved["queue_running"]["mix"], self.stera)
+        queued = json.loads(self.queue.read_text(encoding="utf-8"))["queue"][0]
+        self.assertEqual(queued["status"], "running")
+        self.assertEqual(queued["mix"], self.stera)
+
+
 class TrainFlags(unittest.TestCase):
     def test_stera_di_and_tune_flags(self):
         src = (ROOT / "scripts" / "train_xhey.py").read_text(encoding="utf-8")
