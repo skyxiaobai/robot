@@ -1,10 +1,6 @@
 {
  "running": null,
- "queue_running": {
-  "id": "C7b",
-  "slug": "justinz2010/xhey-rsi-c7b-stera-all",
-  "launched": "2026-10-15 09:28"
- },
+ "queue_running": null,
  "last_iteration": 2,
  "last_kernel": "justinz2010/xhey-auto-iter"
 }

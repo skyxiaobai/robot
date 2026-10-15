@@ -385,8 +385,10 @@ def submit_queue_item(item):
     print("提交固定候选 %s → %s（先于提议器）" % (item.get("id"), item.get("slug")))
     print(kaggle("kernels", "push", "-p", str(path)).strip())
     set_queue_status(item["id"], "running")
+    spec = _spec_from_queue_item(item)
     state = load_state()
     state["queue_running"] = {"id": item.get("id"), "slug": item.get("slug"),
+                              "mix": spec["mix"],
                               "launched": datetime.now().strftime("%Y-%m-%d %H:%M")}
     save_state(state)
 
@@ -489,9 +491,21 @@ def queue_running_items(state=None):
 
 
 def _spec_from_queue_item(item):
+    """入账用的规格。mix 以这条正在跑的记录为准，否则用 queue.json / QUEUE_CONFIG。
+
+    C7b 不在 QUEUE_CONFIG 里。丢掉 mix 时会落到默认的 iphone+xhey_rgb+aug，
+    把 Stera 臂记成 iphone 对照组。
+    """
     cfg = dict(DEFAULT, **QUEUE_CONFIG.get(item.get("id"), {}))
+    if not item.get("mix") and not (item.get("config") or {}).get("mix"):
+        for queued in load_queue().get("queue", []):
+            if queued.get("id") == item.get("id") and queued is not item and queued.get("mix"):
+                cfg["mix"] = queued["mix"]
+                break
     if item.get("config"):
         cfg.update(item["config"])
+    if item.get("mix"):
+        cfg["mix"] = item["mix"]
     return {"id": item.get("id"), "slug": item.get("slug"), "mix": cfg["mix"], "config": cfg}
 
 

@@ -30,7 +30,7 @@
       "name": "stera all batches, QC-passed only",
       "dir": "kaggle/rsi_c7b",
       "slug": "justinz2010/xhey-rsi-c7b-stera-all",
-      "status": "running",
+      "status": "done_better_moving",
       "mix": "iphone+stera+xhey_rgb+aug",
       "protocol": "same as C7: seeds 3, pre-steps 6000, steps 3000, move-cm 5; --qc-filter on Stera b01-b05 + iPhone depth clips + xhey_rgb",
       "qc": {
