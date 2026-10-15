@@ -88,9 +88,10 @@
    "datasets": [
     "justinz2010/xhey-iphone-sessions",
     "justinz2010/xhey-di-pretrain",
-    "justinz2010/xhey-c11-di-cam (scripts.tgz from main 6da410f + qc_di/scorecards.json)"
+    "justinz2010/xhey-c11-di-cam (scripts.tgz from main 6da410f; v1 had no scorecards)"
    ],
-   "launched": "2026-10-15 14:40"
+   "launched": "2026-10-15 14:40",
+   "note": "v1 failed at once: dataset justinz2010/xhey-c11-di-cam contained only scripts.tgz (no scorecards), find() returned None, and the kernel passed the literal path None to --qc-filter (FileNotFoundError on the DI arm). Control arm xhey_c11ctl finished (overall ~9.76, zero ~9.78). v2 is rerunning on Kaggle: https://www.kaggle.com/code/justinz2010/xhey-rsi-c11-di-cam"
   }
  ]
 }
