@@ -183,6 +183,124 @@ def load_filter(path):
     return {c["clip"] for c in cards if not c["pass"]}
 
 
+# ---------------- 分段模式（--segments）：按小窗口打分，剪掉坏的那几截，好的留下 ----------------
+SEG_S = 3.0  # 默认 3 s 一窗：15 fps 下 45 帧 ≈ 2.8 个 16 步预测块，块能完整落在一两个窗口里
+
+
+def _frame_signals(ep, move_cm=5.0, max_gap_s=0.3):
+    """整段一次性算好逐帧信号，窗口打分只做切片统计（和整段规则同源）。"""
+    n = int(ep["num_frames"]); fps = float(ep.get("fps") or 15.0)
+    e2 = copy.deepcopy(ep)
+    fixed = e2["hand_fix"] if isinstance(e2.get("hand_fix"), dict) else fix_episode_hands(e2, fps, max_gap_s=max_gap_s)
+    det = np.zeros(n, bool); resid = np.full((2, n), np.nan); moving = np.zeros(n, bool)
+    gap = np.zeros((2, n), bool); one_s = max(1, int(round(fps))); gmin = max(1, int(round(max_gap_s * fps)))
+    for k, side in enumerate(SIDES):
+        ok, W = _good(e2["hands"][side], n, 0.5)
+        det |= ok
+        Wg = np.where(ok[:, None], W, np.nan)
+        if n >= 3:
+            resid[k, 1:-1] = np.linalg.norm(Wg[2:] - 2 * Wg[1:-1] + Wg[:-2], axis=1) * (15.0 / fps) ** 2
+        if n > one_s:
+            mv = np.linalg.norm(Wg[one_s:] - Wg[:-one_s], axis=1)
+            moving[:-one_s] |= np.nan_to_num(mv, nan=0.0) > move_cm / 100.0
+        i = 0
+        while i < n:  # 长缺口：连续丢手超过 max_gap_s
+            if not ok[i]:
+                j = i
+                while j < n and not ok[j]:
+                    j += 1
+                if j - i > gmin:
+                    gap[k, i:j] = True
+                i = j
+            else:
+                i += 1
+    swap = np.zeros(n, int)
+    for f in fixed.get("swap_frames") or []:
+        if 0 <= int(f) < n:
+            swap[int(f)] += 1
+    dep_ok = np.zeros(n, int); dep_all = np.zeros(n, int)
+    if _has_depth_status(ep):
+        for side in SIDES:
+            for i, s in enumerate(ep["iphone"]["per_frame"][side][:n]):
+                t = "" if s is None else str(s).lower()
+                if t == "ok" or t in DEPTH_BAD:
+                    dep_all[i] += 1; dep_ok[i] += int(t == "ok")
+    return {"n": n, "fps": fps, "det": det, "resid": resid, "moving": moving, "gap": gap, "swap": swap,
+            "dep_ok": dep_ok, "dep_all": dep_all}
+
+
+def window_fails(sig, a, b, rules=RULES, clip_still=False, frame_ok=True):
+    """窗口 [a, b) 的 7 条规则（窗口版）。手不动只在整段都不动时才判失败；换手按窗口内次数：
+    超过 max(1, 每分钟上限×窗口分钟) 才判失败（3 s 窗即 ≥2 次；单次已被修正的认反放过）。"""
+    f = []
+    det = sig["det"][a:b]
+    if det.mean() < rules["detect_rate_min"]:
+        f.append("认手率低")
+    if sig["gap"][:, a:b].mean() > rules["gap_ratio_max"]:
+        f.append("长缺口多")
+    r = sig["resid"][:, a:b]; r = r[np.isfinite(r)]
+    if len(r) < 3 or float(np.median(r)) * 100 > rules["jitter_cm_max"]:
+        if "认手率低" not in f:
+            f.append("抖动大")
+    if clip_still:
+        f.append("手几乎不动")
+    win_min = (b - a) / sig["fps"] / 60.0
+    if sig["swap"][a:b].sum() > max(1.0, rules["swaps_per_min_max"] * win_min):
+        f.append("左右手常认反")
+    da = sig["dep_all"][a:b].sum()
+    if da and sig["dep_ok"][a:b].sum() / da < rules["depth_valid_min"]:
+        f.append("深度有效率低")
+    if not frame_ok:
+        f.append("坐标轴/单位不对")
+    return f
+
+
+def segment_episode(ep, name="", seg_s=SEG_S, move_cm=5.0, max_gap_s=0.3, rules=RULES):
+    """整段切成 seg_s 秒的窗口逐个打分；连续合格的窗口合并成保留区间 spans=[[起, 止), ...]（原生帧号）。"""
+    sig = _frame_signals(ep, move_cm, max_gap_s)
+    n, fps = sig["n"], sig["fps"]
+    w = max(2, int(round(seg_s * fps)))
+    edges = list(range(0, n, w)) + [n]
+    if len(edges) > 2 and edges[-1] - edges[-2] < w // 2:  # 尾巴太短并进上一窗
+        edges.pop(-2)
+    clip_still = float(sig["moving"].mean()) < rules["move_frac_min"]
+    frame_ok = bool(F.sanity_check(ep)["ok"])
+    windows, spans = [], []
+    for a, b in zip(edges[:-1], edges[1:]):
+        fails = window_fails(sig, a, b, rules, clip_still, frame_ok)
+        windows.append({"start": a, "end": b, "fails": fails})
+        if not fails:
+            if spans and spans[-1][1] == a:
+                spans[-1][1] = b
+            else:
+                spans.append([a, b])
+    kept = sum(b - a for a, b in spans)
+    return {"clip": name or ep.get("episode_id"), "source": ep.get("source"), "frames": n, "fps": round(fps, 3),
+            "seconds": round(n / fps, 2), "window_frames": w, "spans": spans, "windows": windows,
+            "kept_frames": int(kept), "kept_seconds": round(kept / fps, 2), "kept_frac": round(kept / max(n, 1), 4)}
+
+
+def load_segments(paths):
+    """--qc-segments：segments.json（可多个）→ {clip: {"fps", "frames", "spans"}}。"""
+    out = {}
+    for p in paths:
+        data = json.loads(Path(p).read_text())
+        for c in (data["clips"] if isinstance(data, dict) else data):
+            out[str(c["clip"])] = {"fps": float(c["fps"]), "frames": int(c["frames"]), "spans": c["spans"]}
+    return out
+
+
+def segment_frame_mask(entry, n_frames=None, step=1):
+    """保留区间 → 逐帧布尔掩码；step>1 时对应下采样后的帧（第 i 帧 = 原第 i*step 帧）。"""
+    m = np.zeros(int(entry["frames"]), bool)
+    for a, b in entry["spans"]:
+        m[int(a):int(b)] = True
+    m = m[::step]
+    if n_frames is not None:
+        m = np.concatenate([m, np.zeros(max(0, n_frames - len(m)), bool)])[:n_frames]
+    return m
+
+
 def main():
     from egodata.schema import iter_episode_paths
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -192,13 +310,16 @@ def main():
     ap.add_argument("--move-cm", type=float, default=5.0)
     ap.add_argument("--max-gap-s", type=float, default=0.3)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--segments", action="store_true",
+                    help="另外按小窗口打分，输出 segments.json（每段保留区间），训练用 --qc-segments")
+    ap.add_argument("--seg-s", type=float, default=SEG_S, help="分段模式窗口长度（秒），默认 3")
     for k, v in RULES.items():
         ap.add_argument("--" + k.replace("_", "-"), type=float, default=v)
     a = ap.parse_args()
     rules = {k: getattr(a, k) for k in RULES}
     out = Path(a.out); (out / "clips").mkdir(parents=True, exist_ok=True)
     paths = [p for root in a.episodes for p in iter_episode_paths(root)][: a.limit]
-    cards = []
+    cards, segs = [], []
     for p in paths:
         ep = json.loads(p.read_text())
         if "hands" not in ep:
@@ -206,6 +327,10 @@ def main():
         c = score_episode(ep, p.stem, a.move_cm, a.max_gap_s, rules)
         (out / "clips" / (p.stem + ".json")).write_text(json.dumps(c, ensure_ascii=False, indent=1))
         cards.append(c); print(one_line(c), flush=True)
+        if a.segments:
+            sg = segment_episode(ep, p.stem, a.seg_s, a.move_cm, a.max_gap_s, rules)
+            sg["whole_clip_pass"] = c["pass"]; segs.append(sg)
+            print("   分段：保留 %.0f%%（%d 个区间）" % (100 * sg["kept_frac"], len(sg["spans"])), flush=True)
     summ = {"rules": rules, "n": len(cards), "pass": sum(c["pass"] for c in cards), "cards": cards}
     for k in ("move_frac", "depth_valid", "detect_rate", "jitter_cm", "gap_ratio", "swaps"):
         v = [c[k] for c in cards if c[k] is not None]
@@ -220,6 +345,15 @@ def main():
     if cards:
         show = cards if len(cards) <= 40 else sorted(cards, key=lambda c: c["pass"])[:20] + [c for c in cards if c["pass"]][:20]
         chart(show, out / "scorecard.png", a.title)
+    if a.segments:
+        tot = sum(g["seconds"] for g in segs)
+        seg_summ = {"seg_s": a.seg_s, "rules": rules, "n": len(segs), "total_hours": round(tot / 3600, 4),
+                    "segment_hours": round(sum(g["kept_seconds"] for g in segs) / 3600, 4),
+                    "whole_clip_hours": round(sum(g["seconds"] for g in segs if g["whole_clip_pass"]) / 3600, 4),
+                    "clips": segs}
+        (out / "segments.json").write_text(json.dumps(seg_summ, ensure_ascii=False, indent=1))
+        print("分段保留 %.3f h / 整段过滤 %.3f h / 不过滤 %.3f h" % (
+            seg_summ["segment_hours"], seg_summ["whole_clip_hours"], seg_summ["total_hours"]), flush=True)
     print("pass %d/%d" % (summ["pass"], len(cards)), json.dumps(fails, ensure_ascii=False), flush=True)
 
 

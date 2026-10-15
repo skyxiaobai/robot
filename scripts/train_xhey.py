@@ -34,6 +34,34 @@ K_HIST = 8
 QC_EXCLUDE = set()  # scorecard failures
 QC_SCORED = set()   # clips named by the supplied scorecards
 QC_STRICT = False   # --strict-qc: missing-from-scorecard is an error; default warns and keeps
+SEG_KEEP = {}       # --qc-segments: clip -> {"fps","frames","spans"}；训练块必须整块落在保留区间里（测试段不剪）
+
+
+def seg_row_ok(eps, names, kind):
+    """每个动作行（帧 f→f+1）是否落在保留区间里。没有 --qc-segments 时全 True；成绩单没覆盖的段保留并警告。"""
+    from qc_scorecard import segment_frame_mask
+    out, miss = [], []
+    for ep, name in zip(eps, names):
+        n = int(ep["num_frames"]); entry = SEG_KEEP.get(name)
+        if entry is None:
+            if SEG_KEEP:
+                miss.append(name)
+            out.append(np.ones(n - 1, bool)); continue
+        step = max(1, int(round(entry["fps"] / float(ep.get("fps") or entry["fps"]))))
+        m = segment_frame_mask(entry, n, step)
+        out.append(m[:-1] & m[1:])
+    if miss:
+        print("QC 分段警告 %s：%d 段不在分段成绩单里，整段保留：%s" % (kind, len(miss), miss[:10]), flush=True)
+    return np.concatenate(out) if out else np.zeros(0, bool)
+
+
+def seg_chunk_filter(d, starts):
+    """只留整块（H 个动作行）都在保留区间里的训练块起点。"""
+    ok = d.get("seg_ok")
+    if ok is None or not len(starts):
+        return starts
+    bad = np.concatenate(([0], np.cumsum(~ok.astype(bool))))
+    return starts[(bad[starts + H] - bad[starts]) == 0]
 
 
 def _qc_keep(paths, kind):
@@ -144,6 +172,7 @@ def finish(d, img):
 def build_iphone(run, cache_dir):
     eps, names = load_episodes(run)
     d = ht.to_arrays(eps)
+    d["seg_ok"] = seg_row_ok(eps, names, "iphone")
     img = np.vstack([image_features(e, n, cache_dir)[: e["num_frames"] - 1] for e, n in zip(eps, names)])
     return finish(d, img), eps, names
 
@@ -185,15 +214,19 @@ def build_external(kind, root, cache_dir):
     """开源数据 → 和 iPhone 同样 140 维状态 / 14 维动作，30 fps 下采样到 15 fps。没有画面特征（has_image=0）。"""
     paths = _qc_keep(iter_episode_paths(root), kind)
     signature = json.dumps([(str(p.resolve()), p.stat().st_size, p.stat().st_mtime_ns) for p in paths])
+    if SEG_KEEP:  # 分段成绩单变了缓存就失效
+        signature += json.dumps({p.stem: SEG_KEEP.get(p.stem) for p in paths}, sort_keys=True)
     f = Path(cache_dir) / ("%s_arrays_p0v1.npz" % kind)
     if f.exists():
         with np.load(f) as cached:
             if "metric_checked" in cached and bool(cached["metric_checked"]) and (
                 "source_signature" in cached and str(cached["source_signature"]) == signature
             ):
-                return finish({k: cached[k] for k in ("state", "action", "valid", "episode", "index")}, None)
+                d = {k: cached[k] for k in ("state", "action", "valid", "episode", "index")}
+                d["seg_ok"] = cached["seg_ok"] if "seg_ok" in cached else np.ones(len(d["state"]), bool)
+                return finish(d, None)
         print("重建尺度未校验或源文件已变更的缓存", f, flush=True)
-    eps = []
+    eps, kept_names = [], []
     for p in paths:
         ep = json.loads(p.read_text())
         pose = ep.get("hand_pose") or {}
@@ -205,10 +238,11 @@ def build_external(kind, root, cache_dir):
             ep = subsample_episode(ep, 2)
         if ep["num_frames"] > H + 1:
             from common.frames import canonicalize_for_xhey
-            eps.append(canonicalize_for_xhey(ep))
+            eps.append(canonicalize_for_xhey(ep)); kept_names.append(p.stem)
     if not eps:
         raise SystemExit("找不到 %s 数据：%s（见 docs/xhey_model.md 的准备步骤）" % (kind, root))
     d = ht.to_arrays(eps)
+    d["seg_ok"] = seg_row_ok(eps, kept_names, kind)
     f.parent.mkdir(parents=True, exist_ok=True); np.savez(f, **d, metric_checked=True, source_signature=signature)
     print(kind, "episodes", len(eps), "rows", len(d["state"]), "valid", round(float(d["valid"].mean()), 3), flush=True)
     return finish(d, None)
@@ -393,7 +427,7 @@ TUNE = {"hidden": 512, "dropout": 0.2, "lr_scale": 1.0, "aug_noise": 0.1}
 
 def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True, loss_move_cm=0.0):
     """在 iPhone 训练片段（+ 选中的开源/合成数据）上训一个 XHEY。返回模型。"""
-    tr_all = ht.chunks(iph, train_eps)
+    tr_all = seg_chunk_filter(iph, ht.chunks(iph, train_eps))  # 只剪训练块；测试段在 main 里不动
     tr, va = split_inner(iph, tr_all)
     aug_train = tr.copy()
     tr, va = useful(iph, tr), useful(iph, va)
@@ -414,7 +448,7 @@ def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True, lo
     pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone", "xhey_rgb", "openaoe", "stera", "di")
     pre = [ext[k] for k in pre_keys if k in mix and k in ext]
     if pre:
-        P = concat(pre); ps = useful(P, ev.chunk_starts(P["episode"], H, 1))
+        P = concat(pre); ps = useful(P, seg_chunk_filter(P, ev.chunk_starts(P["episode"], H, 1)))
         Xp, Yp, Vp = xyv(P, ps, use_img)
         m.curves = {"pretrain": m.fit(Xp, Yp, Vp, Xv, Yv, Vv, steps=pre_steps, lr=3e-4 * TUNE["lr_scale"])}
     else:
@@ -593,6 +627,9 @@ def main():
     ap.add_argument("--strict-qc", action="store_true",
                     help="和 --qc-filter 一起用：成绩单里没有的段直接报错。"
                          "默认只警告并保留（Open-AoE、Stera b02–b05 等还没有成绩单）")
+    ap.add_argument("--qc-segments", nargs="*", default=None,
+                    help="可选。qc_scorecard.py --segments 输出的 segments.json（可多个）：训练块只取整块落在"
+                         "保留区间里的；留一段评测的测试段不剪（和旧基线可比）")
     ap.add_argument("--seeds", type=int, default=3, help="每个配比训练几个随机种子")
     ap.add_argument("--steps", type=int, default=3000, help="iPhone（微调）阶段最大步数，按内部验证集挑最佳步")
     ap.add_argument("--pre-steps", type=int, default=6000, help="开源数据预训练步数")
@@ -608,6 +645,11 @@ def main():
             QC_EXCLUDE.update(load_filter(f))
             QC_SCORED.update(load_scored(f))
         print("QC 过滤：共 %d 段不合格，训练时排除" % len(QC_EXCLUDE), flush=True)
+    SEG_KEEP.clear()
+    if a.qc_segments:
+        from qc_scorecard import load_segments
+        SEG_KEEP.update(load_segments(a.qc_segments))
+        print("QC 分段：%d 段有保留区间，训练块只取区间内" % len(SEG_KEEP), flush=True)
     TUNE.update(hidden=a.hidden, dropout=a.dropout, lr_scale=a.lr_scale, aug_noise=a.aug_noise)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
@@ -660,6 +702,8 @@ def main():
         report = {"model": "XHEY", "run": a.run, "clips": names, "n_rows": int(len(iph["state"])),
                   "valid_frac": float(iph["valid"].mean()), "fps": 15, "horizon": H, "k_hist": K_HIST,
                   "seeds": a.seeds, "steps": a.steps, "pre_steps": a.pre_steps, "loss_move_cm": a.loss_move_cm, "mixes": mixes,
+                  "qc_segments": bool(SEG_KEEP), "seg_kept_rows": {"iphone": int(iph["seg_ok"].sum()),
+                  **{k: int(v["seg_ok"].sum()) for k, v in ext.items() if "seg_ok" in v}},
                   "external_rows": {k: int(len(v["state"])) for k, v in ext.items()}, "results": results,
                   "curves": curves, "examples": examples}
         (out / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
