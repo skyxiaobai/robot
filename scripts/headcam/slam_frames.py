@@ -10,6 +10,7 @@
 
 不写精度。没有逐帧激光深度时不编 ``iphone.per_frame``。
 """
+import json
 import sys
 from pathlib import Path
 
@@ -276,3 +277,111 @@ def _ensure_tag(episode, convention):
     tag(episode, convention, gravity_aligned=convention == WORLD_YUP, source_frame=source)
     episode["frame_convention"]["camera_axes"] = "cv"
     episode["frame_convention"]["up_axis_verified"] = False
+
+
+def _world_fill_counts(summary):
+    filled = missing = 0
+    hands = summary.get("world_hands") if isinstance(summary, dict) else None
+    left = hands.get("left") if isinstance(hands, dict) else None
+    if not isinstance(left, list):
+        return filled, missing
+    for item in left:
+        if item is None:
+            missing += 1
+        else:
+            filled += 1
+    return filled, missing
+
+
+def check_camera_episode(episode, slam):
+    """对一份相机系 episode 做 ok 帧拼接，并跑 ``frames.sanity_check``。
+
+    返回 ``(text, exit_code, episode)``。``accuracy`` 不从 slam 状态里抄，
+    打印行固定是 ``accuracy=unmeasured``。覆盖不全时退出码仍看轴向检查，
+    不看有没有世界点。
+    """
+    from common.frames import convention_of, sanity_check
+
+    if not isinstance(episode, dict):
+        raise ValueError("episode 必须是对象")
+    apply_ok_frame_world(episode, slam)
+    sanity = sanity_check(episode)
+    block = episode.get("hand_pose", {}).get("slam") or {}
+    statuses = block.get("pose_status") or []
+    if not isinstance(statuses, list):
+        statuses = []
+    filled, missing = _world_fill_counts(block)
+    lines = [
+        "frames=%d" % len(statuses),
+        "ok=%d" % statuses.count(STATUS_OK),
+        "tracking_lost=%d" % statuses.count("tracking_lost"),
+        "pose_missing=%d" % statuses.count("pose_missing"),
+        "world_points_scope=%s" % block.get("world_points_scope"),
+        "frame_convention=%s" % convention_of(episode),
+        "world_hands_filled=%d" % filled,
+        "world_hands_missing=%d" % missing,
+        "sanity_ok=%s" % str(bool(sanity.get("ok"))).lower(),
+        "accuracy=unmeasured",
+    ]
+    flags = sanity.get("flags") or []
+    if flags:
+        lines.append("sanity_flags=%s" % "; ".join(str(flag) for flag in flags))
+    return "\n".join(lines) + "\n", (0 if sanity.get("ok") else 1), episode
+
+
+def _load_json(path):
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("需要 JSON 对象：%s" % path)
+    return data
+
+
+def _slam_from_args(args):
+    if args.slam_status:
+        slam = _load_json(args.slam_status)
+        if not isinstance(slam.get("frames"), list):
+            raise ValueError("slam_status 缺少 frames：%s" % args.slam_status)
+        return slam
+    if not args.session:
+        raise ValueError("需要 --slam-status，或 --session 加上可选的 --tum")
+    from headcam.slam_vio import run_slam
+    backend = args.backend
+    if args.tum and backend == "auto":
+        backend = "external_tum"
+    return run_slam(
+        args.session, backend=backend, tum_path=args.tum, tum_time_scale=args.tum_time_scale,
+    )
+
+
+def main(argv=None):
+    """检查一份已有的相机系 episode。不跑 WiLoR，不写精度。"""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="相机系 episode 只在 ok 帧乘 T_world_cam，再用 frames.sanity_check。不写精度。",
+    )
+    parser.add_argument("--episode", required=True, help="WiLoR 或其他模块写出的相机系 episode JSON")
+    parser.add_argument("--slam-status", default=None, help="slam_vio 写出的 slam_status.json")
+    parser.add_argument("--session", default=None, help="没有 slam_status 时，用会话目录现算逐帧状态")
+    parser.add_argument("--tum", default=None)
+    parser.add_argument("--tum-time-scale", type=float, default=None)
+    parser.add_argument("--backend", default="auto", choices=("auto", "none", "external_tum", "orbslam3"))
+    parser.add_argument("--out", default=None, help="写出检查后的 episode。再跑一次不会把世界点乘第二次")
+    args = parser.parse_args(argv)
+    try:
+        episode = _load_json(args.episode)
+        slam = _slam_from_args(args)
+        text, code, checked = check_camera_episode(episode, slam)
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.out:
+        destination = Path(args.out)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(checked, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    sys.stdout.write(text)
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

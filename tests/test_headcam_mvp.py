@@ -783,6 +783,98 @@ class SlamFrameSpliceTest(unittest.TestCase):
         self.assertEqual(world["frame_convention"]["name"], "world")
 
 
+class WilorPartialFixtureTest(unittest.TestCase):
+    """仓库里的相机系手腕。不是 WiLoR 输出。只在 ok 帧填世界点。"""
+
+    def setUp(self):
+        self.root = ROOT / "tests" / "fixtures" / "headcam" / "wilor_partial"
+
+    def test_cli_fills_only_ok_frames_and_rerun_does_not_multiply(self):
+        import io
+        import tempfile
+        from contextlib import redirect_stdout
+
+        from headcam.slam_frames import main as check_main
+
+        episode = json.loads((self.root / "episode.json").read_text(encoding="utf-8"))
+        self.assertEqual(episode["coordinate_frame"], "camera")
+        self.assertEqual(episode["hand_pose"]["backend"], "fixture_not_wilor")
+        camera_wrist = episode["hands"]["left"]["wrist_pose"][0][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            first = tmp / "once.json"
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = check_main([
+                    "--episode", str(self.root / "episode.json"),
+                    "--slam-status", str(self.root / "slam_status.json"),
+                    "--out", str(first),
+                ])
+            text = buf.getvalue()
+            self.assertEqual(code, 0)
+            self.assertIn("world_points_scope=ok_frames_only\n", text)
+            self.assertIn("frame_convention=camera\n", text)
+            self.assertIn("ok=2\n", text)
+            self.assertIn("tracking_lost=2\n", text)
+            self.assertIn("world_hands_filled=2\n", text)
+            self.assertIn("world_hands_missing=2\n", text)
+            self.assertIn("sanity_ok=true\n", text)
+            self.assertIn("accuracy=unmeasured\n", text)
+            self.assertNotIn("0.01", text)
+            checked = json.loads(first.read_text(encoding="utf-8"))
+            block = checked["hand_pose"]["slam"]
+            self.assertIsNone(block["accuracy"])
+            self.assertIsNone(block["world_hands"]["left"][1])
+            self.assertIsNone(block["world_hands"]["right"][2])
+            self.assertAlmostEqual(block["world_hands"]["left"][0]["wrist"][0], camera_wrist + 0.1, places=6)
+            self.assertAlmostEqual(block["world_hands"]["left"][3]["wrist"][0], 0.03 + 0.2, places=6)
+            self.assertEqual(checked["hands"]["left"]["wrist_pose"][0][0], camera_wrist)
+            self.assertEqual(checked["coordinate_frame"], "camera")
+
+            second = tmp / "twice.json"
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = check_main([
+                    "--episode", str(first),
+                    "--slam-status", str(self.root / "slam_status.json"),
+                    "--out", str(second),
+                ])
+            self.assertEqual(code, 0)
+            self.assertIn("sanity_ok=true\n", buf.getvalue())
+            again = json.loads(second.read_text(encoding="utf-8"))
+            self.assertEqual(again["hands"]["left"]["wrist_pose"][0][0], camera_wrist)
+            self.assertAlmostEqual(again["hand_pose"]["slam"]["world_hands"]["left"][0]["wrist"][0], camera_wrist + 0.1, places=6)
+            self.assertIsNone(again["hand_pose"]["slam"]["world_hands"]["left"][1])
+            self.assertIsNone(again["hand_pose"]["slam"]["accuracy"])
+
+    def test_claimed_accuracy_in_slam_status_is_not_copied(self):
+        import io
+        import tempfile
+        from contextlib import redirect_stdout
+
+        from headcam.slam_frames import main as check_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            slam = json.loads((self.root / "slam_status.json").read_text(encoding="utf-8"))
+            slam["accuracy"] = 0.01
+            status = tmp / "claimed.json"
+            status.write_text(json.dumps(slam), encoding="utf-8")
+            out = tmp / "episode.json"
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = check_main([
+                    "--episode", str(self.root / "episode.json"),
+                    "--slam-status", str(status),
+                    "--out", str(out),
+                ])
+            self.assertEqual(code, 0)
+            self.assertIn("accuracy=unmeasured\n", buf.getvalue())
+            self.assertNotIn("0.01", buf.getvalue())
+            saved = json.loads(out.read_text(encoding="utf-8"))
+            self.assertIsNone(saved["hand_pose"]["slam"]["accuracy"])
+
+
 class PrepareSessionGuardTest(unittest.TestCase):
     def test_refuses_to_nest_work_copy_inside_source(self):
         import tempfile

@@ -110,6 +110,29 @@ session/
 
 文件里本来就是单位阵的一行（相机就在原点）会保留，状态是 `ok`。那是测量，不是补出来的。
 
+## 检查一份已有的相机系 episode
+
+WiLoR（或别的手部程序）写出的统一 episode 若还在 OpenCV 相机系，可以不重跑手部，直接乘已经算好的位姿并做 `frames.sanity_check`。这条命令不启动 WiLoR，也不写精度；打印里的 `accuracy=unmeasured` 是固定的，不会采用 `slam_status.json` 里带来的数字。
+
+```bash
+# 真实文件以后换成自己的路径。episode 的手腕必须还在相机系。
+python scripts/headcam/slam_frames.py \
+  --episode /data/wilor_clip.json \
+  --session /data/sess01 \
+  --tum CameraTrajectory.txt \
+  --out outputs/wilor_clip_checked.json
+
+# 已经有 slam_status.json 时不必再读会话。
+python scripts/headcam/slam_frames.py \
+  --episode tests/fixtures/headcam/wilor_partial/episode.json \
+  --slam-status tests/fixtures/headcam/wilor_partial/slam_status.json \
+  --out /tmp/wilor_partial_checked.json
+```
+
+`sanity_ok=false` 时退出码是 1。覆盖不全时 `world_points_scope=ok_frames_only`：世界点只在 `ok` 帧，`tracking_lost` / `pose_missing` 是 null，手腕主数组仍是相机系。把 `--out` 的文件再送进同一条命令，不会把世界点乘第二次。
+
+`tests/fixtures/headcam/wilor_partial/` 是手写的 4 帧相机系手腕，状态是 ok / tracking_lost / tracking_lost / ok。它不是 WiLoR 输出，也不是测过的轨迹。
+
 ## 标定和同步
 
 `calib.json` 的 schema 是 `headcam_calib_v1`。
@@ -263,4 +286,4 @@ python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01
 
 按上面的 Day 1 在实机上跑外部 TUM，用 `summarize_slam.py` 看帧数。`time_unit_mismatch=true` 时先加显式 `--tum-time-scale`，不要放宽门限。每一帧都 `ok` 之后再去掉 `--skip-hands`。
 
-下一次可以改代码的离线步骤：等有一份真实 WiLoR 相机系 episode 后，用 `apply_ok_frame_world` 复核拼接结果仍能过 `frames.sanity_check`。在那之前不要把残缺轨迹标成 `world_yup`，也不要让 `hand_fix` 跨 `tracking_lost` 去插世界坐标。这一步仍然不编造轨迹，也不测量误差。实机 ORB-SLAM3、相机、IMU、WiLoR 和 pyarrow 继续缺着。
+下一次可以做的事：把一份真实 WiLoR 相机系 episode 交给上面的 `slam_frames.py` 命令，看 `sanity_ok` 和 `world_points_scope`。本仓库没有这样的文件。不要把 `sanity_ok` 写成精度，也不要把残缺轨迹标成 `world_yup`。实机 ORB-SLAM3、相机、IMU、WiLoR 和 pyarrow 继续缺着。
