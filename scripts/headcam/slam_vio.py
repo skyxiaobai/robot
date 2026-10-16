@@ -168,6 +168,43 @@ def _coverage(frames):
     }
 
 
+PARTIAL_HANDS_WARNING = (
+    "world_hands=refused。不是每一帧都 ok，不能把双手标成世界系。"
+    " --allow-partial 只把退出码改成 0，并不把 tracking_lost 或 pose_missing 配成世界位姿。"
+)
+
+
+def world_hands_gate(result, allow_partial=False):
+    """世界系双手是否可以声称。
+
+    ``allowed`` 只在每一帧都是 ``ok`` 时出现。``--allow-partial`` 不把残缺轨迹改成 allowed，
+    只决定调用方要不要用非 0 退出码停住。本函数不测量精度。
+    """
+    complete = bool(result.get("world_pose"))
+    return {
+        "world_hands": "allowed" if complete else "refused",
+        "allow_partial": bool(allow_partial) and not complete,
+        "warning": None if complete else PARTIAL_HANDS_WARNING,
+        "exit_code": 0 if complete or allow_partial else 1,
+    }
+
+
+def format_slam_counts(result, gate):
+    """机器可读的帧数。精度行固定写成 unmeasured。"""
+    lines = [
+        "frames=%d" % int(result.get("frame_count") or 0),
+        "ok=%d" % int(result.get("ok_frames") or 0),
+        "tracking_lost=%d" % int(result.get("tracking_lost_frames") or 0),
+        "pose_missing=%d" % int(result.get("pose_missing_frames") or 0),
+        "world_pose=%s" % str(bool(result.get("world_pose"))).lower(),
+        "world_hands=%s" % gate["world_hands"],
+        "accuracy=unmeasured",
+    ]
+    if gate.get("warning"):
+        lines.append("warning=%s" % gate["warning"])
+    return "\n".join(lines) + "\n"
+
+
 def orbslam3_plan(session, binary=None, vocab=None, settings=None):
     """描述怎么调用 ORB-SLAM3。文件不全时 ``available`` 为 false，``argv`` 为 None。"""
     binary = binary if binary is not None else os.environ.get("ORB_SLAM3_BIN", "")

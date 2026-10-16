@@ -56,11 +56,16 @@ python scripts/headcam/slam_vio.py --session /data/sess01 --out outputs/sess01_s
 python scripts/headcam/slam_vio.py --session /data/sess01 --backend external_tum \
   --tum CameraTrajectory.txt --out outputs/sess01_slam
 
-# 串起来。没有手部权重时先看同步和位姿。
-python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01_mvp --skip-hands
+# 先看帧数。不是每一帧都 ok 时退出码 1，world_hands=refused。
+python scripts/headcam/summarize_slam.py --session /data/sess01 --tum CameraTrajectory.txt
 
-# 手部权重齐了再跑现有双目管线、QC、LeRobot。
-python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01_mvp
+# 串起来。没有手部权重，或还没确认帧数时，只写同步和位姿。
+python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01_mvp \
+  --slam-backend external_tum --tum CameraTrajectory.txt --skip-hands
+
+# 只有 summarize 打印 world_hands=allowed 之后，才跑手部、QC、LeRobot。
+python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01_mvp \
+  --slam-backend external_tum --tum CameraTrajectory.txt
 
 # 手部之前已经导出过统一 episode：只补位姿状态、QC 和 LeRobot。
 python scripts/headcam/export_mvp.py --session /data/sess01 --episodes outputs/episodes --out outputs/sess01_mvp
@@ -137,7 +142,102 @@ python scripts/headcam/slam_vio.py --session /data/sess01 --backend orbslam3 --r
 
 OpenVINS、Basalt 只要最后给出同一份 TUM（`timestamp tx ty tz qx qy qz qw`，左目相机在世界系），就走 `--backend external_tum`。不需要把求解器放进仓库。
 
-到货当天若要看闭环，仍按 `docs/hardware_day1_checklist.md` 自己记数。那个清单里的厘米级要求不是本仓库已经测到的结果。
+到货当天的复制命令在下一节。`docs/hardware_day1_checklist.md` 里的厘米级闭环是采集清单上的目标，不是本仓库已经测到的数。
+
+## Day 1 on a real machine
+
+在一台已经装好求解器的机器上，用一节约 10 分钟的录像走完「外部轨迹 → 帧数 → 再决定要不要手部」。10 分钟只是同一套按帧文件，本仓库没有拿实拍测过耗时，也没有轨迹误差数字。
+
+假设：
+
+- ORB-SLAM3、OpenVINS 或 Basalt 按它自己的 README 编译过。本仓库不下载词表、不编译这些程序。
+- `ORBvoc.txt` 由你自己放在求解器目录里。
+- 这一节 Python 能 `import numpy`。手部模型这次先不要跑。
+- 会话已经是 `record_session` 的目录。时间戳单位是秒。
+
+```text
+/data/sess01/
+  metadata.json
+  timestamps.csv                 frame_index,timestamp_s
+  imu.csv                        timestamp_s,gx,gy,gz,ax,ay,az
+  calib.yaml
+  stereo/left.mp4
+  stereo/right.mp4
+  stereo/timestamps_lr.csv       frame_index,left_s,right_s
+  stereo/exposure.csv            有就放，没有也可以先看位姿
+```
+
+`imu.csv` 的轴是否等于求解器要的机体轴，取决于你的标定。这里不改轴，也不对 IMU 积分。
+
+帧数怎么读（`summarize_slam.py` 打出来的四行计数）：
+
+| 计数 | 含义 | 能不能跑世界系手部 |
+|---|---|---|
+| `ok` 等于 `frames`，`tracking_lost=0`，`pose_missing=0` | 每一帧都在半帧门限内有轨迹点 | `world_hands=allowed`。可以去掉 `--skip-hands` |
+| `tracking_lost>0` | 文件里有轨迹，但这几帧最近的点超过半帧 | `world_hands=refused`。不要把最近邻填进去 |
+| `pose_missing>0` 且 `ok=0` | 没有可用轨迹（没给文件、文件是空的，或求解器没写出轨迹） | `world_hands=refused` |
+| 第一列是 1e18 左右 | 轨迹还是纳秒，会话时间戳是秒 | 会几乎全部变成 `tracking_lost`。先除以 1e9，不要放宽门限 |
+
+`accuracy=unmeasured` 一直印着。不要把它换成别的数字。
+
+```bash
+# 0. 还没有轨迹时，计数应是 pose_missing，退出码 1。
+python scripts/headcam/summarize_slam.py --session /data/sess01
+
+# 1. ORB-SLAM3。下面是上游 stereo_inertial_euroc 的常见参数形状。
+#    先看你的二进制不带参数时打印的 Usage，再替换路径。本仓库没有执行过这条命令。
+#    会话不是 EuRoC：mav0/cam0/data、mav0/cam1/data 里的 png 要用时间戳命名，
+#    times 文件一行一个时间。抽帧请按 ORB-SLAM3 的 EuRoC 说明做，不要用本仓库现编。
+export ORB_SLAM3_ROOT=$HOME/ORB_SLAM3
+"$ORB_SLAM3_ROOT/Examples/Stereo-Inertial/stereo_inertial_euroc" \
+  "$ORB_SLAM3_ROOT/Vocabulary/ORBvoc.txt" \
+  "$ORB_SLAM3_ROOT/Examples/Stereo-Inertial/EuRoC.yaml" \
+  /data/euroc_sess01 \
+  /data/euroc_sess01/times.txt
+# 成功时当前目录出现 CameraTrajectory.txt。第一列要和 timestamps.csv 一样是秒。
+
+# 2. 只读这文件。不启动求解器，不写精度。
+python scripts/headcam/summarize_slam.py \
+  --session /data/sess01 \
+  --tum ./CameraTrajectory.txt
+
+# 3. 把同一份轨迹写进 MVP 报告，仍然不跑手。
+python scripts/headcam/export_mvp.py \
+  --session /data/sess01 \
+  --out outputs/sess01_mvp \
+  --slam-backend external_tum \
+  --tum ./CameraTrajectory.txt \
+  --skip-hands
+
+# 4. 只有上一步 summarize 的退出码是 0 且 world_hands=allowed，才跑手部。
+python scripts/headcam/export_mvp.py \
+  --session /data/sess01 \
+  --out outputs/sess01_mvp \
+  --slam-backend external_tum \
+  --tum ./CameraTrajectory.txt
+```
+
+退出码不是 0 时停在第 3 步。`--allow-partial` 只让 `summarize_slam.py` 的退出码变成 0，打印里仍然是 `world_hands=refused`。把它加到 `export_mvp` 上，手部会在相机系里跑，并在 stderr 警告；残缺帧不会乘上世界位姿。
+
+OpenVINS、Basalt 也停在第 2 步之前，只要你先得到 8 列 TUM（`timestamp tx ty tz qx qy qz qw`，秒，左目在世界系）：
+
+```bash
+# OpenVINS：上游 serial 例子的形状。估计日志的列经常是时间、四元数、位置，还带速度。
+# 那个文件不是 TUM。抽成上面的 8 列再交给 --tum。确认命令以你本地的 --help 为准。
+./run_serial_msckf config/euroc_mav/estimator_config.yaml /data/euroc_sess01
+
+# Basalt：上游 vio 的形状。trajectory 的时间常常是纳秒，先换成秒。
+basalt_vio \
+  --dataset-path /data/euroc_sess01 \
+  --cam-calib /data/euroc_calib.json \
+  --dataset-type euroc \
+  --config-path /data/euroc_config.json \
+  --show-gui 0
+
+python scripts/headcam/summarize_slam.py --session /data/sess01 --tum trajectory_seconds.txt
+python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01_mvp \
+  --slam-backend external_tum --tum trajectory_seconds.txt --skip-hands
+```
 
 ## 已知限制
 
@@ -145,13 +245,10 @@ OpenVINS、Basalt 只要最后给出同一份 TUM（`timestamp tx ty tz qx qy qz
 - `accuracy` 永远是 null。不要把 HOT3D 手腕误差或别人的 SLAM 论文数字写到这次运行上。
 - 残缺轨迹不会逐帧拼进现有 episode。下一步才是：只对 `ok` 帧做 `p_world = T_world_cam · p_cam`，丢失帧的手腕保持缺测，而不是最近邻。
 - `record_session capture` 不是硬件同步采集。IMU 驱动、曝光寄存器、左右时间戳都还要在板上接。
-- 手部仍要 WiLoR / HaMeR / MediaPipe 那套环境和 `scripts/run_stereo_pipeline.py` 的参数。`--skip-hands` 停在位姿和同步。
+- 手部仍要 WiLoR / HaMeR / MediaPipe 那套环境和 `scripts/run_stereo_pipeline.py` 的参数。轨迹不完整时，不带 `--allow-partial` 的 `export_mvp` 拒绝跑手部。`--skip-hands` 只写同步和位姿。
 - LeRobot 导出需要 pyarrow。当前解释器没有时，报告里给出 `ego_to_lerobot.py` 的命令，不写空数据集。
 - 本模块没有在 10 分钟实拍上测过运行时间或轨迹误差。
 
 ## 下一步
 
-1. 在一台装好 ORB-SLAM3 的机器上，用一节实拍（或 EuRoC 样例）写出 `CameraTrajectory.txt`。
-2. 用 `--backend external_tum --tum` 读入，看 `slam_status.json` 里 `ok` / `tracking_lost` 的帧数。先不要填精度。
-3. 确认每一帧都 `ok` 之后，再跑不带 `--skip-hands` 的 `export_mvp`，让现有管线把关节变到 `slam_world`。
-4. 若只有一部分帧跟踪成功，再改手部合成：按 `pose_status` 逐帧使用 `T_world_cam`，丢失帧不要最近邻。
+按上面的 Day 1 在实机上跑外部 TUM，用 `summarize_slam.py` 看帧数。每一帧都 `ok` 之后再去掉 `--skip-hands`。若只有一部分帧跟踪成功，再改手部合成：只对 `ok` 帧做 `p_world = T_world_cam · p_cam`，丢失帧保持缺测，不用最近邻。

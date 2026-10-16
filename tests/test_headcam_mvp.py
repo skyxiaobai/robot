@@ -356,11 +356,28 @@ class ExportMvpTest(unittest.TestCase):
                 return {"accepted_episodes": 0, "episodes": 0, "yield": 0.0, "raw_frames": 0, "usable_frames": 0}
 
             report = export_mvp(session, tmp / "out", run_hands=True, hand_pipeline=runner, export=False, log=None)
-            self.assertFalse((seen["session"] / "slam.tum").exists())
-            self.assertFalse(seen["export"])
+            self.assertEqual(seen, {})
+            self.assertEqual(report["hands"]["status"], "refused")
+            self.assertEqual(report["world_hands"], "refused")
             self.assertFalse(report["world_pose"])
             self.assertEqual(report["slam"]["tracking_lost_frames"], 2)
             self.assertEqual(report["slam"]["ok_frames"], 1)
+            self.assertIn("未跑手部", report["lerobot"]["result"])
+
+            def runner_partial(sessions, out_dir, **kwargs):
+                seen["session"] = Path(sessions[0])
+                seen["export"] = kwargs.get("export")
+                return {"accepted_episodes": 0, "episodes": 0, "yield": 0.0, "raw_frames": 0, "usable_frames": 0}
+
+            partial = export_mvp(
+                session, tmp / "out_partial", run_hands=True, hand_pipeline=runner_partial,
+                allow_partial=True, export=False, log=None,
+            )
+            self.assertFalse((seen["session"] / "slam.tum").exists())
+            self.assertFalse(seen["export"])
+            self.assertEqual(partial["hands"]["status"], "ran")
+            self.assertEqual(partial["world_hands"], "refused")
+            self.assertIn("allow-partial", partial["hands"]["warning"])
             status = json.loads((tmp / "out" / "slam_status.json").read_text(encoding="utf-8"))
             self.assertAlmostEqual(status["frames"][0]["T_world_cam"][0][3], 0.4)
             self.assertIsNone(status["frames"][1]["T_world_cam"])
@@ -433,6 +450,64 @@ def _moving_episode():
         "hands": hands,
         "stereo": {"per_frame": {"left": ["ok"] * n, "right": ["ok"] * n}},
     }
+
+
+class FixtureGapTumTest(unittest.TestCase):
+    """读仓库里的短 TUM，不在测试里现写轨迹。"""
+
+    def setUp(self):
+        _clear_orb_env()
+        self.session = ROOT / "tests" / "fixtures" / "headcam" / "gap_tum"
+        self.tum = self.session / "CameraTrajectory.txt"
+
+    def test_gap_file_labels_tracking_lost_and_missing_file_is_pose_missing(self):
+        gapped = run_slam(self.session, backend="external_tum", tum_path=self.tum)
+        self.assertEqual(
+            [frame["status"] for frame in gapped["frames"]],
+            [STATUS_OK, STATUS_TRACKING_LOST, STATUS_TRACKING_LOST, STATUS_OK],
+        )
+        self.assertIsNone(gapped["frames"][1]["T_world_cam"])
+        self.assertAlmostEqual(gapped["frames"][0]["T_world_cam"][0][3], 0.1)
+        self.assertAlmostEqual(gapped["frames"][3]["T_world_cam"][0][3], 0.2)
+        self.assertFalse(gapped["world_pose"])
+        self.assertIsNone(gapped["accuracy"])
+        self.assertEqual(gapped["pose_missing_frames"], 0)
+        missing = run_slam(self.session, backend="auto")
+        self.assertEqual(missing["pose_missing_frames"], 4)
+        self.assertEqual(missing["tracking_lost_frames"], 0)
+        self.assertTrue(all(frame["T_world_cam"] is None for frame in missing["frames"]))
+
+    def test_summarize_refuses_world_hands_unless_allow_partial(self):
+        import io
+        from contextlib import redirect_stdout
+
+        from headcam.summarize_slam import main as summarize_main
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = summarize_main(["--session", str(self.session), "--tum", str(self.tum)])
+        text = buf.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("frames=4\n", text)
+        self.assertIn("ok=2\n", text)
+        self.assertIn("tracking_lost=2\n", text)
+        self.assertIn("pose_missing=0\n", text)
+        self.assertIn("world_hands=refused\n", text)
+        self.assertIn("accuracy=unmeasured\n", text)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = summarize_main([
+                "--session", str(self.session), "--tum", str(self.tum), "--allow-partial",
+            ])
+        self.assertEqual(code, 0)
+        self.assertIn("world_hands=refused", buf.getvalue())
+        self.assertIn("allow-partial", buf.getvalue())
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = summarize_main(["--session", str(self.session)])
+        self.assertEqual(code, 1)
+        self.assertIn("pose_missing=4\n", buf.getvalue())
+        self.assertIn("world_hands=refused", buf.getvalue())
 
 
 class PrepareSessionGuardTest(unittest.TestCase):

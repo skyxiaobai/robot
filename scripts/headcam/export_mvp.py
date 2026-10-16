@@ -20,7 +20,7 @@ if str(_SCRIPTS) not in sys.path:
 
 from egodata.qc import write_yield_reports, yield_report
 from egodata.stereo_qc import qc_stereo_episode
-from headcam.slam_vio import run_slam, write_slam_tum
+from headcam.slam_vio import run_slam, world_hands_gate, write_slam_tum
 from headcam.sync_calib import refresh_calib_json
 
 SKIP_LINKS = {"slam.tum", "trajectory.tum", "slam_status.json"}
@@ -178,7 +178,7 @@ def _default_hand_pipeline(sessions, out_dir, **kwargs):
 
 def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None, run_hands=True,
                episodes=None, export=True, hand_pipeline=None, repo_id="local/headcam_mvp",
-               run_orbslam3=None, log=print):
+               run_orbslam3=None, allow_partial=False, log=print):
     """跑 MVP 前半段并接上现有 QC / LeRobot。返回报告字典，同时写 ``out/report.json``。"""
     session = Path(session)
     out = Path(out)
@@ -191,12 +191,20 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
         session, backend=slam_backend, tum_path=tum_path, max_gap_s=max_gap_s,
         out_dir=out, run_orbslam3=run_orbslam3,
     )
+    gate = world_hands_gate(slam, allow_partial=allow_partial)
     hand_session = prepare_hand_session(session, out / "hand_session", slam)
     use_existing = episodes is not None
-    hands = {"status": "skipped", "reason": "run_hands 关闭"}
+    hands = {"status": "skipped", "reason": "run_hands 关闭", "world_hands": gate["world_hands"]}
     pipeline_summary = None
     if use_existing:
-        hands = {"status": "external_episodes", "episodes": str(episodes)}
+        hands = {"status": "external_episodes", "episodes": str(episodes), "world_hands": gate["world_hands"]}
+        run_hands = False
+    elif run_hands and gate["world_hands"] != "allowed" and not allow_partial:
+        hands = {
+            "status": "refused",
+            "world_hands": "refused",
+            "reason": gate["warning"],
+        }
         run_hands = False
     elif run_hands:
         pipeline = hand_pipeline or _default_hand_pipeline
@@ -204,9 +212,20 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
             pipeline_summary = pipeline(
                 [hand_session["session"]], out, export=False, repo_id=repo_id, log=log,
             )
-            hands = {"status": "ran", "session": hand_session["session"]}
+            hands = {
+                "status": "ran",
+                "session": hand_session["session"],
+                "world_hands": gate["world_hands"],
+            }
+            if gate.get("warning"):
+                hands["warning"] = gate["warning"]
         except Exception as exc:  # noqa: BLE001 — 失败写进报告，由 CLI 用退出码表示
-            hands = {"status": "failed", "error": "%s: %s" % (type(exc).__name__, exc), "session": hand_session["session"]}
+            hands = {
+                "status": "failed",
+                "world_hands": gate["world_hands"],
+                "error": "%s: %s" % (type(exc).__name__, exc),
+                "session": hand_session["session"],
+            }
             pipeline_summary = None
 
     episode_dir = Path(episodes) if episodes else out / "episodes"
@@ -242,7 +261,9 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
             }
 
     accepted = 0 if not qc_report else int(qc_report.get("accepted_episodes") or 0)
-    if not export:
+    if hands["status"] == "refused":
+        lerobot = {"dir": None, "result": "世界系双手被拒绝，未跑手部，未导出"}
+    elif not export:
         lerobot = {"dir": None, "result": "未请求导出"}
     elif hands["status"] == "skipped":
         lerobot = {"dir": None, "result": "未跑手部，也没有已有 episode，未导出"}
@@ -254,6 +275,7 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
     report = {
         "session": str(session),
         "world_pose": bool(slam.get("world_pose")),
+        "world_hands": hands.get("world_hands"),
         "coordinate_frame": slam.get("coordinate_frame"),
         "sync_error_ms": calib_document.get("sync_error_ms"),
         "calibration": calib_document.get("calibration"),
@@ -275,6 +297,8 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
     }
     if slam.get("pose_coverage") == "partial":
         report["limits"].append("ok 帧的 T_world_cam 在 slam_status.json，episode 仍按相机系处理。")
+    if gate.get("warning"):
+        report["limits"].append(gate["warning"])
     _dump(out / "report.json", report)
     if log:
         sync = report["sync_error_ms"] or {}
@@ -299,6 +323,8 @@ def main(argv=None):
     parser.add_argument("--tum", default=None)
     parser.add_argument("--max-gap-s", type=float, default=None)
     parser.add_argument("--skip-hands", action="store_true", help="不跑 WiLoR / 手部管线，只写同步和位姿状态")
+    parser.add_argument("--allow-partial", action="store_true",
+                        help="轨迹不完整时仍在相机系跑手部。世界系双手仍然拒绝，并打印警告")
     parser.add_argument("--episodes", default=None, help="已有统一 episode 目录：跳过手部，做 QC 和 LeRobot")
     parser.add_argument("--no-export", action="store_true")
     parser.add_argument("--run-orbslam3", action="store_true")
@@ -310,9 +336,15 @@ def main(argv=None):
             max_gap_s=args.max_gap_s, run_hands=not args.skip_hands, episodes=args.episodes,
             export=not args.no_export, repo_id=args.repo_id,
             run_orbslam3=True if args.run_orbslam3 else None,
+            allow_partial=args.allow_partial,
         )
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
+        return 1
+    if report["hands"].get("warning"):
+        print(report["hands"]["warning"], file=sys.stderr)
+    if report["hands"].get("status") == "refused":
+        print(report["hands"].get("reason"), file=sys.stderr)
         return 1
     if report["hands"].get("status") == "failed":
         print(report["hands"].get("error"), file=sys.stderr)
