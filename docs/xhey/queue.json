@@ -185,6 +185,42 @@
     "C11ctl_moving_minus_zero_cm": -0.137,
     "note": "HOI4D beat zero on moving but did not beat the no-HOI4D iPhone-only control (same eval set as C11ctl, moving -0.137) and is worse overall (9.845, +0.066 vs zero 9.779). Charts in experiments/report/C12."
    }
+  },
+  {
+   "id": "C13",
+   "name": "EgoDex pretrain, camera optical frame (native Vision Pro ARKit joints)",
+   "dir": "kaggle/rsi_c13",
+   "slug": "justinz2010/xhey-rsi-c13-egodex",
+   "status": "ready",
+   "mix": "iphone+egodex+xhey_rgb+aug",
+   "protocol": "same as C11/C12: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c13 (iphone+egodex+xhey_rgb+aug, --qc-filter qc_egodex/scorecards.json) then same-code control arm B xhey_c13ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c13/metrics.json; compare to xhey_c13ctl and zero within run.",
+   "qc": {
+    "egodex_converted": "3243/3243 episodes of public test split (7.65 h, 30 fps)",
+    "egodex_moving": "2461 eps with median wrist speed >=3 cm/s (5.49 h); round-robin over 107 tasks, fastest first, capped at 4.0 h -> 1384 eps",
+    "egodex_pass": "1328/1384 (fails: move_frac 43, gap 16, detect 3)",
+    "frame": "ARKit world_yup + per-frame camera poses -> camera optical via common.frames.canonicalize_for_xhey; sanity_check ok 3243/3243 (median wrist dist ~0.3-0.4 m, z>0 100%)",
+    "joints": "21 joints in MediaPipe order; EgoDex 'Hand' sits on forearm and ThumbKnuckle != thumb CMC (EGODEX_NONCORRESPONDING_JOINTS)",
+    "note": "converter now writes per-frame label_status; without it hand_fix/QC counted every frame as a gap (0/1384 pass)"
+   },
+   "datasets": [
+    "justinz2010/xhey-iphone-sessions",
+    "justinz2010/xhey-egodex-cam (egodex_cam + qc_egodex/scorecards.json + scripts.tgz from c13 worktree)"
+   ],
+   "license": "EgoDex dataset CC BY-NC-ND (code: Apple sample code license); Kaggle dataset kept private, research use only",
+   "launched_v1_broken": "2026-10-16 09:37",
+   "note_v1": "v1 (09:37) crashes: undefined HO in print; fixed, relaunch when GPU slot frees"
+  },
+  {
+   "id": "C14",
+   "name": "xPhi-Ego-100 pretrain (WiLoR pseudo-labels, monocular, camera optical frame)",
+   "dir": "kaggle/rsi_c14",
+   "slug": "justinz2010/xhey-rsi-c14-xphi",
+   "status": "blocked_hf_access",
+   "mix": "iphone+xphi+xhey_rgb+aug",
+   "protocol": "same as C13 with control arm; ~5-10 h subset via WiLoR kernel (like xhey-wilor-labels), keep moving segments, QC --qc-filter",
+   "blocker": "HF account skyxiaobaibai not authorized for gated dataset (403). Justin must open https://huggingface.co/datasets/xphirobotics/xPhi-Ego-100 logged in as skyxiaobaibai and submit the access form (auto-approved).",
+   "caveats": "no depth, no intrinsics published (assumed FOV needed) -> metric scale of WiLoR translations is uncertain; train_xhey needs an 'xphi' source key before launch",
+   "license": "Apache-2.0"
   }
  ]
 }

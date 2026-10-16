@@ -162,6 +162,7 @@ def _hand_series(handle, prefix, num_frames):
     joints = []
     wrist_pose = []
     valid = []
+    label_status = []
     for frame_index in range(num_frames):
         frame_joints = []
         for column in columns:
@@ -180,11 +181,14 @@ def _hand_series(handle, prefix, num_frames):
         joints.append(frame_joints)
         wrist_pose.append(pose if pose is not None else [None] * 7)
         valid.append(bool(finite and confident))
+        # QC / hand_fix 把缺了 label_status 的帧当成 missing；这里写明每帧状态。
+        label_status.append("ok" if finite and confident else ("lowconf" if finite else "missing"))
     return {
         "joints": joints,
         "wrist_pose": wrist_pose,
         "confidence": confidence,
         "valid": valid,
+        "label_status": label_status,
     }
 
 
