@@ -36,6 +36,11 @@
 ``egodata.image_source=placeholder``。旁边若有与 ``source_path`` 同名的
 ``.mp4``，则裁到保留的帧数，并默认缩到正方形（默认 224，边长为偶数），
 避免按 1080p 重编码。
+
+``hands_measured is False`` 的片段走另一条落盘：不写 ``observation.state``、
+``action`` 和手腕列，也不把缺测手填成 0。每一行保留图像时间戳、
+``slam_status`` 和 ``observation.pose``（``tx ty tz qx qy qz qw``）。
+状态不是 ``ok`` 时位姿格是 null。``accuracy`` 只出现在导出说明里，值是 null。
 """
 import csv
 import json
@@ -53,7 +58,7 @@ from egodata.action_valid import (
     chunk_ratio_map,
     validity_summary,
 )
-from egodata.schema import iter_episode_paths, load_episode
+from egodata.schema import iter_episode_paths, load_episode, rotmat_to_quat_xyzw
 
 CODEBASE_VERSION = "v3.0"
 JOINTS = 21
@@ -523,6 +528,268 @@ def _pack_episode(episode, include_hand):
     }
 
 
+def _pose7(matrix):
+    """4×4 → ``tx ty tz qx qy qz qw``。矩阵不合法时返回 None，不写零向量。"""
+    pose = np.asarray(matrix, dtype=np.float64)
+    if pose.shape != (4, 4) or not np.isfinite(pose).all():
+        return None
+    quat = rotmat_to_quat_xyzw(pose[:3, :3])
+    return [
+        float(pose[0, 3]), float(pose[1, 3]), float(pose[2, 3]),
+        float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]),
+    ]
+
+
+def _hands_unmeasured(episode):
+    return episode.get("hands_measured") is False
+
+
+def _export_unmeasured_hands(episodes, out_dir, repo_id, video_size, horizon):
+    """手部没有测量时的 LeRobot v3.0 目录。
+
+    不写 state / action / 手腕。位姿只在 ``slam_status=ok`` 时有值，否则是 null。
+    ``timestamp`` 用 episode 里的图像时间（float64），不用 ``frame_index/fps``。
+    """
+    episodes = sorted(episodes, key=lambda item: str(item.get("episode_id")))
+    fps_values = {float(item["fps"]) for item in episodes}
+    if len(fps_values) != 1:
+        raise ValueError("一次导出里的片段帧率必须相同，实际是 %s" % sorted(fps_values))
+    fps_value = next(iter(fps_values))
+    fps = int(round(fps_value))
+    if abs(fps - fps_value) > 1e-3:
+        raise ValueError("LeRobot 0.6.1 的 fps 是整数，无法表示 %s" % fps_value)
+    horizon = int(horizon)
+    if horizon < 1:
+        raise ValueError("horizon 至少为 1")
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    task_to_index = {}
+    pose_rows = []
+    status_rows = []
+    timestamp_rows = []
+    frame_indices = []
+    episode_indices = []
+    global_indices = []
+    task_indices = []
+    episode_rows = []
+    cursor = 0
+    image_h = image_w = None
+    image_source = None
+    ok_frames = 0
+
+    for episode_index, episode in enumerate(episodes):
+        num_frames = int(episode["num_frames"])
+        if num_frames < 1:
+            raise ValueError("%s 没有帧" % episode.get("episode_id"))
+        stamps = episode.get("timestamps")
+        slam = (episode.get("hand_pose") or {}).get("slam") or {}
+        statuses = slam.get("pose_status")
+        matrices = slam.get("T_world_cam")
+        if not isinstance(stamps, list) or len(stamps) != num_frames:
+            raise ValueError("%s 的 timestamps 长度必须等于 num_frames" % episode.get("episode_id"))
+        if not isinstance(statuses, list) or len(statuses) != num_frames:
+            raise ValueError("%s 缺少逐帧 slam_status" % episode.get("episode_id"))
+        if not isinstance(matrices, list) or len(matrices) != num_frames:
+            raise ValueError("%s 缺少逐帧 T_world_cam" % episode.get("episode_id"))
+        start = cursor
+        texts = []
+        for frame_index in range(num_frames):
+            status = statuses[frame_index]
+            if status not in ("ok", "tracking_lost", "pose_missing"):
+                raise ValueError("%s 第 %d 帧的 slam_status 无法识别：%s" % (
+                    episode.get("episode_id"), frame_index, status,
+                ))
+            if status == "ok":
+                pose = _pose7(matrices[frame_index])
+                if pose is None:
+                    raise ValueError("%s 第 %d 帧是 ok，但没有有限的 T_world_cam" % (
+                        episode.get("episode_id"), frame_index,
+                    ))
+                ok_frames += 1
+            else:
+                pose = None
+            stamp = float(stamps[frame_index])
+            text = frame_task(episode, stamp)
+            texts.append(text)
+            if text not in task_to_index:
+                task_to_index[text] = len(task_to_index)
+            pose_rows.append(pose)
+            status_rows.append(status)
+            timestamp_rows.append(stamp)
+            frame_indices.append(frame_index)
+            episode_indices.append(episode_index)
+            global_indices.append(cursor)
+            task_indices.append(task_to_index[text])
+            cursor += 1
+        video_path = out_dir / "videos" / IMAGE_KEY / "chunk-000" / ("file-%03d.mp4" % episode_index)
+        source = _source_video(episode)
+        if source is None:
+            width, height, source_kind = _write_placeholder_video(video_path, num_frames, fps)
+        else:
+            width, height, source_kind = _trim_source_video(
+                source, video_path, num_frames, fps, video_size,
+            )
+        if image_w is None:
+            image_w, image_h, image_source = width, height, source_kind
+        elif (width, height, source_kind) != (image_w, image_h, image_source):
+            raise ValueError(
+                "视频尺寸不一致：%s 是 %dx%d (%s)，之前是 %dx%d (%s)"
+                % (episode.get("episode_id"), width, height, source_kind, image_w, image_h, image_source)
+            )
+        unique_tasks = []
+        for text in texts:
+            if text not in unique_tasks:
+                unique_tasks.append(text)
+        episode_rows.append({
+            "episode_index": episode_index,
+            "tasks": unique_tasks,
+            "length": num_frames,
+            "data/chunk_index": 0,
+            "data/file_index": 0,
+            "dataset_from_index": start,
+            "dataset_to_index": cursor,
+            "videos/%s/chunk_index" % IMAGE_KEY: 0,
+            "videos/%s/file_index" % IMAGE_KEY: episode_index,
+            "videos/%s/from_timestamp" % IMAGE_KEY: 0.0,
+            "videos/%s/to_timestamp" % IMAGE_KEY: num_frames / float(fps),
+        })
+
+    # 固定长度列表的 null 在这份 pyarrow 里写成空列表，读回来会报错。
+    # 用变长列表：ok 帧正好 7 个数，其他帧整格是 null，不是 7 个 0。
+    for pose in pose_rows:
+        if pose is not None and len(pose) != 7:
+            raise ValueError("observation.pose 必须是 7 个数或 null")
+    pose_type = pa.list_(pa.float64())
+    data_path = out_dir / "data" / "chunk-000" / "file-000.parquet"
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+    table = pa.table({
+        "timestamp": pa.array(np.asarray(timestamp_rows, dtype=np.float64)),
+        "frame_index": pa.array(frame_indices, type=pa.int64()),
+        "episode_index": pa.array(episode_indices, type=pa.int64()),
+        "index": pa.array(global_indices, type=pa.int64()),
+        "task_index": pa.array(task_indices, type=pa.int64()),
+        "slam_status": pa.array(status_rows, type=pa.string()),
+        "observation.pose": pa.array(pose_rows, type=pose_type),
+    })
+    pq.write_table(table, data_path)
+
+    names = [None] * len(task_to_index)
+    for text, index in task_to_index.items():
+        names[index] = text
+    tasks_frame = pd.DataFrame(
+        {"task_index": list(range(len(names)))},
+        index=pd.Index(names, name="task"),
+    )
+    tasks_path = out_dir / "meta" / "tasks.parquet"
+    tasks_path.parent.mkdir(parents=True, exist_ok=True)
+    tasks_frame.to_parquet(tasks_path)
+
+    episodes_frame = pd.DataFrame(episode_rows)
+    episodes_path = out_dir / _EPISODES_PATH.format(chunk_index=0, file_index=0)
+    episodes_path.parent.mkdir(parents=True, exist_ok=True)
+    episodes_frame.to_parquet(episodes_path, index=False)
+
+    finite_pose = np.asarray([row for row in pose_rows if row is not None], dtype=np.float64)
+    timestamps = np.asarray(timestamp_rows, dtype=np.float64)
+    stats = {
+        IMAGE_KEY: _image_stats_json(),
+        "timestamp": _stats_json(timestamps),
+        "observation.pose": None if finite_pose.size == 0 else _stats_json(finite_pose),
+    }
+    (out_dir / "meta" / "stats.json").write_text(
+        json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    features = {
+        IMAGE_KEY: _feature(
+            "video",
+            (image_h, image_w, 3),
+            ["height", "width", "channel"],
+            info={
+                "video.fps": float(fps),
+                "video.codec": "h264",
+                "video.pix_fmt": "yuv420p",
+                "video.is_depth_map": False,
+                "has_audio": False,
+                "egodata.image_source": image_source,
+            },
+        ),
+        "timestamp": _feature("float64", (1,), fps=fps),
+        "frame_index": _feature("int64", (1,), fps=fps),
+        "episode_index": _feature("int64", (1,), fps=fps),
+        "index": _feature("int64", (1,), fps=fps),
+        "task_index": _feature("int64", (1,), fps=fps),
+        "slam_status": _feature("string", (1,), ["ok", "tracking_lost", "pose_missing"], fps=fps),
+        "observation.pose": _feature(
+            "float64", (7,), ["tx", "ty", "tz", "qx", "qy", "qz", "qw"], fps=fps,
+        ),
+    }
+    info = {
+        "codebase_version": CODEBASE_VERSION,
+        "fps": fps,
+        "features": features,
+        "total_episodes": len(episodes),
+        "total_frames": cursor,
+        "total_tasks": len(names),
+        "chunks_size": 1000,
+        "data_files_size_in_mb": 100,
+        "video_files_size_in_mb": 200,
+        "data_path": _DATA_PATH,
+        "video_path": _VIDEO_PATH,
+        "robot_type": "headcam_pose_only",
+        "splits": {"train": "0:%d" % len(episodes)},
+    }
+    (out_dir / "meta" / "info.json").write_text(
+        json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    note = {
+        "repo_id": repo_id,
+        "lerobot": "0.6.1",
+        "codebase_version": CODEBASE_VERSION,
+        "hands": "absent",
+        "hands_note": (
+            "手部没有测量。parquet 里没有 observation.state、action、"
+            "observation.hand_joints、observation.wrist_pose，也不写 0。"
+        ),
+        "accuracy": None,
+        "accuracy_note": "本导出不测量 SLAM 误差。accuracy 保持 null。",
+        "slam_status": "逐帧标签：ok、tracking_lost 或 pose_missing。frame_label 就是这一列。",
+        "pose": (
+            "observation.pose 是 tx ty tz qx qy qz qw，只在 slam_status=ok 时有值。"
+            "其他帧是 null，不是零向量，也不是单位四元数。"
+        ),
+        "timestamp_doc": (
+            "timestamp 是 episode 里的图像时间，单位秒，float64。"
+            "不用 frame_index/fps 代替。绝对时间用 float32 会把 1e9 秒量级的小数吃掉。"
+        ),
+        "ok_frames": ok_frames,
+        "frames": cursor,
+        "horizon": horizon,
+        "qc": "只含 yield CSV 中 accepted=yes 的 episode_id",
+        "image_source": image_source,
+        "video_size": None if image_source != "source_mp4" else video_size,
+        "language": "没有指令时 task 文本是 unknown，不编造任务名。",
+    }
+    (out_dir / "meta" / "egodata_export.json").write_text(
+        json.dumps(note, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    (out_dir / "meta" / "interaction_events.jsonl").write_text("", encoding="utf-8")
+    return {
+        "episodes": len(episodes),
+        "frames": cursor,
+        "ok_frames": ok_frames,
+        "tasks": len(names),
+        "out": str(out_dir),
+        "horizon": horizon,
+        "hands": "absent",
+        "accuracy": None,
+        "valid_action_ratio": None,
+        "valid_action_count": 0,
+        "action_count": 0,
+        "valid_full_chunk_ratio": {16: None, 50: None, 100: None},
+    }
+
+
 def export_lerobot(
     episodes_dir,
     yield_csv,
@@ -539,11 +806,23 @@ def export_lerobot(
     每一行仍是一步增量。
     """
     accepted = accepted_episode_ids(yield_csv)
-    packed = []
+    selected = []
     for path in iter_episode_paths(episodes_dir):
         episode = load_episode(path)
         if episode.get("episode_id") not in accepted:
             continue
+        selected.append(episode)
+    if not selected:
+        raise ValueError("产出率 CSV 里没有可导出的片段")
+    unmeasured = [_hands_unmeasured(episode) for episode in selected]
+    if any(unmeasured) and not all(unmeasured):
+        raise ValueError(
+            "同一次导出不能混有手部测量和未测量手部。未测量的片段不写 0 手。"
+        )
+    if all(unmeasured):
+        return _export_unmeasured_hands(selected, out_dir, repo_id, video_size, horizon)
+    packed = []
+    for episode in selected:
         packed.append(_pack_episode(episode, include_hand))
     packed.sort(key=lambda item: item["episode_id"])
     if not packed:

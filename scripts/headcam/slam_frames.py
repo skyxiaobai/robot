@@ -9,6 +9,10 @@
 ``hand_pose.slam.world_hands``，不改手腕主数组，避免成绩单把缺测帧当成世界坐标。
 
 不写精度。没有逐帧激光深度时不编 ``iphone.per_frame``。
+
+帧数相同还不够。episode 和 slam 帧都有时间戳时，同一序号必须落在半帧门限内，
+秒和纳秒对不上就拒绝，不按序号把两套时钟配成同一帧，也不自动换算。
+缺一边的时间戳时仍按帧数对齐，并在 ``timestamp_alignment`` 里写明。
 """
 import json
 import sys
@@ -23,7 +27,8 @@ import numpy as np
 from common.frames import CAMERA, CAMERA_YUP, WORLD, WORLD_YUP, tag
 from egodata.schema import rotmat_to_quat_xyzw
 from headcam.hand_pose import quat_xyzw_to_rotmat, transform_points, xyz_to_json
-from headcam.slam_vio import STATUS_OK
+from headcam.slam_vio import STATUS_OK, half_frame_seconds
+from headcam.time_units import UNIT_NANOSECONDS, UNIT_SECONDS, clock_unit
 
 _SIDES = ("left", "right")
 
@@ -127,6 +132,49 @@ def _tag_world(episode):
     episode["frame_convention"]["up_axis_verified"] = False
 
 
+def _timestamp_alignment(episode, frames):
+    """两边都有时间戳时核对序号。对不上返回 ``refused``，不重排。"""
+    stamps = episode.get("timestamps")
+    if not isinstance(stamps, list) or len(stamps) != len(frames):
+        return "frame_count", (
+            "episode 没有和帧数一样长的 timestamps。帧数相同就按序号对齐。"
+            "这不会发现错位，也不会发现两套时钟。"
+        )
+    slam_times = []
+    for frame in frames:
+        if not isinstance(frame, dict) or frame.get("timestamp_s") is None:
+            return "frame_count", (
+                "slam 帧没有 timestamp_s。帧数相同就按序号对齐。"
+                "两边时间戳都在、但对不上时会拒绝，不按序号硬配。"
+            )
+        try:
+            slam_times.append(float(frame["timestamp_s"]))
+        except (TypeError, ValueError):
+            return "refused", "slam 帧的 timestamp_s 不是数，拒绝按序号配对。"
+    try:
+        episode_times = [float(value) for value in stamps]
+    except (TypeError, ValueError):
+        return "refused", "episode timestamps 不是数，拒绝按序号配对。"
+    left = clock_unit(episode_times)
+    right = clock_unit(slam_times)
+    known = (UNIT_SECONDS, UNIT_NANOSECONDS)
+    if left in known and right in known and left != right:
+        return "refused", (
+            "episode 时间单位是 %s，slam 帧时间单位是 %s。"
+            "不按帧数硬配，也不自动换算。"
+            % (left, right)
+        )
+    limit = half_frame_seconds(episode_times, episode.get("fps"))
+    gap = max(abs(item - other) for item, other in zip(episode_times, slam_times))
+    if gap > limit:
+        return "refused", (
+            "同一序号的时间最大差 %.6g 秒，超过半帧门限 %.6g 秒。"
+            "不按序号把不同时刻配成同一帧。"
+            % (gap, limit)
+        )
+    return "timestamps", "逐帧时间戳落在半帧门限内，按这个顺序使用 T_world_cam。"
+
+
 def apply_ok_frame_world(episode, slam):
     """按逐帧状态写世界点。返回 episode 上的 ``hand_pose.slam`` 摘要。
 
@@ -155,11 +203,24 @@ def apply_ok_frame_world(episode, slam):
         summary["depth_status_note"] = (
             "没有逐帧深度证据。不写 iphone.per_frame，也不把缺测记成深度通过。"
         )
-    if summary.get("world_points_applied"):
-        return summary
     if not aligned:
+        summary["timestamp_alignment"] = "frame_count"
+        summary["timestamp_alignment_note"] = "帧数不同，没有按序号配对，也没有按时间重排。"
+        if summary.get("world_points_applied"):
+            return summary
         summary["world_points_scope"] = "none"
         summary["T_world_cam"] = None
+        return summary
+    alignment, alignment_note = _timestamp_alignment(episode, frames)
+    summary["timestamp_alignment"] = alignment
+    summary["timestamp_alignment_note"] = alignment_note
+    if alignment == "refused":
+        summary["pose_status_aligned"] = False
+        summary["world_points_scope"] = "none"
+        summary["T_world_cam"] = None
+        summary["world_points_note"] = alignment_note
+        return summary
+    if summary.get("world_points_applied"):
         return summary
 
     statuses = []
@@ -321,12 +382,14 @@ def check_camera_episode(episode, slam):
         "world_hands_filled=%d" % filled,
         "world_hands_missing=%d" % missing,
         "sanity_ok=%s" % str(bool(sanity.get("ok"))).lower(),
+        "timestamp_alignment=%s" % block.get("timestamp_alignment"),
         "accuracy=unmeasured",
     ]
     flags = sanity.get("flags") or []
     if flags:
         lines.append("sanity_flags=%s" % "; ".join(str(flag) for flag in flags))
-    return "\n".join(lines) + "\n", (0 if sanity.get("ok") else 1), episode
+    refused = block.get("timestamp_alignment") == "refused"
+    return "\n".join(lines) + "\n", (0 if sanity.get("ok") and not refused else 1), episode
 
 
 def _load_json(path):

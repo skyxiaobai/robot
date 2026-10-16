@@ -949,6 +949,222 @@ class EurocOrbslam3ExcerptTest(unittest.TestCase):
             self.assertIn("time_unit_mismatch=false\n", text)
 
 
+class TimestampAlignmentTest(unittest.TestCase):
+    """帧数相同不够。两边时钟对不上时拒绝按序号配对。"""
+
+    def test_nanosecond_episode_is_not_paired_with_second_slam(self):
+        from headcam.slam_frames import apply_ok_frame_world, main as check_main
+
+        slam = json.loads(
+            (ROOT / "tests" / "fixtures" / "headcam" / "wilor_partial" / "slam_status.json").read_text(encoding="utf-8")
+        )
+        episode = json.loads(
+            (ROOT / "tests" / "fixtures" / "headcam" / "wilor_partial" / "episode.json").read_text(encoding="utf-8")
+        )
+        wrist = episode["hands"]["left"]["wrist_pose"][0][0]
+        episode["timestamps"] = [0.0, 33000000.0, 66000000.0, 100000000.0]
+        apply_ok_frame_world(episode, slam)
+        block = episode["hand_pose"]["slam"]
+        self.assertEqual(block["timestamp_alignment"], "refused")
+        self.assertFalse(block["pose_status_aligned"])
+        self.assertEqual(block["world_points_scope"], "none")
+        self.assertIsNone(block["T_world_cam"])
+        self.assertNotIn("world_hands", block)
+        self.assertEqual(episode["hands"]["left"]["wrist_pose"][0][0], wrist)
+
+        import io
+        import tempfile
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            episode_path = tmp / "episode.json"
+            episode_path.write_text(json.dumps(episode), encoding="utf-8")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = check_main([
+                    "--episode", str(episode_path),
+                    "--slam-status", str(ROOT / "tests" / "fixtures" / "headcam" / "wilor_partial" / "slam_status.json"),
+                ])
+            self.assertEqual(code, 1)
+            self.assertIn("timestamp_alignment=refused\n", buf.getvalue())
+
+    def test_same_unit_offset_is_refused(self):
+        from headcam.slam_frames import apply_ok_frame_world
+
+        slam = json.loads(
+            (ROOT / "tests" / "fixtures" / "headcam" / "wilor_partial" / "slam_status.json").read_text(encoding="utf-8")
+        )
+        episode = json.loads(
+            (ROOT / "tests" / "fixtures" / "headcam" / "wilor_partial" / "episode.json").read_text(encoding="utf-8")
+        )
+        episode["timestamps"] = [10.0, 10.033, 10.066, 10.1]
+        apply_ok_frame_world(episode, slam)
+        self.assertEqual(episode["hand_pose"]["slam"]["timestamp_alignment"], "refused")
+        self.assertIsNone(episode["hand_pose"]["slam"].get("world_hands"))
+
+
+class EurocCalibMathTest(unittest.TestCase):
+    """公开的 V1_01_easy 相机 yaml 数字。不是头戴标定。"""
+
+    def test_T_right_left_goes_through_the_body_frame(self):
+        from headcam.euroc_session import ns_to_second_text, stereo_from_euroc
+
+        left = {
+            "camera_model": "pinhole",
+            "distortion_model": "radial-tangential",
+            "resolution": [752, 480],
+            "intrinsics": [458.654, 457.296, 367.215, 248.375],
+            "distortion_coefficients": [-0.28340811, 0.07395907, 0.00019359, 1.76187114e-05],
+            "T_BS": {"data": [
+                0.0148655429818, -0.999880929698, 0.00414029679422, -0.0216401454975,
+                0.999557249008, 0.0149672133247, 0.025715529948, -0.064676986768,
+                -0.0257744366974, 0.00375618835797, 0.999660727178, 0.00981073058949,
+                0.0, 0.0, 0.0, 1.0,
+            ]},
+        }
+        right = {
+            "camera_model": "pinhole",
+            "distortion_model": "radial-tangential",
+            "resolution": [752, 480],
+            "intrinsics": [457.587, 456.134, 379.999, 255.238],
+            "distortion_coefficients": [-0.28368365, 0.07451284, -0.00010473, -3.55590700e-05],
+            "T_BS": {"data": [
+                0.0125552670891, -0.999755099723, 0.0182237714554, -0.0198435579556,
+                0.999598781151, 0.0130119051815, 0.0251588363115, 0.0453689425024,
+                -0.0253898008918, 0.0179005838253, 0.999517347078, 0.00786212447038,
+                0.0, 0.0, 0.0, 1.0,
+            ]},
+        }
+        calib, T_cam_imu, notes = stereo_from_euroc((left, "cam0"), (right, "cam1"))
+        self.assertEqual(calib["dist_left"].shape, (4,))
+        self.assertEqual(calib["dist_right"].shape, (4,))
+        T_BS_left = np.asarray(left["T_BS"]["data"], dtype=float).reshape(4, 4)
+        T_BS_right = np.asarray(right["T_BS"]["data"], dtype=float).reshape(4, 4)
+        point = np.array([0.1, -0.2, 1.5, 1.0])
+        pose = np.eye(4)
+        pose[:3, :3] = calib["R"]
+        pose[:3, 3] = calib["T"]
+        by_stereo = pose @ point
+        by_body = np.linalg.inv(T_BS_right) @ T_BS_left @ point
+        np.testing.assert_allclose(by_stereo, by_body, atol=1e-9)
+        np.testing.assert_allclose(T_cam_imu @ T_BS_left, np.eye(4), atol=1e-8)
+        self.assertIn("不把缺少的 k3 补成 0", notes["distortion_note"])
+        self.assertEqual(ns_to_second_text(1403715291262142976), "1403715291.262142976")
+
+
+class UnmeasuredLeRobotPackageTest(unittest.TestCase):
+    """没装 pyarrow 就跳过。图像是测试里生成的色块，位姿行来自已提交的 EuRoC 摘录。"""
+
+    def test_package_keeps_pose_status_and_omits_hands(self):
+        import shutil
+        import subprocess
+        import tempfile
+
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:
+            self.skipTest("未安装 pyarrow，跳过 LeRobot 包写入")
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("没有 ffmpeg，跳过 LeRobot 包写入")
+
+        excerpt = ROOT / "tests" / "fixtures" / "headcam" / "euroc_orbslam3_v101" / "CameraTrajectory_excerpt.txt"
+        lines = []
+        for line in excerpt.read_text(encoding="utf-8").splitlines():
+            if line.strip() and not line.startswith("#"):
+                lines.append(line.strip())
+        lines = lines[:3]
+        stamps_ns = [int(line.split()[0].split(".")[0]) for line in lines]
+        stamps_ns.append(stamps_ns[-1] + 10000000000)
+
+        from headcam.export_mvp import main as export_main
+        from headcam.euroc_session import ns_to_second_text
+        from headcam.hand_pose import quat_xyzw_to_rotmat
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            session = tmp / "sess"
+            (session / "stereo").mkdir(parents=True)
+            (session / "metadata.json").write_text(json.dumps({
+                "episode_id": "euroc/excerpt-prefix",
+                "fps": 20.0,
+            }), encoding="utf-8")
+            stamp_lines = ["frame_index,timestamp_s"]
+            lr_lines = ["frame_index,left_s,right_s"]
+            for index, stamp in enumerate(stamps_ns):
+                text = ns_to_second_text(stamp)
+                stamp_lines.append("%d,%s" % (index, text))
+                lr_lines.append("%d,%s,%s" % (index, text, text))
+            (session / "timestamps.csv").write_text("\n".join(stamp_lines) + "\n", encoding="utf-8")
+            (session / "stereo" / "timestamps_lr.csv").write_text("\n".join(lr_lines) + "\n", encoding="utf-8")
+            write_calibration_yaml(session / "calib.yaml", _calib())
+            raw = bytearray()
+            for index in range(4):
+                raw.extend(bytes((index * 40 % 256, 90, 140)) * (8 * 8))
+            for name in ("left.mp4", "right.mp4"):
+                subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-loglevel", "error",
+                        "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "8x8", "-r", "20",
+                        "-i", "pipe:0", "-frames:v", "4",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+                        str(session / "stereo" / name),
+                    ],
+                    input=bytes(raw),
+                    check=True,
+                )
+            tum = tmp / "CameraTrajectory.txt"
+            tum.write_text(
+                "# 摘自 tests/fixtures/headcam/euroc_orbslam3_v101/CameraTrajectory_excerpt.txt 前 3 行。\n"
+                + "\n".join(lines) + "\n",
+                encoding="utf-8",
+            )
+            out = tmp / "out"
+            code = export_main([
+                "--session", str(session),
+                "--out", str(out),
+                "--slam-backend", "external_tum",
+                "--tum", str(tum),
+                "--tum-time-scale", "1e-9",
+                "--skip-hands",
+            ])
+            self.assertEqual(code, 0, (out / "report.json").read_text(encoding="utf-8") if (out / "report.json").is_file() else "no report")
+            report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+            self.assertIsNone(report["accuracy"])
+            self.assertEqual(report["slam"]["ok_frames"], 3)
+            self.assertEqual(report["slam"]["tracking_lost_frames"], 1)
+            self.assertEqual(report["qc"]["accepted_episodes"], 1)
+            self.assertEqual(report["qc"]["source"], "egodata.stereo_qc.qc_stereo_episode")
+            note = json.loads((out / "lerobot" / "meta" / "egodata_export.json").read_text(encoding="utf-8"))
+            self.assertIsNone(note["accuracy"])
+            self.assertEqual(note["hands"], "absent")
+            self.assertEqual(note["ok_frames"], 3)
+            self.assertEqual(note["frames"], 4)
+            info = json.loads((out / "lerobot" / "meta" / "info.json").read_text(encoding="utf-8"))
+            self.assertNotIn("observation.state", info["features"])
+            self.assertNotIn("action", info["features"])
+            self.assertEqual(info["features"]["observation.image"]["info"]["egodata.image_source"], "source_mp4")
+            table = pq.read_table(out / "lerobot" / "data" / "chunk-000" / "file-000.parquet")
+            self.assertEqual(table.num_rows, 4)
+            self.assertNotIn("observation.state", table.column_names)
+            self.assertNotIn("action", table.column_names)
+            self.assertNotIn("observation.hand_joints", table.column_names)
+            self.assertNotIn("observation.wrist_pose", table.column_names)
+            statuses = table.column("slam_status").to_pylist()
+            self.assertEqual(statuses, ["ok", "ok", "ok", "tracking_lost"])
+            poses = table.column("observation.pose").to_pylist()
+            self.assertIsNone(poses[3])
+            self.assertTrue(all(item is not None and any(abs(value) > 1e-6 for value in item) for item in poses[:3]))
+            status = json.loads((out / "slam_status.json").read_text(encoding="utf-8"))
+            for index in range(3):
+                matrix = np.asarray(status["frames"][index]["T_world_cam"], dtype=float)
+                pose = poses[index]
+                np.testing.assert_allclose(pose[:3], matrix[:3, 3], atol=1e-8)
+                np.testing.assert_allclose(quat_xyzw_to_rotmat(pose[3:]), matrix[:3, :3], atol=1e-6)
+            read_back = [float(value) for value in table.column("timestamp").to_pylist()]
+            for got, stamp in zip(read_back, stamps_ns):
+                self.assertAlmostEqual(got, int(stamp) / 1e9, places=6)
+
+
 class PrepareSessionGuardTest(unittest.TestCase):
     def test_refuses_to_nest_work_copy_inside_source(self):
         import tempfile

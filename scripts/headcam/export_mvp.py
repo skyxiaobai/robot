@@ -23,6 +23,7 @@ from egodata.stereo_qc import qc_stereo_episode
 from headcam.slam_frames import apply_ok_frame_world
 from headcam.slam_vio import run_slam, world_hands_gate, write_slam_tum
 from headcam.sync_calib import refresh_calib_json
+from headcam.time_units import median_positive_step
 
 SKIP_LINKS = {"slam.tum", "trajectory.tum", "slam_status.json"}
 
@@ -186,6 +187,118 @@ def _default_hand_pipeline(sessions, out_dir, **kwargs):
     return run_pipeline(sessions, out_dir, **kwargs)
 
 
+def _integer_fps(stamps, metadata_fps):
+    """用时间戳中位间隔得到整数 fps。对不上就不四舍五入冒充。"""
+    step = median_positive_step(stamps)
+    if step is None or step <= 0:
+        if metadata_fps is None:
+            return None
+        value = float(metadata_fps)
+        rounded = int(round(value))
+        if rounded < 1 or abs(value - rounded) > 1e-3:
+            return None
+        return rounded
+    hz = 1.0 / float(step)
+    rounded = int(round(hz))
+    if rounded < 1 or abs(hz - rounded) / float(rounded) > 0.02:
+        return None
+    return rounded
+
+
+def _intrinsic_from_calib(document):
+    if not isinstance(document, dict) or document.get("calibration") != "stereo":
+        return None
+    left = document.get("left") or {}
+    intrinsics = left.get("intrinsics")
+    if not isinstance(intrinsics, list) or len(intrinsics) != 4:
+        return None
+    width = document.get("image_width")
+    height = document.get("image_height")
+    if width is None or height is None:
+        return None
+    fx, fy, cx, cy = [float(value) for value in intrinsics]
+    return {
+        "image_width": int(width),
+        "image_height": int(height),
+        "camera_intrinsic": [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
+    }
+
+
+def _unmeasured_hands(num_frames):
+    """21 个点都是 null。不是零坐标。"""
+    return {
+        "joints": [[[None, None, None] for _ in range(21)] for _ in range(num_frames)],
+        "confidence": [None] * num_frames,
+        "wrist_pose": [[None, None, None, None, None, None, None] for _ in range(num_frames)],
+        "filled": [False] * num_frames,
+    }
+
+
+def prepare_unmeasured_episode(session, slam, calib_document, episode_dir):
+    """没跑手部时写一条 episode，交给现有 QC 和 LeRobot。
+
+    手部标成 ``unmeasured``，不填 0。标定或整数 fps 对不上时不写文件。
+    返回 ``(path or None, reason)``。
+    """
+    frames = slam.get("frames") if isinstance(slam, dict) else None
+    if not isinstance(frames, list) or not frames:
+        return None, "没有逐帧位姿状态，未导出"
+    camera = _intrinsic_from_calib(calib_document)
+    if camera is None:
+        return None, "没有可用的双目标定，未把缺测手写成数据集"
+    stamps = [frame.get("timestamp_s") for frame in frames]
+    if any(stamp is None for stamp in stamps):
+        return None, "有的帧没有 timestamp_s，未导出"
+    meta_path = Path(session) / "metadata.json"
+    meta = {}
+    if meta_path.is_file():
+        loaded = json.loads(meta_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            meta = loaded
+    fps = _integer_fps(stamps, meta.get("fps"))
+    if fps is None:
+        return None, "帧间隔不是整数 fps，没有四舍五入，未导出"
+    num_frames = len(frames)
+    poses = []
+    for frame in frames:
+        if frame.get("status") == "ok" and frame.get("T_world_cam") is not None:
+            poses.append(frame["T_world_cam"])
+        else:
+            poses.append(None)
+    video = Path(session) / "stereo" / "left.mp4"
+    episode = {
+        "episode_id": meta.get("episode_id") or "headcam/%s" % Path(session).name,
+        "num_frames": num_frames,
+        "fps": float(fps),
+        "timestamps": [float(stamp) for stamp in stamps],
+        "image_width": camera["image_width"],
+        "image_height": camera["image_height"],
+        "camera_intrinsic": camera["camera_intrinsic"],
+        "camera_poses": poses,
+        "coordinate_frame": slam.get("coordinate_frame") or "camera",
+        "hands_measured": False,
+        "hands": {"left": _unmeasured_hands(num_frames), "right": _unmeasured_hands(num_frames)},
+        "stereo": {
+            "per_frame": {
+                "left": ["unmeasured"] * num_frames,
+                "right": ["unmeasured"] * num_frames,
+            },
+        },
+    }
+    instruction = str(meta.get("instruction") or "").strip()
+    if instruction:
+        episode["annotation"] = {"task": {"instruction": instruction}}
+    if video.is_file() and video.stat().st_size > 0:
+        episode["video_path"] = str(video.resolve())
+    annotate_episode(episode, slam)
+    episode_dir = Path(episode_dir)
+    episode_dir.mkdir(parents=True, exist_ok=True)
+    for old in episode_dir.glob("*.json"):
+        old.unlink()
+    path = _dump(episode_dir / "session.json", episode)
+    return path, None
+
+
 def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None, run_hands=True,
                episodes=None, export=True, hand_pipeline=None, repo_id="local/headcam_mvp",
                run_orbslam3=None, allow_partial=False, tum_time_scale=None, log=print):
@@ -242,9 +355,18 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
     if hands["status"] in ("ran", "external_episodes") and episode_dir.is_dir():
         annotate_episode_dir(episode_dir, slam)
 
+    unmeasured_reason = None
+    if hands["status"] == "skipped" and export and episodes is None:
+        _episode_path, unmeasured_reason = prepare_unmeasured_episode(
+            session, slam, calib_document, out / "episodes",
+        )
+        if _episode_path is not None:
+            episode_dir = out / "episodes"
+
     qc_report = None
     csv_path = None
     lerobot = None
+    pose_only = hands["status"] == "skipped" and export and episode_dir.is_dir() and any(episode_dir.glob("*.json"))
     should_qc = hands["status"] in ("ran", "external_episodes") and episode_dir.is_dir() and any(episode_dir.glob("*.json"))
     if hands["status"] == "ran" and isinstance(pipeline_summary, dict):
         qc_report = {
@@ -258,7 +380,7 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
         csv_candidate = out / "qc" / "yield.csv"
         if csv_candidate.is_file():
             csv_path = csv_candidate
-    elif should_qc or hands["status"] == "external_episodes":
+    elif should_qc or hands["status"] == "external_episodes" or pose_only:
         if any(episode_dir.glob("*.json")):
             qc_report, _html, csv_path = qc_episode_dir(episode_dir, out)
             qc_report = {
@@ -275,8 +397,11 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
         lerobot = {"dir": None, "result": "世界系双手被拒绝，未跑手部，未导出"}
     elif not export:
         lerobot = {"dir": None, "result": "未请求导出"}
-    elif hands["status"] == "skipped":
-        lerobot = {"dir": None, "result": "未跑手部，也没有已有 episode，未导出"}
+    elif hands["status"] == "skipped" and not pose_only:
+        lerobot = {
+            "dir": None,
+            "result": unmeasured_reason or "未跑手部，也没有已有 episode，未导出",
+        }
     elif export and accepted and csv_path is not None:
         lerobot = export_lerobot_dir(episode_dir, csv_path, out / "lerobot", repo_id)
     else:
@@ -304,6 +429,7 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
             "覆盖不全的轨迹不会交给手部管线，避免最近邻把 tracking_lost 填成世界位姿。",
             "已有相机系 episode 上，只有 status=ok 的帧写 p_world = T_world_cam @ p_cam。覆盖不全时这些点在 hand_pose.slam.world_hands，丢失帧为 null，手腕主数组仍在相机系。",
             "accuracy 始终是 null：本入口不测量 SLAM 误差。",
+            "没跑手部时，通过 QC 的片段仍可导出。手部列不写，也不用 0 填充。",
             "轨迹时间单位和会话不一致时不自动换算，也不把跨单位的最近邻写成 T_world_cam。",
         ],
     }

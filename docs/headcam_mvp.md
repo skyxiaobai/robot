@@ -25,7 +25,7 @@ export_mvp      →  现有双目手部管线 → egodata QC → LeRobot
 - [ ] 没有 `slam.tum`、也没执行 ORB-SLAM3 时，`slam_status.json` 里每一帧都是 `pose_missing`，`T_world_cam` 为 null，输出目录里没有 `slam.tum`。
 - [ ] 轨迹盖不住的帧是 `tracking_lost`，不拿相邻位姿填上。这种残缺轨迹不会交给手部管线。
 - [ ] 每一帧都有位姿时，`coordinate_frame` 为 `slam_world`，`slam.tum` 只含这些测量。报告里的 `accuracy` 仍是 null。
-- [ ] `export_mvp --skip-hands` 能在没有 WiLoR 的机器上跑完同步和位姿状态。加上已有 episode 时，QC 走 `qc_stereo_episode`，通过的片段才进入现有 LeRobot 导出。
+- [ ] `export_mvp --skip-hands` 能在没有 WiLoR 的机器上跑完同步和位姿状态。有双目标定、并且帧间隔能落成整数 fps 时，会写一条手部未测量的 episode，QC 走 `qc_stereo_episode`，通过才进入现有 LeRobot 导出。手部列不写，也不填 0。
 - [ ] 10 分钟量级的会话只是同一套按帧文件，不另写一条短片段专用路径。本仓库还没有拿 10 分钟实拍测过耗时。
 
 还不算做成：板上同时录双目和 IMU、Kalibr 求解、ORB-SLAM3 的轨迹误差、自采画面上的认手效果。这些仍见 `docs/PIPELINE_ARCHITECTURE.md` 第 4 节和 `docs/hardware_day1_checklist.md`。
@@ -59,7 +59,7 @@ python scripts/headcam/slam_vio.py --session /data/sess01 --backend external_tum
 # 先看帧数。不是每一帧都 ok 时退出码 1，world_hands=refused。
 python scripts/headcam/summarize_slam.py --session /data/sess01 --tum CameraTrajectory.txt
 
-# 串起来。没有手部权重，或还没确认帧数时，只写同步和位姿。
+# 不跑手部。有标定且 QC 通过时，仍写出 LeRobot 包：位姿和 slam_status 在，手部列不在。
 python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01_mvp \
   --slam-backend external_tum --tum CameraTrajectory.txt --skip-hands
 
@@ -130,6 +130,8 @@ python scripts/headcam/slam_frames.py \
 ```
 
 `sanity_ok=false` 时退出码是 1。覆盖不全时 `world_points_scope=ok_frames_only`：世界点只在 `ok` 帧，`tracking_lost` / `pose_missing` 是 null，手腕主数组仍是相机系。把 `--out` 的文件再送进同一条命令，不会把世界点乘第二次。
+
+帧数相同还不够。episode 和 slam 帧两边都有时间戳时，同一序号必须落在半帧门限内。一边是秒、一边是纳秒，或时间对不上，就 `timestamp_alignment=refused`，退出码 1，不乘 `T_world_cam`，也不自动换算。缺一边的时间戳时仍按帧数对齐，打印里写 `timestamp_alignment=frame_count`。
 
 `tests/fixtures/headcam/wilor_partial/` 是手写的 4 帧相机系手腕，状态是 ok / tracking_lost / tracking_lost / ok。它不是 WiLoR 输出，也不是测过的轨迹。
 
@@ -235,7 +237,7 @@ python scripts/headcam/summarize_slam.py \
 # 纳秒轨迹（Basalt 常见；个别导出会到 1e18）在确认之后才加缩放：
 #   --tum-time-scale 1e-9
 
-# 3. 把同一份轨迹写进 MVP 报告，仍然不跑手。
+# 3. 不跑手。有标定且 QC 通过时会写 LeRobot 包，手部列不在里面。
 #    第 2 步如果加了 --tum-time-scale，这里和下面的手部命令也要带上同一个数。
 python scripts/headcam/export_mvp.py \
   --session /data/sess01 \
@@ -281,8 +283,9 @@ python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01
 - `accuracy` 永远是 null。不要把 HOT3D 手腕误差或别人的 SLAM 论文数字写到这次运行上。
 - 残缺轨迹的世界点只出现在 `hand_pose.slam.world_hands`。丢失帧是 null，不用最近邻，也不把整段标成 `world` 或 `world_yup`。
 - `record_session capture` 不是硬件同步采集。IMU 驱动、曝光寄存器、左右时间戳都还要在板上接。
-- 手部仍要 WiLoR / HaMeR / MediaPipe 那套环境和 `scripts/run_stereo_pipeline.py` 的参数。轨迹不完整时，不带 `--allow-partial` 的 `export_mvp` 拒绝跑手部。`--skip-hands` 只写同步和位姿。
-- LeRobot 导出需要 pyarrow。当前解释器没有时，报告里给出 `ego_to_lerobot.py` 的命令，不写空数据集。
+- 手部仍要 WiLoR / HaMeR / MediaPipe 那套环境和 `scripts/run_stereo_pipeline.py` 的参数。轨迹不完整时，不带 `--allow-partial` 的 `export_mvp` 拒绝跑手部。`--skip-hands` 不跑手部；有标定且 QC 通过时仍可导出，手部列不写。
+- LeRobot 导出需要 pyarrow 和 pandas。当前解释器没有时，报告里给出 `ego_to_lerobot.py` 的命令，不写空数据集。pyarrow 26 要求 numpy 2；这台机器的 numpy 是 1.26.4，用的是 pyarrow 18.1.0。
+- 有手部测量的导出仍把无效手的关节块写成 0，并用 `observation.hand_valid` 标成无效。没测量过的片段不走这条，避免把 0 当成手腕在原点。
 - 本模块没有在 10 分钟实拍上测过运行时间或轨迹误差。
 - 纳秒轨迹不会自动除以 1e9。`tests/fixtures/headcam/offline_skip_hands/` 用合成的秒轨迹和纳秒轨迹检查这件事，不代表实机精度。
 
@@ -301,14 +304,49 @@ python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01
 | 不传 `--tum-time-scale` | `frames=400 ok=0 tracking_lost=400 pose_missing=0 time_unit_mismatch=true world_hands=refused`，退出码 1 |
 | `--tum-time-scale 1e-9` | `frames=400 ok=400 tracking_lost=0 pose_missing=0 world_pose=true world_hands=allowed accuracy=unmeasured`，退出码 0 |
 
-最大关联间隙是 2.4e-7 秒，来自把 1e18 的纳秒放进 float64 再乘 1e-9。半帧门限大约 0.025 秒，对得上，没有改门限。`export_mvp --skip-hands` 退出码 0，`hands=skipped`，`accuracy` 仍是 null。解析器接受了表头注释、`.000000` 和 xyzw。这一次 400 帧都在轨迹里，没有丢帧可标成 `tracking_lost`。
+最大关联间隙是 2.4e-7 秒，来自把 1e18 的纳秒放进 float64 再乘 1e-9。半帧门限大约 0.025 秒，对得上，没有改门限。当时的 `export_mvp --skip-hands` 退出码 0，`hands=skipped`，`accuracy` 仍是 null，还没有写 LeRobot 包。解析器接受了表头注释、`.000000` 和 xyzw。这一次 400 帧都在轨迹里，没有丢帧可标成 `tracking_lost`。包是下一节用其中 40 行写的。
 
 `tests/fixtures/headcam/euroc_orbslam3_v101/CameraTrajectory_excerpt.txt` 是其中第 361–400 行，文件头写了来源。回归测试用这 40 行，不提交数据集、词表或二进制。
 
 同一段前缀对 EuRoC 地面真值做了一次 SE3 对齐（左相机位置：机体位姿乘 `mav0/cam0/sensor.yaml` 的 `T_BS`，Umeyama，尺度固定）。地面真值大约晚 1 秒才开始，对上 379/400 帧。ATE RMSE 0.026 m，中位数 0.022 m，最大 0.051 m。这是 EuRoC 无人机上 ORB-SLAM3 双目管线的检查，不是头戴设备的精度，也没有写进 `accuracy`。
 
-`slam_frames.py` 没有接到这份轨迹上。`tests/fixtures/headcam/wilor_partial/` 是 4 帧合成相机系，时间戳是 0 到 0.1 秒，和 EuRoC 的绝对秒（约 1.403715273e9）不是同一个钟。`slam_frames` 按帧数对齐，不按时间戳。把它们拼在一起对不上，也就没有改时间戳去凑。
+`slam_frames.py` 现在会拒绝时钟对不上的序号配对。`tests/fixtures/headcam/wilor_partial/` 仍是 4 帧合成相机系，时间戳是 0 到 0.1 秒。把它改成纳秒、或整段平移 10 秒再对着这份 slam 状态，结果是 `timestamp_alignment=refused`，手腕不被乘。没有改时间戳去凑 EuRoC。
+
+## 离线 EuRoC：skip-hands 写出了 LeRobot 包
+
+仍是无人机公开数据上的管线检查，不是头戴精度。这次没有重编 ORB-SLAM3。轨迹用的是上面那份摘录（第 361–400 行，40 帧）。图像和 `sensor.yaml`、`imu0/data.csv` 从同一份 `V1_01_easy.zip` 按这 40 个纳秒文件名抽出来。
+
+`scripts/headcam/euroc_session.py` 做的换算：
+
+- 图像文件名的纳秒用整数除法写成秒（9 位小数），不先塞进 float64。左右文件名相同，所以 `sync_error_ms.left_right_max` 测得是 0。这是测到的差，不是缺测填 0。
+- `T_right_left = inv(T_BS_cam1) @ T_BS_cam0`，`p_B = T_BS @ p_C`。`imu0` 的 `T_BS` 是单位阵，所以 `T_cam_imu = inv(T_BS_cam0)`。
+- 畸变是 radial-tangential 的 4 个数，没有把缺的 k3 补成 0。
+- IMU 只保留落在这 40 帧时间里的 391 行，列顺序原样抄，不旋转轴。
+- 曝光、任务、手部、`imu_cam_time_offset_s` 没有来源，metadata 的 `unknown` 里写着。不写 `stereo/exposure.csv`。
+
+fps 用图像间隔中位数，是 20，和 yaml 里的 `rate_hz` 一致。
+
+```bash
+python scripts/headcam/euroc_session.py \
+  --euroc /tmp/euroc/mav --tum tests/fixtures/headcam/euroc_orbslam3_v101/CameraTrajectory_excerpt.txt \
+  --out /tmp/euroc/sess --episode-id euroc/V1_01_easy_excerpt
+python scripts/headcam/export_mvp.py \
+  --session /tmp/euroc/sess --out /tmp/euroc/mvp \
+  --slam-backend external_tum \
+  --tum tests/fixtures/headcam/euroc_orbslam3_v101/CameraTrajectory_excerpt.txt \
+  --tum-time-scale 1e-9 --skip-hands
+```
+
+结果：退出码 0。`world_pose=true`，`ok=40`，`tracking_lost=0`，`pose_missing=0`，`hands=skipped`，`accuracy=null`。QC：`accepted=yes`，`bad_fraction=0`，`stereo_unmeasured=40`，`label_coverage=0`（手没测，默认覆盖率门限是 0，不因此拒绝），`blur=0`。
+
+LeRobot 包 `40` 行，等于 ok 帧数。`slam_status` 全是 `ok`。`observation.pose` 的平移和旋转对回 `slam_status.json` 的 `T_world_cam`，平移最大差 0，旋转最大差约 7e-16。`timestamp` 是 float64 的图像秒。没有 `observation.state`、`action`、手腕列。`meta/egodata_export.json` 里 `hands=absent`，`accuracy=null`。任务文本是 `unknown`。视频来自真实 png，现有导出把它缩成 224 的正方形（`image_source=source_mp4`，40 帧），不是 16×16 占位。
+
+QC 的 CSV 里 `valid_action_ratio=0`：没有实测手腕，所以没有可监督的动作。包本身不写这些手部列，导出说明里的 `valid_action_ratio` 是 null。
+
+当前 PyPI 上的 `lerobot==0.6.1` 加载器要 torch 和 numpy 2，这次没有装。包是用 pyarrow 18.1.0 打开核对的。
+
+回归：`tests/test_headcam_mvp.py` 的 `UnmeasuredLeRobotPackageTest` 用摘录的前 3 行加一帧对不上的时间。图像是测试里生成的 8×8 色块，不是 EuRoC 像素。没装 pyarrow 时跳过，原因写在 `skipTest` 里。3 行 ok 的位姿能读回，第 4 行 `tracking_lost` 的位姿是 null。
 
 ## 下一步
 
-下一次可以做的事：把一份真实 WiLoR 相机系 episode 交给 `slam_frames.py`，看 `sanity_ok` 和 `world_points_scope`。本仓库没有这样的文件。不要把 `sanity_ok` 写成精度，也不要把残缺轨迹标成 `world_yup`。头戴相机、IMU、WiLoR 和 pyarrow 继续缺着。整段 V1_01_easy 和 stereo-inertial 这次没有跑。
+下一次可以做的事：把一份真实 WiLoR 相机系 episode 交给 `slam_frames.py`。时间戳必须和轨迹在同一个钟上，否则会 `timestamp_alignment=refused`。本仓库没有这样的文件。不要把 `sanity_ok` 写成精度，也不要把残缺轨迹标成 `world_yup`。头戴相机、曝光寄存器和 WiLoR 继续缺着。整段 V1_01_easy 和 stereo-inertial 这次没有跑。LeRobot 自带的 Dataset 加载器这次没有装，因为它要 torch。
