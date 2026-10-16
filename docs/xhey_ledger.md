@@ -29,7 +29,9 @@
 
 **C9（已完成，未质检 / 世界系）**：内核 `justinz2010/xhey-rsi-c9-stera-di`（2026-10-15 21:24 提交）没有 `--qc-filter`，DI 用的是 `xhey-di-pretrain` 的原始世界系，不是 C11 的相机系。未过滤 3 段留出：zero 11.026 cm；C9ctl（`iphone+xhey_rgb+aug`）11.062 cm（+0.037）、手在动相对 zero −0.021；C9（`iphone+stera+di+xhey_rgb+aug`）11.100 cm（+0.075）、手在动相对 zero −0.005。C9 整体和手在动都不如同一次对照，队列结论 **done_worse**。没有另给绝对手在动 ADE、置信区间或逐片段数字，账本不补这些。`ledger.csv` 的 status 列按镜像规则写成 better_moving，只表示手在动相对 zero 为负、且没有置信区间；这不是实验结论。质检 + 相机系的重跑是 C9b，已经在 [Kaggle](https://www.kaggle.com/code/justinz2010/xhey-rsi-c9b-stera-di-qc) 上跑，不要再交一份。
 
-唯一循环驱动是 `scripts/xhey_auto_iter.py`：先收已完成的固定内核，再按 [`docs/xhey/queue.json`](xhey/queue.json) 提交就绪候选。新候选默认必须带 `--qc-filter`。正在占 GPU 的是 **C9b** 和 **C12**（HOI4D，2026-10-16 08:11 起 running）；有内核在跑时不抢占。
+**C12（2026-10-16）**：C12 = HOI4D 预训练（MANO GT 手、相机光学系，`iphone+hoi4d+xhey_rgb+aug`），内核 `justinz2010/xhey-rsi-c12-hoi4d`。评测集与 C11ctl 相同（iPhone-only 对照，手在动 −0.137）。C12 整体 ADE 9.845 cm（比 zero 9.779 +0.066）、手在动 12.619 cm（−0.064，95% 区间 [−0.071, −0.056]）。HOI4D 在手在动上赢了「猜手不动」，但没有超过不加 HOI4D 的对照，整体更差。队列结论 **done_worse_vs_ctl**。图：[`experiments/report/C12/`](../experiments/report/C12/)。
+
+唯一循环驱动是 `scripts/xhey_auto_iter.py`：先收已完成的固定内核，再按 [`docs/xhey/queue.json`](xhey/queue.json) 提交就绪候选。新候选默认必须带 `--qc-filter`。正在占 GPU 的是 **C9b**（2026-10-16 09:23 因 main 仍显示 ready，循环重交了 kernel version 2）；有内核在跑时不抢占。
 
 ---
 

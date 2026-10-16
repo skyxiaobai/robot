@@ -218,10 +218,8 @@ class CommittedState(unittest.TestCase):
         self.assertEqual(state["queue_running"]["id"], "C9b")
         self.assertEqual(state["queue_running"]["slug"], "justinz2010/xhey-rsi-c9b-stera-di-qc")
         self.assertEqual(state["queue_running"]["mix"], "iphone+stera+di+xhey_rgb+aug")
-        also = state["queue_running_also"]
-        self.assertEqual([i["id"] for i in also], ["C12"])
-        self.assertEqual(also[0]["slug"], "justinz2010/xhey-rsi-c12-hoi4d")
-        self.assertEqual(also[0]["launched"], "2026-10-16 08:11")
+        self.assertEqual(state["queue_running"]["launched"], "2026-10-16 09:23")
+        self.assertNotIn("queue_running_also", state)
         q = json.loads((ROOT / "docs" / "xhey" / "queue.json").read_text(encoding="utf-8"))
         ids = [i["id"] for i in q["queue"]]
         self.assertEqual(ids[ids.index("C9") + 1], "C9b")
@@ -243,7 +241,15 @@ class CommittedState(unittest.TestCase):
         self.assertEqual(by_id["C7b"]["status"], "done_better_moving")
         self.assertEqual(by_id["C2"]["status"], "done_better_moving")
         self.assertEqual(by_id["C11"]["status"], "done_no_gain_vs_ctl")
-        self.assertEqual(by_id["C12"]["status"], "running")
+        c12 = by_id["C12"]
+        self.assertEqual(c12["status"], "done_worse_vs_ctl")
+        self.assertEqual(c12["result"]["C12_overall_ade_cm"], 9.845)
+        self.assertEqual(c12["result"]["C12_delta_overall_cm"], 0.066)
+        self.assertEqual(c12["result"]["C12_moving_ade_cm"], 12.619)
+        self.assertEqual(c12["result"]["C12_moving_minus_zero_cm"], -0.064)
+        self.assertEqual(c12["result"]["C12_moving_ci95"], [-0.071, -0.056])
+        self.assertEqual(c12["result"]["zero_overall_ade_cm"], 9.779)
+        self.assertEqual(c12["result"]["C11ctl_moving_minus_zero_cm"], -0.137)
         c9b = by_id["C9b"]
         self.assertEqual(c9b["status"], "running")
         self.assertEqual(c9b["slug"], "justinz2010/xhey-rsi-c9b-stera-di-qc")
@@ -286,6 +292,21 @@ class CommittedState(unittest.TestCase):
         self.assertEqual(ctl["delta_overall_cm"], 0.037)
         self.assertEqual(ctl["delta_moving_cm"], -0.021)
         self.assertIsNone(ctl["moving_ade_cm"])
+        ids = [r["id"] for r in ai.load_ledger()]
+        self.assertEqual(ids.count("C9"), 1)
+        self.assertEqual(ids.count("C9ctl"), 1)
+        self.assertEqual(ids.count("C12"), 1)
+        c12row = rows["C12"]
+        self.assertEqual(c12row["status"], "ok")
+        self.assertEqual(c12row["date"], "2026-10-16 09:23")
+        self.assertEqual(c12row["source"], "justinz2010/xhey-rsi-c12-hoi4d")
+        self.assertEqual(c12row["config"]["mix"], "iphone+hoi4d+xhey_rgb+aug")
+        self.assertEqual(c12row["overall_ade_cm"], 9.84528839947837)
+        self.assertEqual(c12row["zero_overall_ade_cm"], 9.77909130440752)
+        self.assertEqual(c12row["delta_overall_cm"], 0.06619709507084982)
+        self.assertEqual(c12row["moving_ade_cm"], 12.61918517304698)
+        self.assertEqual(c12row["delta_moving_cm"], -0.06371208950413923)
+        self.assertEqual(c12row["delta_moving_ci95"], [-0.0713584667934282, -0.05602845413106699])
 
 
 def _kernel_metrics(mix, moving=-0.05):
