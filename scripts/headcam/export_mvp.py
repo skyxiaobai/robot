@@ -93,6 +93,10 @@ def slam_public_summary(slam):
         "pose_missing_frames": slam.get("pose_missing_frames"),
         "tracking_lost_frames": slam.get("tracking_lost_frames"),
         "max_gap_s": slam.get("max_gap_s"),
+        "frame_time_unit": slam.get("frame_time_unit"),
+        "tum_time_unit": slam.get("tum_time_unit"),
+        "tum_time_scale": slam.get("tum_time_scale"),
+        "time_unit_mismatch": bool(slam.get("time_unit_mismatch")),
         "accuracy": None,
         "imu_used_for_pose": False,
         "notes": slam.get("notes"),
@@ -178,7 +182,7 @@ def _default_hand_pipeline(sessions, out_dir, **kwargs):
 
 def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None, run_hands=True,
                episodes=None, export=True, hand_pipeline=None, repo_id="local/headcam_mvp",
-               run_orbslam3=None, allow_partial=False, log=print):
+               run_orbslam3=None, allow_partial=False, tum_time_scale=None, log=print):
     """跑 MVP 前半段并接上现有 QC / LeRobot。返回报告字典，同时写 ``out/report.json``。"""
     session = Path(session)
     out = Path(out)
@@ -189,7 +193,7 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
     calib_document = refresh_calib_json(session, out_path=out / "calib.json")
     slam = run_slam(
         session, backend=slam_backend, tum_path=tum_path, max_gap_s=max_gap_s,
-        out_dir=out, run_orbslam3=run_orbslam3,
+        out_dir=out, run_orbslam3=run_orbslam3, tum_time_scale=tum_time_scale,
     )
     gate = world_hands_gate(slam, allow_partial=allow_partial)
     hand_session = prepare_hand_session(session, out / "hand_session", slam)
@@ -293,8 +297,13 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
             "没有完整 SLAM 轨迹时 world_pose=false，不写单位阵 slam.tum。",
             "覆盖不全的轨迹不会交给手部管线，避免最近邻把 tracking_lost 填成世界位姿。",
             "accuracy 始终是 null：本入口不测量 SLAM 误差。",
+            "轨迹时间单位和会话不一致时不自动换算，也不把跨单位的最近邻写成 T_world_cam。",
         ],
     }
+    if slam.get("time_unit_mismatch"):
+        report["limits"].append(
+            "time_unit_mismatch=true。确认轨迹是纳秒后，用 --tum-time-scale 1e-9 再跑，不要放宽 max_gap_s。"
+        )
     if slam.get("pose_coverage") == "partial":
         report["limits"].append("ok 帧的 T_world_cam 在 slam_status.json，episode 仍按相机系处理。")
     if gate.get("warning"):
@@ -303,11 +312,14 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
     if log:
         sync = report["sync_error_ms"] or {}
         log(
-            "world_pose=%s ok=%s pose_missing=%s tracking_lost=%s sync_left_right_max_ms=%s hands=%s"
+            "world_pose=%s ok=%s pose_missing=%s tracking_lost=%s sync_left_right_max_ms=%s "
+            "time_unit_mismatch=%s hands=%s"
             % (
                 str(report["world_pose"]).lower(),
                 slam.get("ok_frames"), slam.get("pose_missing_frames"), slam.get("tracking_lost_frames"),
-                sync.get("left_right_max"), hands.get("status"),
+                sync.get("left_right_max"),
+                str(bool(slam.get("time_unit_mismatch"))).lower(),
+                hands.get("status"),
             )
         )
     return report
@@ -321,6 +333,8 @@ def main(argv=None):
     parser.add_argument("--out", required=True)
     parser.add_argument("--slam-backend", default="auto", choices=("auto", "none", "external_tum", "orbslam3"))
     parser.add_argument("--tum", default=None)
+    parser.add_argument("--tum-time-scale", type=float, default=None,
+                        help="显式缩放轨迹时间戳。纳秒轨迹用 1e-9。不自动换算")
     parser.add_argument("--max-gap-s", type=float, default=None)
     parser.add_argument("--skip-hands", action="store_true", help="不跑 WiLoR / 手部管线，只写同步和位姿状态")
     parser.add_argument("--allow-partial", action="store_true",
@@ -336,9 +350,9 @@ def main(argv=None):
             max_gap_s=args.max_gap_s, run_hands=not args.skip_hands, episodes=args.episodes,
             export=not args.no_export, repo_id=args.repo_id,
             run_orbslam3=True if args.run_orbslam3 else None,
-            allow_partial=args.allow_partial,
+            allow_partial=args.allow_partial, tum_time_scale=args.tum_time_scale,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     if report["hands"].get("warning"):

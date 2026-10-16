@@ -114,8 +114,9 @@ session/
 
 - 左右目外参：`T_right_left`，点从左相机变到右相机，与 `scripts/headcam/hand_pose.py` 里的 Kalibr / OpenCV / 简单 YAML 一致。
 - `scripts/retarget/calibrate.py` 的 `AxisCalibration` 是人手到机械臂的轴缩放。把它当成相机标定会直接报错。
-- `sync_error_ms.left_right_max` / `left_right_median` 来自 `stereo/timestamps_lr.csv`，单位毫秒。
+- `sync_error_ms.left_right_max` / `left_right_median` 来自 `stereo/timestamps_lr.csv`，单位毫秒。两列都是秒时，算法与 `validate_session` 相同（绝对值乘 1000）。两列都是纳秒时改为除以 1e6，并在 `time_unit` 里记下 `nanoseconds`。两列一个是秒、一个是纳秒，或有一边无法判断时，这两个字段是 null，不写一个巨大的毫秒数。
 - `sync_error_ms.imu_cam` 只在 metadata 或命令行已经给出 `imu_cam_time_offset_s`（秒）时填写，取绝对值再换成毫秒。这里不估计时间偏移。
+- 会话自己的 `timestamps.csv` 如果步长像纳秒，只在 SLAM 状态里警告。不把会话时间戳除以 1e9，因为下游按秒解释速度。
 
 ## ORB-SLAM3 / 开源 VIO 怎么接
 
@@ -176,7 +177,7 @@ OpenVINS、Basalt 只要最后给出同一份 TUM（`timestamp tx ty tz qx qy qz
 | `ok` 等于 `frames`，`tracking_lost=0`，`pose_missing=0` | 每一帧都在半帧门限内有轨迹点 | `world_hands=allowed`。可以去掉 `--skip-hands` |
 | `tracking_lost>0` | 文件里有轨迹，但这几帧最近的点超过半帧 | `world_hands=refused`。不要把最近邻填进去 |
 | `pose_missing>0` 且 `ok=0` | 没有可用轨迹（没给文件、文件是空的，或求解器没写出轨迹） | `world_hands=refused` |
-| 第一列是 1e18 左右 | 轨迹还是纳秒，会话时间戳是秒 | 会几乎全部变成 `tracking_lost`。先除以 1e9，不要放宽门限 |
+| `time_unit_mismatch=true` | 用于关联的轨迹时间和会话帧时间一个是秒、一个是纳秒 | `world_hands=refused`。不自动换算，跨单位的最近邻也不写成位姿。确认后加 `--tum-time-scale 1e-9`，不要放宽门限 |
 
 `accuracy=unmeasured` 一直印着。不要把它换成别的数字。
 
@@ -194,14 +195,19 @@ export ORB_SLAM3_ROOT=$HOME/ORB_SLAM3
   "$ORB_SLAM3_ROOT/Examples/Stereo-Inertial/EuRoC.yaml" \
   /data/euroc_sess01 \
   /data/euroc_sess01/times.txt
-# 成功时当前目录出现 CameraTrajectory.txt。第一列要和 timestamps.csv 一样是秒。
+# 成功时当前目录出现 CameraTrajectory.txt。EuRoC 例子通常已经把时间写成秒。
+# 若 summarize 印出 tum_time_unit=nanoseconds 且 time_unit_mismatch=true，
+# 不要改 max_gap_s。确认第一列是纳秒后，在第 2 步加上 --tum-time-scale 1e-9。
 
 # 2. 只读这文件。不启动求解器，不写精度。
 python scripts/headcam/summarize_slam.py \
   --session /data/sess01 \
   --tum ./CameraTrajectory.txt
+# 纳秒轨迹（Basalt 常见；个别导出会到 1e18）在确认之后才加缩放：
+#   --tum-time-scale 1e-9
 
 # 3. 把同一份轨迹写进 MVP 报告，仍然不跑手。
+#    第 2 步如果加了 --tum-time-scale，这里和下面的手部命令也要带上同一个数。
 python scripts/headcam/export_mvp.py \
   --session /data/sess01 \
   --out outputs/sess01_mvp \
@@ -226,7 +232,8 @@ OpenVINS、Basalt 也停在第 2 步之前，只要你先得到 8 列 TUM（`tim
 # 那个文件不是 TUM。抽成上面的 8 列再交给 --tum。确认命令以你本地的 --help 为准。
 ./run_serial_msckf config/euroc_mav/estimator_config.yaml /data/euroc_sess01
 
-# Basalt：上游 vio 的形状。trajectory 的时间常常是纳秒，先换成秒。
+# Basalt：上游 vio 的形状。trajectory 的时间常常是纳秒。
+# 不要把原文件直接交给 --tum。确认后用 --tum-time-scale 1e-9，或先写成秒。
 basalt_vio \
   --dataset-path /data/euroc_sess01 \
   --cam-calib /data/euroc_calib.json \
@@ -248,7 +255,10 @@ python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01
 - 手部仍要 WiLoR / HaMeR / MediaPipe 那套环境和 `scripts/run_stereo_pipeline.py` 的参数。轨迹不完整时，不带 `--allow-partial` 的 `export_mvp` 拒绝跑手部。`--skip-hands` 只写同步和位姿。
 - LeRobot 导出需要 pyarrow。当前解释器没有时，报告里给出 `ego_to_lerobot.py` 的命令，不写空数据集。
 - 本模块没有在 10 分钟实拍上测过运行时间或轨迹误差。
+- 纳秒轨迹不会自动除以 1e9。`tests/fixtures/headcam/offline_skip_hands/` 用合成的秒轨迹和纳秒轨迹检查这件事，不代表实机精度。
 
 ## 下一步
 
-按上面的 Day 1 在实机上跑外部 TUM，用 `summarize_slam.py` 看帧数。每一帧都 `ok` 之后再去掉 `--skip-hands`。若只有一部分帧跟踪成功，再改手部合成：只对 `ok` 帧做 `p_world = T_world_cam · p_cam`，丢失帧保持缺测，不用最近邻。
+按上面的 Day 1 在实机上跑外部 TUM，用 `summarize_slam.py` 看帧数。`time_unit_mismatch=true` 时先加显式 `--tum-time-scale`，不要放宽门限。每一帧都 `ok` 之后再去掉 `--skip-hands`。
+
+下一次可以改代码的离线步骤：只对 `slam_status.json` 里 `status=ok` 的帧做 `p_world = T_world_cam · p_cam`，`tracking_lost` / `pose_missing` 保持缺测，不用最近邻。这一步仍然不编造轨迹，也不测量误差。实机 ORB-SLAM3、相机、IMU、WiLoR 和 pyarrow 继续缺着。

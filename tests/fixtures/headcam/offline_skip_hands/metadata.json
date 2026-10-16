@@ -1,0 +1,7 @@
+{
+  "episode_id": "headcam/offline-skip-hands",
+  "fps": 30.0,
+  "exposure_locked": true,
+  "auto_exposure": false,
+  "note": "合成夹具，用来离线跑 export_mvp --skip-hands。时间戳和轨迹是手写的，不是 ORB-SLAM3 输出，没有测量误差。"
+}

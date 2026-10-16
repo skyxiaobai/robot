@@ -26,6 +26,7 @@ import numpy as np
 
 from egodata.schema import rotmat_to_quat_xyzw
 from headcam.hand_pose import load_tum_trajectory
+from headcam.time_units import describe_clocks
 
 STATUS_OK = "ok"
 STATUS_POSE_MISSING = "pose_missing"
@@ -199,10 +200,25 @@ def format_slam_counts(result, gate):
         "world_pose=%s" % str(bool(result.get("world_pose"))).lower(),
         "world_hands=%s" % gate["world_hands"],
         "accuracy=unmeasured",
+        "frame_time_unit=%s" % result.get("frame_time_unit", "unknown"),
+        "tum_time_unit=%s" % result.get("tum_time_unit", "unknown"),
+        "tum_time_scale=%s" % _format_scale(result.get("tum_time_scale", 1.0)),
+        "time_unit_mismatch=%s" % str(bool(result.get("time_unit_mismatch"))).lower(),
     ]
+    if result.get("time_unit_mismatch"):
+        lines.append("time_unit_note=轨迹与会话时间单位不一致，未自动缩放")
+    elif result.get("frame_time_unit") == "nanoseconds":
+        lines.append("time_unit_note=会话时间戳像纳秒，未自动除以 1e9")
     if gate.get("warning"):
         lines.append("warning=%s" % gate["warning"])
     return "\n".join(lines) + "\n"
+
+
+def _format_scale(scale):
+    value = float(scale if scale is not None else 1.0)
+    if value == 1.0:
+        return "1"
+    return "%.12g" % value
 
 
 def orbslam3_plan(session, binary=None, vocab=None, settings=None):
@@ -236,12 +252,14 @@ def orbslam3_plan(session, binary=None, vocab=None, settings=None):
     }
 
 
-def _result(session, frames, max_gap_s, backend, notes, orbslam3=None, imu_present=False, ran=False):
+def _result(session, frames, max_gap_s, backend, notes, orbslam3=None, imu_present=False, ran=False,
+           time_fields=None):
     summary = _coverage(frames)
     plan = orbslam3 if orbslam3 is not None else orbslam3_plan(session)
     if ran:
         plan = dict(plan)
         plan["ran"] = True
+    clocks = time_fields or {}
     return {
         "schema": "headcam_slam_status_v1",
         "session": str(session),
@@ -250,6 +268,11 @@ def _result(session, frames, max_gap_s, backend, notes, orbslam3=None, imu_prese
         "imu_present": bool(imu_present),
         "imu_used_for_pose": False,
         "accuracy": None,
+        "frame_time_unit": clocks.get("frame_time_unit", "unknown"),
+        "tum_time_unit": clocks.get("tum_time_unit", "unknown"),
+        "tum_time_scale": float(clocks.get("tum_time_scale", 1.0)),
+        "time_unit_mismatch": bool(clocks.get("time_unit_mismatch", False)),
+        "time_unit_note": clocks.get("note") or "",
         "notes": notes,
         "orbslam3": plan,
         "frames": frames,
@@ -268,29 +291,60 @@ def _notes_for_coverage(coverage, backend, detail):
     return "没有可用的世界位姿。不写单位阵 slam.tum。%s" % detail
 
 
-def result_from_tum(session, tum_path, frame_times, max_gap_s, backend, note="", orbslam3=None, ran=False):
+def _join_note(text, extra):
+    extra = (extra or "").strip()
+    text = (text or "").strip()
+    if extra and text:
+        return text + " " + extra
+    return text or extra
+
+
+def _drop_cross_unit_poses(frames):
+    """单位对不上时不保留最近邻位姿。状态改成 tracking_lost，矩阵保持 null。"""
+    dropped = []
+    for frame in frames:
+        if frame.get("status") == STATUS_OK:
+            dropped.append({
+                "timestamp_s": frame["timestamp_s"],
+                "status": STATUS_TRACKING_LOST,
+                "gap_s": frame.get("gap_s"),
+                "T_world_cam": None,
+            })
+        else:
+            dropped.append(frame)
+    return dropped
+
+
+def result_from_tum(session, tum_path, frame_times, max_gap_s, backend, note="", orbslam3=None, ran=False,
+                    tum_time_scale=None):
     times, poses = _load_poses(tum_path)
-    extra = (" " + note) if note else ""
+    clocks = describe_clocks(frame_times, times, tum_time_scale)
+    extra = _join_note(note, clocks["note"])
+    imu_present = (Path(session) / "imu.csv").is_file()
     if len(poses) == 0:
         text = "轨迹文件是空的（%s），按 pose_missing 处理，不发明位姿。%s" % (tum_path, extra)
         return _result(
             session, associate_poses(frame_times, [], [], max_gap_s), max_gap_s, backend,
-            text, orbslam3=orbslam3, imu_present=(Path(session) / "imu.csv").is_file(), ran=ran,
+            text.strip(), orbslam3=orbslam3, imu_present=imu_present, ran=ran, time_fields=clocks,
         )
-    frames = associate_poses(frame_times, times, poses, max_gap_s)
+    frames = associate_poses(frame_times, clocks["times_for_association"], poses, max_gap_s)
+    if clocks["time_unit_mismatch"]:
+        frames = _drop_cross_unit_poses(frames)
     coverage = _coverage(frames)["pose_coverage"]
-    detail = "来源 %s，backend=%s。%s" % (tum_path, backend, extra)
+    detail = _join_note("来源 %s，backend=%s。" % (tum_path, backend), extra)
     return _result(
         session, frames, max_gap_s, backend, _notes_for_coverage(coverage, backend, detail),
-        orbslam3=orbslam3, imu_present=(Path(session) / "imu.csv").is_file(), ran=ran,
+        orbslam3=orbslam3, imu_present=imu_present, ran=ran, time_fields=clocks,
     )
 
 
-def _missing_result(session, frame_times, max_gap_s, backend, notes, orbslam3=None):
+def _missing_result(session, frame_times, max_gap_s, backend, notes, orbslam3=None, tum_time_scale=None):
+    clocks = describe_clocks(frame_times, [], tum_time_scale)
     frames = associate_poses(frame_times, [], [], max_gap_s)
     return _result(
-        session, frames, max_gap_s, backend, notes, orbslam3=orbslam3,
+        session, frames, max_gap_s, backend, _join_note(notes, clocks["note"]), orbslam3=orbslam3,
         imu_present=(Path(session) / "imu.csv").is_file(), ran=bool(orbslam3 and orbslam3.get("ran")),
+        time_fields=clocks,
     )
 
 
@@ -322,12 +376,15 @@ def run_orbslam3_process(plan, run_dir, timeout_s=None):
 
 
 def run_slam(session, backend="auto", tum_path=None, max_gap_s=None, out_dir=None,
-            run_orbslam3=None, timeout_s=None):
+            run_orbslam3=None, timeout_s=None, tum_time_scale=None):
     """读会话并返回可 JSON 化的位姿结果。``auto`` 只读已有 TUM，不启动 ORB-SLAM3。
 
     ``backend=none`` 即使目录里已有 ``slam.tum`` 也标记 ``pose_missing``。
     ``backend=orbslam3`` 默认不执行二进制；设置 ``run_orbslam3=True`` 或环境变量
     ``ORB_SLAM3_RUN=1`` 才会执行。执行失败不发明位姿。
+
+    ``tum_time_scale`` 只在调用者显式给出时缩放轨迹时间戳（纳秒轨迹用 ``1e-9``）。
+    会话时间戳和轨迹单位不一致时不自动换算，也不采纳跨单位的位姿。
     """
     session = Path(session)
     frame_times = read_timestamps(session)
@@ -344,6 +401,7 @@ def run_slam(session, backend="auto", tum_path=None, max_gap_s=None, out_dir=Non
         result = _missing_result(
             session, frame_times, max_gap_s, "none",
             "backend=none：不读轨迹，每一帧 pose_missing。%s" % imu_note,
+            tum_time_scale=tum_time_scale,
         )
     elif backend == "external_tum":
         path = explicit or _find_tum(session)
@@ -351,25 +409,31 @@ def run_slam(session, backend="auto", tum_path=None, max_gap_s=None, out_dir=Non
             result = _missing_result(
                 session, frame_times, max_gap_s, "external_tum",
                 "没有可读取的 TUM 轨迹，pose_missing。%s" % imu_note,
+                tum_time_scale=tum_time_scale,
             )
         else:
             result = result_from_tum(
                 session, path, frame_times, max_gap_s, "external_tum", "",
+                tum_time_scale=tum_time_scale,
             )
     elif backend == "orbslam3":
         result = _run_orbslam3_backend(
             session, frame_times, max_gap_s, explicit, run_orbslam3, timeout_s, out_dir, imu_note,
+            tum_time_scale=tum_time_scale,
         )
     elif backend == "auto":
         path = explicit or _find_tum(session)
         if path is not None and path.is_file():
-            result = result_from_tum(session, path, frame_times, max_gap_s, "external_tum", "")
+            result = result_from_tum(
+                session, path, frame_times, max_gap_s, "external_tum", "",
+                tum_time_scale=tum_time_scale,
+            )
         else:
             plan = orbslam3_plan(session)
             result = _missing_result(
                 session, frame_times, max_gap_s, "none",
                 "没有 slam.tum / trajectory.tum，也没有执行 ORB-SLAM3，每一帧 pose_missing。%s" % imu_note,
-                orbslam3=plan,
+                orbslam3=plan, tum_time_scale=tum_time_scale,
             )
     else:
         raise ValueError("未知 backend %s（可用 auto、none、external_tum、orbslam3）" % backend)
@@ -388,16 +452,18 @@ def run_slam(session, backend="auto", tum_path=None, max_gap_s=None, out_dir=Non
     return result
 
 
-def _run_orbslam3_backend(session, frame_times, max_gap_s, explicit, run_orbslam3, timeout_s, out_dir, imu_note):
+def _run_orbslam3_backend(session, frame_times, max_gap_s, explicit, run_orbslam3, timeout_s, out_dir, imu_note,
+                          tum_time_scale=None):
     should_run = run_orbslam3 if run_orbslam3 is not None else os.environ.get("ORB_SLAM3_RUN") == "1"
     plan = orbslam3_plan(session)
     if explicit is not None and explicit.is_file() and not should_run:
         result = result_from_tum(
             session, explicit, frame_times, max_gap_s, "orbslam3", "", orbslam3=plan, ran=False,
+            tum_time_scale=tum_time_scale,
         )
-        result["notes"] = (
-            "读入了外部 TUM（%s），本进程没有执行 ORB-SLAM3，也没有测量精度。%s"
-            % (explicit, imu_note)
+        result["notes"] = _join_note(
+            "读入了外部 TUM（%s），本进程没有执行 ORB-SLAM3，也没有测量精度。%s" % (explicit, imu_note),
+            result.get("time_unit_note"),
         )
         result["orbslam3"] = dict(plan)
         result["orbslam3"]["ran"] = False
@@ -407,7 +473,7 @@ def _run_orbslam3_backend(session, frame_times, max_gap_s, explicit, run_orbslam
         return _missing_result(
             session, frame_times, max_gap_s, "orbslam3",
             "没有执行 ORB-SLAM3（未设置 ORB_SLAM3_RUN=1）。会话里已有的 slam.tum 不会被改称为 ORB-SLAM3 的输出。%s" % imu_note,
-            orbslam3=plan,
+            orbslam3=plan, tum_time_scale=tum_time_scale,
         )
     if not plan["available"]:
         plan = dict(plan)
@@ -415,7 +481,7 @@ def _run_orbslam3_backend(session, frame_times, max_gap_s, explicit, run_orbslam
         return _missing_result(
             session, frame_times, max_gap_s, "orbslam3",
             "ORB-SLAM3 还不能跑，缺少 %s。pose_missing。%s" % (", ".join(plan["missing"]), imu_note),
-            orbslam3=plan,
+            orbslam3=plan, tum_time_scale=tum_time_scale,
         )
     run_dir = Path(out_dir or Path(session) / "orbslam3_run")
     if out_dir is not None:
@@ -431,12 +497,16 @@ def _run_orbslam3_backend(session, frame_times, max_gap_s, explicit, run_orbslam
         return _missing_result(
             session, frame_times, max_gap_s, "orbslam3",
             "ORB-SLAM3 %s。不使用残缺输出，pose_missing。%s" % (reason, imu_note),
-            orbslam3=plan,
+            orbslam3=plan, tum_time_scale=tum_time_scale,
         )
     result = result_from_tum(
         session, executed["tum_path"], frame_times, max_gap_s, "orbslam3", "", orbslam3=plan, ran=True,
+        tum_time_scale=tum_time_scale,
     )
-    result["notes"] = _notes_for_coverage(result["pose_coverage"], "orbslam3", "进程已执行，精度未测量。%s" % imu_note)
+    result["notes"] = _join_note(
+        _notes_for_coverage(result["pose_coverage"], "orbslam3", "进程已执行，精度未测量。%s" % imu_note),
+        result.get("time_unit_note"),
+    )
     result["orbslam3"] = plan
     return result
 
@@ -494,19 +564,29 @@ def main(argv=None):
     parser.add_argument("--out", required=True)
     parser.add_argument("--backend", default="auto", choices=("auto", "none", "external_tum", "orbslam3"))
     parser.add_argument("--tum", default=None, help="已有 TUM 轨迹。不执行 SLAM")
+    parser.add_argument("--tum-time-scale", type=float, default=None,
+                        help="显式缩放轨迹时间戳。纳秒轨迹用 1e-9。不自动换算")
     parser.add_argument("--max-gap-s", type=float, default=None)
     parser.add_argument("--run-orbslam3", action="store_true", help="backend=orbslam3 时真的执行二进制")
     parser.add_argument("--strict", action="store_true", help="没有完整世界位姿时退出码 1")
     args = parser.parse_args(argv)
-    result = run_slam(
-        args.session, backend=args.backend, tum_path=args.tum, max_gap_s=args.max_gap_s,
-        out_dir=args.out, run_orbslam3=True if args.run_orbslam3 else None,
-    )
+    try:
+        result = run_slam(
+            args.session, backend=args.backend, tum_path=args.tum, max_gap_s=args.max_gap_s,
+            out_dir=args.out, run_orbslam3=True if args.run_orbslam3 else None,
+            tum_time_scale=args.tum_time_scale,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     print(
-        "world_pose=%s coordinate_frame=%s ok=%d pose_missing=%d tracking_lost=%d accuracy=unmeasured"
+        "world_pose=%s coordinate_frame=%s ok=%d pose_missing=%d tracking_lost=%d "
+        "frame_time_unit=%s tum_time_unit=%s time_unit_mismatch=%s accuracy=unmeasured"
         % (
             str(result["world_pose"]).lower(), result["coordinate_frame"],
             result["ok_frames"], result["pose_missing_frames"], result["tracking_lost_frames"],
+            result["frame_time_unit"], result["tum_time_unit"],
+            str(result["time_unit_mismatch"]).lower(),
         )
     )
     if args.strict and not result["world_pose"]:

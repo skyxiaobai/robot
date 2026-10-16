@@ -252,6 +252,36 @@ class SyncCalibTest(unittest.TestCase):
             self.assertIsNone(missing["left_right_max"])
             self.assertIsNone(missing["source"])
 
+    def test_nanosecond_pair_converts_to_milliseconds_and_mismatch_is_null(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "sess"
+            root.mkdir()
+            (root / "stereo").mkdir()
+            # 400000 ns = 0.4 ms。步长 3.3e7，判定为纳秒，而不是把差值乘 1000。
+            (root / "stereo" / "timestamps_lr.csv").write_text(
+                "frame_index,left_s,right_s\n"
+                "0,0,400000\n"
+                "1,33000000,33400000\n"
+                "2,66000000,66400000\n",
+                encoding="utf-8",
+            )
+            measured = sync_error_ms(root)
+            self.assertEqual(measured["time_unit"], "nanoseconds")
+            self.assertAlmostEqual(measured["left_right_max"], 0.4, places=6)
+            self.assertAlmostEqual(measured["left_right_median"], 0.4, places=6)
+            (root / "stereo" / "timestamps_lr.csv").write_text(
+                "frame_index,left_s,right_s\n"
+                "0,0.000,0\n"
+                "1,0.033,33000000\n"
+                "2,0.066,66000000\n",
+                encoding="utf-8",
+            )
+            mixed = sync_error_ms(root)
+            self.assertIsNone(mixed["left_right_max"])
+            self.assertIsNone(mixed["left_right_median"])
+            self.assertIn("不换算", mixed["time_unit_note"])
+
     def test_retarget_axis_json_is_rejected(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
@@ -508,6 +538,131 @@ class FixtureGapTumTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("pose_missing=4\n", buf.getvalue())
         self.assertIn("world_hands=refused", buf.getvalue())
+
+
+class OfflineSkipHandsFixtureTest(unittest.TestCase):
+    """仓库里的合成会话：不跑 WiLoR，检查秒轨迹和纳秒轨迹。"""
+
+    def setUp(self):
+        _clear_orb_env()
+        self.session = ROOT / "tests" / "fixtures" / "headcam" / "offline_skip_hands"
+        self.seconds = self.session / "CameraTrajectory_seconds.txt"
+        self.nanoseconds = self.session / "CameraTrajectory_ns.txt"
+
+    def test_cli_skip_hands_seconds_tum_exports_without_wilor(self):
+        import tempfile
+
+        from headcam.export_mvp import main as export_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            code = export_main([
+                "--session", str(self.session),
+                "--out", str(out),
+                "--slam-backend", "external_tum",
+                "--tum", str(self.seconds),
+                "--skip-hands",
+            ])
+            self.assertEqual(code, 0)
+            report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+            self.assertTrue(report["world_pose"])
+            self.assertEqual(report["hands"]["status"], "skipped")
+            self.assertEqual(report["world_hands"], "allowed")
+            self.assertIsNone(report["accuracy"])
+            self.assertFalse(report["slam"]["time_unit_mismatch"])
+            self.assertEqual(report["slam"]["frame_time_unit"], "seconds")
+            self.assertEqual(report["slam"]["tum_time_unit"], "seconds")
+            self.assertAlmostEqual(report["sync_error_ms"]["left_right_max"], 0.4, places=5)
+            self.assertEqual(report["calibration"], "stereo")
+            self.assertTrue((out / "slam.tum").is_file())
+            self.assertIn("0.100000000", (out / "slam.tum").read_text(encoding="utf-8"))
+            status = json.loads((out / "slam_status.json").read_text(encoding="utf-8"))
+            self.assertTrue(all(frame["status"] == "ok" for frame in status["frames"]))
+            self.assertAlmostEqual(status["frames"][3]["T_world_cam"][0][3], 0.13)
+
+    def test_nanosecond_tum_is_mismatch_until_explicit_scale(self):
+        import tempfile
+
+        from headcam.export_mvp import main as export_main
+        from headcam.summarize_slam import main as summarize_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            out = tmp / "ns"
+            code = export_main([
+                "--session", str(self.session),
+                "--out", str(out),
+                "--slam-backend", "external_tum",
+                "--tum", str(self.nanoseconds),
+                "--skip-hands",
+                "--max-gap-s", "1e12",
+            ])
+            self.assertEqual(code, 0)
+            report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+            self.assertFalse(report["world_pose"])
+            self.assertTrue(report["slam"]["time_unit_mismatch"])
+            self.assertEqual(report["slam"]["tum_time_unit"], "nanoseconds")
+            self.assertEqual(report["slam"]["tracking_lost_frames"], 4)
+            self.assertEqual(report["slam"]["ok_frames"], 0)
+            self.assertEqual(report["hands"]["status"], "skipped")
+            self.assertFalse((out / "slam.tum").exists())
+            status = json.loads((out / "slam_status.json").read_text(encoding="utf-8"))
+            self.assertTrue(all(frame["T_world_cam"] is None for frame in status["frames"]))
+            self.assertNotIn("0.100000000", json.dumps(status["frames"]))
+
+            scaled = tmp / "scaled"
+            code = export_main([
+                "--session", str(self.session),
+                "--out", str(scaled),
+                "--slam-backend", "external_tum",
+                "--tum", str(self.nanoseconds),
+                "--tum-time-scale", "1e-9",
+                "--skip-hands",
+            ])
+            self.assertEqual(code, 0)
+            scaled_report = json.loads((scaled / "report.json").read_text(encoding="utf-8"))
+            self.assertTrue(scaled_report["world_pose"])
+            self.assertFalse(scaled_report["slam"]["time_unit_mismatch"])
+            self.assertAlmostEqual(scaled_report["slam"]["tum_time_scale"], 1e-9)
+            self.assertEqual(scaled_report["slam"]["tum_time_unit"], "nanoseconds")
+            self.assertAlmostEqual(
+                json.loads((scaled / "slam_status.json").read_text(encoding="utf-8"))["frames"][0]["T_world_cam"][0][3],
+                0.10,
+            )
+
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = summarize_main([
+                "--session", str(self.session), "--tum", str(self.nanoseconds),
+            ])
+        text = buf.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("time_unit_mismatch=true\n", text)
+        self.assertIn("tum_time_unit=nanoseconds\n", text)
+        self.assertIn("world_hands=refused\n", text)
+        self.assertIn("未自动缩放", text)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = summarize_main([
+                "--session", str(self.session), "--tum", str(self.nanoseconds),
+                "--tum-time-scale", "1e-9",
+            ])
+        self.assertEqual(code, 0)
+        self.assertIn("time_unit_mismatch=false\n", buf.getvalue())
+        self.assertIn("world_hands=allowed\n", buf.getvalue())
+        self.assertIn("tum_time_scale=1e-09\n", buf.getvalue())
+
+    def test_session_nanoseconds_are_not_silently_divided(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _write_session(Path(tmp) / "sess", [0.0, 33000000.0, 66000000.0])
+            result = run_slam(root, backend="none")
+            self.assertEqual(result["frame_time_unit"], "nanoseconds")
+            self.assertEqual(result["frames"][1]["timestamp_s"], 33000000.0)
+            self.assertIn("不把会话时间戳除以 1e9", result["notes"])
+            self.assertFalse(result["time_unit_mismatch"])
 
 
 class PrepareSessionGuardTest(unittest.TestCase):

@@ -25,6 +25,7 @@ if str(_SCRIPTS) not in sys.path:
 import numpy as np
 
 from headcam.hand_pose import load_calibration, write_calibration_yaml
+from headcam.time_units import UNIT_NANOSECONDS, UNIT_SECONDS, clock_unit
 
 SCHEMA = "headcam_calib_v1"
 
@@ -37,10 +38,27 @@ def _metadata(session):
     return data if isinstance(data, dict) else {}
 
 
-def measure_left_right_sync(session):
-    """``stereo/timestamps_lr.csv`` 的 |left_s - right_s|，单位毫秒。
+def _sync_delta_ms(left, right):
+    """左右时间差换成毫秒。两列都是纳秒时除以 1e6；都是秒时乘 1000。
 
-    与 ``validate_session`` 的 ``sync_ms`` 同一算法。文件不存在时返回 None。
+    两列单位不一致，或有一边无法判断时，不报告一个巨大的毫秒数。
+    """
+    left_unit = clock_unit(left)
+    right_unit = clock_unit(right)
+    delta = np.abs(np.asarray(left, dtype=float) - np.asarray(right, dtype=float))
+    if left_unit == UNIT_SECONDS and right_unit == UNIT_SECONDS:
+        return delta * 1e3, UNIT_SECONDS, None
+    if left_unit == UNIT_NANOSECONDS and right_unit == UNIT_NANOSECONDS:
+        return delta / 1e6, UNIT_NANOSECONDS, "两列都是纳秒，差值已除以 1e6 换成毫秒。会话时间戳本身没有被改写。"
+    note = "左右时间戳单位不一致或无法判断（left=%s，right=%s），不换算毫秒。" % (left_unit, right_unit)
+    return None, None, note
+
+
+def measure_left_right_sync(session):
+    """``stereo/timestamps_lr.csv`` 的左右时间差，单位毫秒。
+
+    两列都是秒时，与 ``validate_session`` 的 ``sync_ms`` 同一算法（绝对值乘 1000）。
+    两列都是纳秒时改为除以 1e6。文件不存在时返回 None。单位对不上时左右同步是 null。
     """
     path = Path(session) / "stereo" / "timestamps_lr.csv"
     if not path.is_file():
@@ -64,14 +82,19 @@ def measure_left_right_sync(session):
             "left_right_median": None,
             "n": 0,
             "source": "stereo/timestamps_lr.csv",
+            "time_unit": None,
         }
-    delta_ms = np.abs(np.asarray(left) - np.asarray(right)) * 1e3
-    return {
-        "left_right_max": float(np.max(delta_ms)),
-        "left_right_median": float(np.median(delta_ms)),
-        "n": int(delta_ms.size),
+    delta_ms, unit, note = _sync_delta_ms(left, right)
+    payload = {
+        "left_right_max": None if delta_ms is None else float(np.max(delta_ms)),
+        "left_right_median": None if delta_ms is None else float(np.median(delta_ms)),
+        "n": int(len(left)),
         "source": "stereo/timestamps_lr.csv",
+        "time_unit": unit,
     }
+    if note:
+        payload["time_unit_note"] = note
+    return payload
 
 
 def sync_error_ms(session, imu_cam_time_offset_s=None):

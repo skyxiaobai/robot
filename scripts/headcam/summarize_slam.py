@@ -17,10 +17,12 @@ if str(_SCRIPTS) not in sys.path:
 from headcam.slam_vio import format_slam_counts, run_slam, world_hands_gate  # noqa: E402
 
 
-def summarize_session(session, tum_path=None, backend="auto", max_gap_s=None, allow_partial=False, out_dir=None):
+def summarize_session(session, tum_path=None, backend="auto", max_gap_s=None, allow_partial=False, out_dir=None,
+                       tum_time_scale=None):
     """返回 ``(text, exit_code, result)``。``result`` 是 ``run_slam`` 的字典。"""
     result = run_slam(
         session, backend=backend, tum_path=tum_path, max_gap_s=max_gap_s, out_dir=out_dir,
+        tum_time_scale=tum_time_scale,
     )
     gate = world_hands_gate(result, allow_partial=allow_partial)
     return format_slam_counts(result, gate), gate["exit_code"], result
@@ -31,6 +33,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="打印 SLAM 逐帧状态计数。不声称轨迹误差。")
     parser.add_argument("--session", required=True)
     parser.add_argument("--tum", default=None, help="外部 TUM，例如 ORB-SLAM3 的 CameraTrajectory.txt")
+    parser.add_argument("--tum-time-scale", type=float, default=None,
+                        help="显式缩放轨迹时间戳。纳秒轨迹用 1e-9。不自动换算")
     parser.add_argument("--backend", default="auto", choices=("auto", "none", "external_tum", "orbslam3"))
     parser.add_argument("--max-gap-s", type=float, default=None)
     parser.add_argument("--out", default=None, help="可选。写出 slam_status.json；完整轨迹才写 slam.tum")
@@ -43,7 +47,7 @@ def main(argv=None):
     try:
         text, code, _result = summarize_session(
             args.session, tum_path=args.tum, backend=backend, max_gap_s=args.max_gap_s,
-            allow_partial=args.allow_partial, out_dir=args.out,
+            allow_partial=args.allow_partial, out_dir=args.out, tum_time_scale=args.tum_time_scale,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
