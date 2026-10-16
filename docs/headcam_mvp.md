@@ -100,11 +100,13 @@ session/
 | `tracking_lost` | 有轨迹文件，但这一帧对不上 | null |
 | `pose_missing` | 没有轨迹，或 ORB-SLAM3 没跑成 | null |
 
-`world_pose=true` 只在每一帧都是 `ok` 时成立，`coordinate_frame` 写 `slam_world`。否则是 `camera`。
+`world_pose=true` 只在每一帧都是 `ok` 时成立。这时 `coordinate_frame` 仍写旧名 `slam_world`，`common.frames` 把它收成 `frame_convention.name = world`（公制 SLAM，上轴未核实）。不是 `world_yup`。覆盖不全时 episode 保持 `camera`。
 
 现有手部代码在没有 `slam.tum` 时仍会把 episode 里的 `camera_poses` 填成单位阵，并把 `coordinate_frame` 写成 `camera`。这表示坐标还在相机系，不是「相机停在世界原点」。`export_mvp` 会在 episode 的 `hand_pose.slam.camera_pose_meaning` 里写 `identity_placeholder_camera_frame`。不要把这种单位阵再存成 `slam.tum`，否则旧的读取逻辑会把它标成 `slam_world`。
 
-覆盖不全时，ok 帧的矩阵留在 `slam_status.json`。不交给 `stereo_pipeline`，因为那边用最近邻，会把 `tracking_lost` 配到别的帧上。
+覆盖不全时，ok 帧的矩阵留在 `slam_status.json`，不写进 `slam.tum`，也不交给 `stereo_pipeline`（那边会最近邻）。若调用方已经有一份相机系 episode，`export_mvp` 只对 `status=ok` 的帧算 `p_world = T_world_cam @ p_cam`，结果放在 `hand_pose.slam.world_hands`。`tracking_lost` / `pose_missing` 是 null。手腕主数组不动，所以 `frames.sanity_check` 和 `qc_scorecard` 仍按相机系看这段。没有逐帧激光深度时不写 `iphone.per_frame`，成绩单里的 `depth_valid` 保持 null。`stereo.per_frame` 有的话抄到 `track_status`。
+
+每一帧都 ok 时，同一公式写进手腕和 `camera_poses`，并标 `world`。已经是世界系的 episode 不会再乘一次。`camera_yup` 不按这条 OpenCV 公式变换。
 
 文件里本来就是单位阵的一行（相机就在原点）会保留，状态是 `ok`。那是测量，不是补出来的。
 
@@ -250,7 +252,7 @@ python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01
 
 - 没有 SLAM 轨迹时就是 `pose_missing`。episode 可以仍在相机系里被 QC 和导出，那不是世界系标签。
 - `accuracy` 永远是 null。不要把 HOT3D 手腕误差或别人的 SLAM 论文数字写到这次运行上。
-- 残缺轨迹不会逐帧拼进现有 episode。下一步才是：只对 `ok` 帧做 `p_world = T_world_cam · p_cam`，丢失帧的手腕保持缺测，而不是最近邻。
+- 残缺轨迹的世界点只出现在 `hand_pose.slam.world_hands`。丢失帧是 null，不用最近邻，也不把整段标成 `world` 或 `world_yup`。
 - `record_session capture` 不是硬件同步采集。IMU 驱动、曝光寄存器、左右时间戳都还要在板上接。
 - 手部仍要 WiLoR / HaMeR / MediaPipe 那套环境和 `scripts/run_stereo_pipeline.py` 的参数。轨迹不完整时，不带 `--allow-partial` 的 `export_mvp` 拒绝跑手部。`--skip-hands` 只写同步和位姿。
 - LeRobot 导出需要 pyarrow。当前解释器没有时，报告里给出 `ego_to_lerobot.py` 的命令，不写空数据集。
@@ -261,4 +263,4 @@ python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01
 
 按上面的 Day 1 在实机上跑外部 TUM，用 `summarize_slam.py` 看帧数。`time_unit_mismatch=true` 时先加显式 `--tum-time-scale`，不要放宽门限。每一帧都 `ok` 之后再去掉 `--skip-hands`。
 
-下一次可以改代码的离线步骤：只对 `slam_status.json` 里 `status=ok` 的帧做 `p_world = T_world_cam · p_cam`，`tracking_lost` / `pose_missing` 保持缺测，不用最近邻。这一步仍然不编造轨迹，也不测量误差。实机 ORB-SLAM3、相机、IMU、WiLoR 和 pyarrow 继续缺着。
+下一次可以改代码的离线步骤：等有一份真实 WiLoR 相机系 episode 后，用 `apply_ok_frame_world` 复核拼接结果仍能过 `frames.sanity_check`。在那之前不要把残缺轨迹标成 `world_yup`，也不要让 `hand_fix` 跨 `tracking_lost` 去插世界坐标。这一步仍然不编造轨迹，也不测量误差。实机 ORB-SLAM3、相机、IMU、WiLoR 和 pyarrow 继续缺着。

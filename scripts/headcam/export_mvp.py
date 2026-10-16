@@ -20,6 +20,7 @@ if str(_SCRIPTS) not in sys.path:
 
 from egodata.qc import write_yield_reports, yield_report
 from egodata.stereo_qc import qc_stereo_episode
+from headcam.slam_frames import apply_ok_frame_world
 from headcam.slam_vio import run_slam, world_hands_gate, write_slam_tum
 from headcam.sync_calib import refresh_calib_json
 
@@ -100,7 +101,11 @@ def slam_public_summary(slam):
         "accuracy": None,
         "imu_used_for_pose": False,
         "notes": slam.get("notes"),
-        "camera_pose_meaning": "T_world_cam" if slam.get("world_pose") else "identity_placeholder_camera_frame",
+        "frame_convention": "world" if slam.get("world_pose") else "camera",
+        "camera_pose_meaning": (
+            "T_world_cam" if slam.get("world_pose")
+            else "ok_frames_only" if int(slam.get("ok_frames") or 0) else "identity_placeholder_camera_frame"
+        ),
     }
 
 
@@ -118,6 +123,7 @@ def annotate_episode(episode, slam):
         episode["hand_pose"] = hand_pose
     hand_pose["slam"] = summary
     episode["world_pose"] = bool(slam.get("world_pose"))
+    apply_ok_frame_world(episode, slam)
     return episode
 
 
@@ -296,6 +302,7 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
         "limits": [
             "没有完整 SLAM 轨迹时 world_pose=false，不写单位阵 slam.tum。",
             "覆盖不全的轨迹不会交给手部管线，避免最近邻把 tracking_lost 填成世界位姿。",
+            "已有相机系 episode 上，只有 status=ok 的帧写 p_world = T_world_cam @ p_cam。覆盖不全时这些点在 hand_pose.slam.world_hands，丢失帧为 null，手腕主数组仍在相机系。",
             "accuracy 始终是 null：本入口不测量 SLAM 误差。",
             "轨迹时间单位和会话不一致时不自动换算，也不把跨单位的最近邻写成 T_world_cam。",
         ],

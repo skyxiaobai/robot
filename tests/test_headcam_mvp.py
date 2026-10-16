@@ -665,6 +665,124 @@ class OfflineSkipHandsFixtureTest(unittest.TestCase):
             self.assertFalse(result["time_unit_mismatch"])
 
 
+def _camera_episode(num_frames, wrist_xy=None):
+    """OpenCV 相机系片段。手腕在前方偏下，距离大约 0.5 m，给 sanity_check 用。"""
+    hands = {}
+    for side_index, side in enumerate(("left", "right")):
+        joints, confidence, wrist_pose = [], [], []
+        for index in range(num_frames):
+            x = 0.0 if wrist_xy is None else wrist_xy[index][0]
+            point = [x + 0.04 * side_index, 0.12, 0.50]
+            joints.append([point] + [[point[0], 0.14, 0.50]] * 20)
+            confidence.append(0.9)
+            wrist_pose.append(point + [0.0, 0.0, 0.0, 1.0])
+        hands[side] = {"joints": joints, "confidence": confidence, "wrist_pose": wrist_pose}
+    return {
+        "episode_id": "splice",
+        "num_frames": num_frames,
+        "fps": 30.0,
+        "coordinate_frame": "camera",
+        "camera_poses": [np.eye(4).tolist() for _ in range(num_frames)],
+        "hands": hands,
+        "stereo": {"per_frame": {"left": ["ok"] * num_frames, "right": ["ok"] * num_frames}},
+    }
+
+
+class SlamFrameSpliceTest(unittest.TestCase):
+    """ok 帧才做 p_world = T @ p_cam。丢失帧保持缺测，并给成绩单看。"""
+
+    def test_gap_fixture_keeps_lost_frames_missing(self):
+        from common import frames as F
+        from qc_scorecard import score_episode
+
+        from headcam.slam_frames import apply_ok_frame_world
+
+        session = ROOT / "tests" / "fixtures" / "headcam" / "gap_tum"
+        slam = run_slam(session, backend="external_tum", tum_path=session / "CameraTrajectory.txt")
+        episode = _camera_episode(4)
+        original = episode["hands"]["left"]["wrist_pose"][0][:3]
+        apply_ok_frame_world(episode, slam)
+        block = episode["hand_pose"]["slam"]
+        self.assertEqual(block["pose_status"], ["ok", "tracking_lost", "tracking_lost", "ok"])
+        self.assertEqual(block["world_points_scope"], "ok_frames_only")
+        self.assertEqual(block["camera_pose_meaning"], "ok_frames_only")
+        self.assertIsNone(block["accuracy"])
+        self.assertIsNone(block["depth_status"])
+        self.assertEqual(block["track_status"]["left"], ["ok"] * 4)
+        self.assertIsNone(block["T_world_cam"][1])
+        self.assertIsNone(block["world_hands"]["left"][1])
+        self.assertIsNone(block["world_hands"]["left"][2])
+        self.assertEqual(episode["hands"]["left"]["wrist_pose"][0][:3], original)
+        self.assertEqual(F.convention_of(episode), F.CAMERA)
+        world0 = block["world_hands"]["left"][0]["wrist"]
+        world3 = block["world_hands"]["left"][3]["wrist"]
+        self.assertAlmostEqual(world0[0], original[0] + 0.1, places=6)
+        self.assertAlmostEqual(world3[0], original[0] + 0.2, places=6)
+        self.assertNotEqual(world0[0], world3[0])
+        check = F.sanity_check(episode)
+        self.assertTrue(check["ok"], check["flags"])
+        card = score_episode(episode, "gap-splice")
+        self.assertEqual(card["convention"], "camera")
+        self.assertTrue(card["frame_ok"], card["frame_flags"])
+        self.assertIsNone(card["depth_valid"])
+
+    def test_complete_fixture_writes_world_and_passes_sanity(self):
+        from common import frames as F
+        from qc_scorecard import score_episode
+
+        from headcam.slam_frames import apply_ok_frame_world
+
+        session = ROOT / "tests" / "fixtures" / "headcam" / "offline_skip_hands"
+        slam = run_slam(session, backend="external_tum", tum_path=session / "CameraTrajectory_seconds.txt")
+        episode = _camera_episode(4, wrist_xy=[(0.0, 0.0), (0.01, 0.0), (0.02, 0.0), (0.03, 0.0)])
+        local = [list(episode["hands"]["left"]["wrist_pose"][i][:3]) for i in range(4)]
+        apply_ok_frame_world(episode, slam)
+        self.assertEqual(F.convention_of(episode), F.WORLD)
+        self.assertNotEqual(F.convention_of(episode), F.WORLD_YUP)
+        self.assertFalse(episode["frame_convention"]["up_axis_verified"])
+        self.assertEqual(episode["frame_convention"]["camera_axes"], "cv")
+        self.assertEqual(episode["coordinate_frame"], "slam_world")
+        shifts = (0.10, 0.11, 0.12, 0.13)
+        for index, shift in enumerate(shifts):
+            wrist = episode["hands"]["left"]["wrist_pose"][index]
+            self.assertAlmostEqual(wrist[0], local[index][0] + shift, places=6)
+            self.assertAlmostEqual(wrist[1], local[index][1], places=6)
+            self.assertAlmostEqual(wrist[2], local[index][2], places=6)
+            self.assertAlmostEqual(float(np.linalg.norm(wrist[3:7])), 1.0, places=6)
+            self.assertAlmostEqual(episode["camera_poses"][index][0][3], shift, places=6)
+        again = episode["hands"]["left"]["wrist_pose"][0][0]
+        apply_ok_frame_world(episode, slam)
+        self.assertAlmostEqual(episode["hands"]["left"]["wrist_pose"][0][0], again, places=6)
+        check = F.sanity_check(episode)
+        self.assertTrue(check["ok"], check["flags"])
+        card = score_episode(episode, "complete-splice")
+        self.assertEqual(card["convention"], "world")
+        self.assertTrue(card["frame_ok"], card["frame_flags"])
+        self.assertIsNone(card["depth_valid"])
+        self.assertIsNone(episode["hand_pose"]["slam"]["accuracy"])
+
+    def test_camera_yup_and_existing_world_are_not_multiplied(self):
+        from headcam.slam_frames import apply_ok_frame_world
+
+        session = ROOT / "tests" / "fixtures" / "headcam" / "offline_skip_hands"
+        slam = run_slam(session, backend="external_tum", tum_path=session / "CameraTrajectory_seconds.txt")
+        yup = _camera_episode(4)
+        yup["coordinate_frame"] = "camera_yup"
+        before = yup["hands"]["right"]["wrist_pose"][1][0]
+        apply_ok_frame_world(yup, slam)
+        self.assertEqual(yup["hands"]["right"]["wrist_pose"][1][0], before)
+        self.assertEqual(yup["frame_convention"]["name"], "camera_yup")
+        self.assertIn("不变换", yup["hand_pose"]["slam"]["world_points_note"])
+
+        world = _camera_episode(4)
+        world["coordinate_frame"] = "slam_world"
+        world["hands"]["left"]["wrist_pose"][0][0] = 1.25
+        apply_ok_frame_world(world, slam)
+        self.assertEqual(world["hands"]["left"]["wrist_pose"][0][0], 1.25)
+        self.assertEqual(world["hand_pose"]["slam"]["world_points_scope"], "already_world")
+        self.assertEqual(world["frame_convention"]["name"], "world")
+
+
 class PrepareSessionGuardTest(unittest.TestCase):
     def test_refuses_to_nest_work_copy_inside_source(self):
         import tempfile
