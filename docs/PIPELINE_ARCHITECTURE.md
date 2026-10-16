@@ -33,11 +33,11 @@ flowchart TD
 
 | # | 步骤 | 输入 | 输出 / 文件格式 | 代码 | 状态 |
 |---|---|---|---|---|---|
-| ① | 设备录制 | 相机、IMU | 左右视频、时间戳、IMU 流 | 设备端录制程序（**还没写**，等板子） | 🔴 等硬件。落盘格式已固定（下一行），录制程序只要照着写 |
+| ① | 设备录制 | 相机、IMU | 左右视频、时间戳、IMU 流 | `scripts/headcam/record_session.py`（目录和导入；v4l2 只出计划） | 🟡 落盘格式和导入 CLI 已有。板上的硬件同步采集还没跑 |
 | ② | 会话目录 | ① 的原始流 | `session/`：`metadata.json`、`timestamps.csv`、`stereo/left.mp4`、`stereo/right.mp4`、`stereo/timestamps_lr.csv`、`calib.yaml`、`slam.tum`、`imu.csv`（规格 `docs/headcam_data_spec.md` §7.7） | `scripts/simulate_device_session.py`（假录制器） | 🟢 格式用 HOT3D 生成的会话端到端验证过 |
 | ③ | 会话校验 | 会话目录 | 通过 / 不通过 + 原因（可写 JSON） | `scripts/validate_session.py` | 🟢 正常会话通过；4 种注入故障（丢帧、左右不同步 5 ms、基线单位写成毫米、缺标定）都能抓到 |
 | ④ | 标定 | 棋盘格 / AprilGrid 录像 | `calib.yaml`（Kalibr camchain、简单 YAML 或 OpenCV FileStorage 都能读） | 求解在仓库外（Kalibr / OpenCV），仓库只读结果：`headcam/hand_pose.py::load_calibration` | 🔴 求解要真设备；读取已有单元测试 |
-| ⑤ | 世界位姿 | 双目 + IMU | `slam.tum`（`timestamp tx ty tz qx qy qz qw`，左目相机在世界里的位姿） | 求解在仓库外（如 ORB-SLAM3 / OpenVINS / Basalt）；仓库只读 TUM | 🔴 要真设备；HOT3D 用的是它自带的位姿 |
+| ⑤ | 世界位姿 | 双目 + IMU | `slam.tum`（仅完整轨迹）和 `slam_status.json`（`ok` / `pose_missing` / `tracking_lost`） | `scripts/headcam/slam_vio.py` 读已有 TUM。ORB-SLAM3 不内置；没轨迹时标记 `pose_missing`，不把单位阵写成世界轨迹 | 🟡 接口已有，精度未测。HOT3D 仍用它自带的位姿 |
 | ⑥ | 认手 | 左右视频 | 每帧每目每只手：21 个 2D 点、单目 3D、置信度（缓存 `cache/*.wilor.json`） | `headcam/hand_pose.py`（WiLoR / HaMeR / MediaPipe） | 🟢 EgoDex（单目）、HOT3D（双目）都跑过 |
 | ⑦ | 三角化 + 一致性 | ⑥ + `calib.yaml` | 左相机系 21 点（米）；每只手每帧的检查状态 | `headcam/stereo_pipeline.py` | 🟢 HOT3D 4 段跑通，误差见 `docs/stereo_pipeline.md` |
 | ⑧ | 平滑 / 补帧 | ⑦ | 平滑后的关节；补的帧标 `filled` | `headcam/hand_track_refine.py` | 🟢 同上；固定手型默认关（EgoDex 上没收益） |
@@ -88,11 +88,15 @@ Record3D 导出 → `scripts/iphone/record3d_adapter.py` 转成 iPhone 会话（
 LeRobot 每行同样有 `action_valid`（左、右）：当前帧和下一帧该手都是实测手腕才为 1。逐手状态同时写在 `stereo.per_frame`、`iphone.per_frame` 和 `hands[side].label_status`，`lowconf` / `fit` / `tracking` 等非 `ok` 状态标成无效；缺测仍留下「保持不动」的占位增量。
 `validate_session.py` 自动识别 iPhone 会话。用法和精度见 `docs/iphone_capture.md`、`docs/iphone_capture_eval.md`。
 
+### 3.2 头戴 MVP 入口
+
+`scripts/headcam/export_mvp.py` 把同步记录、位姿状态、现有双目管线、QC 和 LeRobot 串起来。没有盖住每一帧的轨迹时 `world_pose=false`，不生成单位阵 `slam.tum`。命令和限度见 [`docs/headcam_mvp.md`](headcam_mvp.md)。
+
 ## 4. 真正需要硬件才能做的事（剩余缺口）
 
-1. **设备端录制程序**：在 RK3566 上同时录左右双目、IMU，按 §7.7 落盘，并写 `stereo/timestamps_lr.csv`。格式和校验已就绪，程序本身要在板子上写和调。
-2. **标定求解**：双目内外参、IMU–相机外参与时间偏移（Kalibr）。仓库只读结果。
-3. **SLAM / VIO**：从自采双目 + IMU 算 `slam.tum`。HOT3D 用的是它自带的位姿，没有验证过我们自己的 SLAM 精度。
+1. **设备端录制程序**：`scripts/headcam/record_session.py` 能建目录、导入已有文件，并写出 ffmpeg/v4l2 计划。RK3566 上同时录左右双目和 IMU、写硬件时间戳，还要在板子上调。两个独立的 ffmpeg 进程不算硬件同步。
+2. **标定求解**：双目内外参、IMU–相机外参与时间偏移（Kalibr）。仓库只读结果，并记到 `calib.json` 的 `sync_error_ms`（没测到就是 null）。
+3. **SLAM / VIO**：`scripts/headcam/slam_vio.py` 读已有 TUM，或在 ORB-SLAM3 可执行文件齐了并且明确要求执行时调用。没轨迹就写 `pose_missing`。HOT3D 用的是它自带的位姿。我们自己的 SLAM 精度还没测，报告里的 `accuracy` 保持 null。
 4. **真实同步误差**：HOT3D 左右曝光时间完全一致（0 ms），我们设备的硬件同步要实测。
 5. **自采画面上的认手效果**：OV9281 黑白、镜头畸变、头带晃动、光照，都和 Quest3 不同。
 6. **QC 阈值校准**：现在的阈值是事先按常识定的（见 `docs/stereo_pipeline.md`），要用第一批自采数据再定。
