@@ -1,11 +1,18 @@
 {
  "running": null,
  "queue_running": {
-  "id": "C9",
-  "slug": "justinz2010/xhey-rsi-c9-stera-di",
-  "mix": "iphone+stera+di+xhey_rgb+aug",
-  "launched": "2026-10-15 21:24"
+  "id": "C9b",
+  "slug": "justinz2010/xhey-rsi-c9b-stera-di-qc",
+  "mix": "iphone+stera+di+xhey_rgb+aug"
  },
+ "queue_running_also": [
+  {
+   "id": "C12",
+   "slug": "justinz2010/xhey-rsi-c12-hoi4d",
+   "mix": "iphone+hoi4d+xhey_rgb+aug",
+   "launched": "2026-10-16 08:11"
+  }
+ ],
  "last_iteration": 2,
  "last_kernel": "justinz2010/xhey-auto-iter"
 }

@@ -27,7 +27,9 @@
 
 **C11（2026-10-15）**：C11 = 加 DynamicIntelligence（DI，已转相机坐标系、质检 25/25 通过）做预训练（`iphone+di+xhey_rgb+aug`）；C11ctl = 同一内核、同一套代码、不加 DI 的对照（`iphone+xhey_rgb+aug`）。两边用同一 3 段留出评测片段，内核 `justinz2010/xhey-rsi-c11-di-cam`，3 个种子。C11 整体 ADE 9.772 cm（比 zero −0.008，95% 区间 [−0.015, −0.000]）、手在动 12.551 cm（−0.132，[−0.141, −0.122]）；C11ctl 整体 9.759 cm（−0.020，[−0.027, −0.014]）、手在动 12.546 cm（−0.137，[−0.146, −0.129]）。结论：加 DI 没有比不加更好（整体差 +0.013 cm、手在动差 +0.005 cm，都略差），两边都只比「猜手不动」好约 1%。对照图：[`experiments/report/C11_vs_ctl/`](../experiments/report/C11_vs_ctl/)。
 
-唯一循环驱动是 `scripts/xhey_auto_iter.py`：先收已完成的固定内核（含 `justinz2010/xhey-rsi-c1-moveloss`），再按 [`docs/xhey/queue.json`](xhey/queue.json) 提交就绪候选（C2、C8；Stera 数据存在时再加上 C7、C9），队列空了才让提议器挑新配置。正在跑的自动迭代是 **iteration 2**（`justinz2010/xhey-auto-iter` v2），有内核在跑时不抢占。
+**C9（已完成，未质检 / 世界系）**：内核 `justinz2010/xhey-rsi-c9-stera-di`（2026-10-15 21:24 提交）没有 `--qc-filter`，DI 用的是 `xhey-di-pretrain` 的原始世界系，不是 C11 的相机系。未过滤 3 段留出：zero 11.026 cm；C9ctl（`iphone+xhey_rgb+aug`）11.062 cm（+0.037）、手在动相对 zero −0.021；C9（`iphone+stera+di+xhey_rgb+aug`）11.100 cm（+0.075）、手在动相对 zero −0.005。C9 整体和手在动都不如同一次对照，队列结论 **done_worse**。没有另给绝对手在动 ADE、置信区间或逐片段数字，账本不补这些。`ledger.csv` 的 status 列按镜像规则写成 better_moving，只表示手在动相对 zero 为负、且没有置信区间；这不是实验结论。质检 + 相机系的重跑是 C9b，已经在 [Kaggle](https://www.kaggle.com/code/justinz2010/xhey-rsi-c9b-stera-di-qc) 上跑，不要再交一份。
+
+唯一循环驱动是 `scripts/xhey_auto_iter.py`：先收已完成的固定内核，再按 [`docs/xhey/queue.json`](xhey/queue.json) 提交就绪候选。新候选默认必须带 `--qc-filter`。正在占 GPU 的是 **C9b** 和 **C12**（HOI4D，2026-10-16 08:11 起 running）；有内核在跑时不抢占。
 
 ---
 
