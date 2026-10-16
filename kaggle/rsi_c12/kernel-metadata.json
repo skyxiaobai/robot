@@ -1,0 +1,25 @@
+{
+  "id": "justinz2010/xhey-rsi-c12-hoi4d",
+  "title": "xhey-rsi-c12-hoi4d",
+  "code_file": "xhey-rsi-c12-hoi4d.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [
+    "gpu"
+  ],
+  "dataset_sources": [
+    "justinz2010/xhey-iphone-sessions",
+    "justinz2010/xhey-hoi4d-pretrain"
+  ],
+  "kernel_sources": [
+    "justinz2010/xhey-wilor-labels"
+  ],
+  "competition_sources": [],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-private-byod/python@sha256:2757e0c7d1e0a9cb43da657b97e223c321a98f5014bdf64f44f2f6b083ad2b2f",
+  "machine_shape": "NvidiaTeslaT4"
+}

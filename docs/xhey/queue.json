@@ -140,6 +140,27 @@
     "zero_overall_ade_cm": 9.779,
     "note": "DI (camera frame) did not beat the no-DI control; ingested 2026-10-15 as C11 / C11ctl, charts in experiments/report/C11_vs_ctl"
    }
+  },
+  {
+   "id": "C12",
+   "name": "HOI4D pretrain (MANO GT hands, camera optical frame)",
+   "dir": "kaggle/rsi_c12",
+   "slug": "justinz2010/xhey-rsi-c12-hoi4d",
+   "status": "running",
+   "mix": "iphone+hoi4d+xhey_rgb+aug",
+   "launched": "2026-10-16 08:11",
+   "protocol": "same as C11: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c12 (iphone+hoi4d+xhey_rgb+aug, --qc-filter qc_hoi4d/scorecards.json) then same-code control arm B xhey_c12ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c12/metrics.json; compare to xhey_c12ctl and zero within run.",
+   "qc": {
+    "hoi4d_converted": "1487/1875 released seqs with hand-pose GT pass move filter (>=3 cm/s median), 8.26 h at 15 fps",
+    "hoi4d_pass": "1483/1487",
+    "frame": "MANO GT (poseCoeff/beta/trans) via numpy MANO, camera optical frame metres; reprojection vs official kps2D median 0.76 px; sanity_check ok 1487/1487 (median wrist dist 0.71 m)",
+    "note": "HOI4D annotates only the interacting hand (mostly right); qc_scorecard ignores a never-annotated hand for gap_ratio on source hoi4d"
+   },
+   "datasets": [
+    "justinz2010/xhey-iphone-sessions",
+    "justinz2010/xhey-hoi4d-pretrain (hoi4d_unified + qc_hoi4d/scorecards.json + scripts.tgz from c12 worktree)"
+   ],
+   "license": "HOI4D CC BY-NC 4.0; MANO model files not uploaded"
   }
  ]
 }
