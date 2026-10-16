@@ -150,8 +150,8 @@ python scripts/headcam/slam_frames.py \
 1. 按官方说明安装 ORB-SLAM3，准备 `ORBvoc.txt` 和双目惯性 yaml。
 2. 把 `stereo/left.mp4`、`stereo/right.mp4` 按 `timestamps.csv` 抽成 EuRoC 的 `mav0/cam0/data` 与 `mav0/cam1/data`。抽帧不在本模块里。
 3. 把 `imu.csv`（`timestamp_s,gx,gy,gz,ax,ay,az`）改成 EuRoC `imu0/data.csv` 的纳秒时间戳。
-4. 运行 `Examples/Stereo-Inertial/stereo_inertial_euroc`，留下 `CameraTrajectory.txt`。关键帧轨迹盖不住的帧会变成 `tracking_lost`。
-5. `python scripts/headcam/slam_vio.py --session SESSION --backend external_tum --tum CameraTrajectory.txt --out OUT`
+4. 运行 `Examples/Stereo/stereo_euroc` 或 `Examples/Stereo-Inertial/stereo_inertial_euroc`，留下 `CameraTrajectory.txt`。`SaveTrajectoryEuRoC` 的时间是纳秒，四元数是 `qx qy qz qw`。关键帧轨迹盖不住的帧会变成 `tracking_lost`。
+5. `python scripts/headcam/slam_vio.py --session SESSION --backend external_tum --tum CameraTrajectory.txt --tum-time-scale 1e-9 --out OUT`
 6. 再跑 `export_mvp`。只有每一帧都对得上，手部才会乘这组 `T_world_cam`。
 
 库存的 `stereo_inertial_euroc` 吃的是 EuRoC 目录，不是 §7.7 会话。环境变量设齐之后可以试着执行，但这不是默认路径：
@@ -211,7 +211,9 @@ OpenVINS、Basalt 只要最后给出同一份 TUM（`timestamp tx ty tz qx qy qz
 python scripts/headcam/summarize_slam.py --session /data/sess01
 
 # 1. ORB-SLAM3。下面是上游 stereo_inertial_euroc 的常见参数形状。
-#    先看你的二进制不带参数时打印的 Usage，再替换路径。本仓库没有执行过这条命令。
+#    先看你的二进制不带参数时打印的 Usage，再替换路径。
+#    本仓库执行过的是 stereo_euroc（无 IMU），见文末「离线 EuRoC」。
+#    stereo_inertial_euroc 还没在这里跑过。
 #    会话不是 EuRoC：mav0/cam0/data、mav0/cam1/data 里的 png 要用时间戳命名，
 #    times 文件一行一个时间。抽帧请按 ORB-SLAM3 的 EuRoC 说明做，不要用本仓库现编。
 export ORB_SLAM3_ROOT=$HOME/ORB_SLAM3
@@ -220,9 +222,11 @@ export ORB_SLAM3_ROOT=$HOME/ORB_SLAM3
   "$ORB_SLAM3_ROOT/Examples/Stereo-Inertial/EuRoC.yaml" \
   /data/euroc_sess01 \
   /data/euroc_sess01/times.txt
-# 成功时当前目录出现 CameraTrajectory.txt。EuRoC 例子通常已经把时间写成秒。
-# 若 summarize 印出 tum_time_unit=nanoseconds 且 time_unit_mismatch=true，
-# 不要改 max_gap_s。确认第一列是纳秒后，在第 2 步加上 --tum-time-scale 1e-9。
+# 成功时当前目录出现 CameraTrajectory.txt。
+# UZ-SLAMLab stereo_euroc 的 SaveTrajectoryEuRoC 把第一列写成纳秒
+# （内部秒 × 1e9，fixed 小数 6 位），四元数是 qx qy qz qw，不是 EuRoC 的 qw qx qy qz。
+# 不要把这份文件当成秒。summarize 会印 tum_time_unit=nanoseconds 且
+# time_unit_mismatch=true。不要改 max_gap_s。确认后在第 2 步加上 --tum-time-scale 1e-9。
 
 # 2. 只读这文件。不启动求解器，不写精度。
 python scripts/headcam/summarize_slam.py \
@@ -282,8 +286,29 @@ python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01
 - 本模块没有在 10 分钟实拍上测过运行时间或轨迹误差。
 - 纳秒轨迹不会自动除以 1e9。`tests/fixtures/headcam/offline_skip_hands/` 用合成的秒轨迹和纳秒轨迹检查这件事，不代表实机精度。
 
+## 离线 EuRoC：真实 ORB-SLAM3 轨迹进了 external_tum
+
+这是无人机公开数据上的管线检查，不是头戴精度。
+
+2026-10-16 在这台 Linux VM 上编过上游 UZ-SLAMLab ORB-SLAM3 `4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4`（Pangolin v0.6、apt 的 OpenCV 4.6 和 Eigen）。`Examples/Stereo/stereo_euroc` 能链上。查看器在那份本地源码里关掉了，改动不在本仓库。ETH 的官方压缩包超时，序列来自 Hugging Face `pepijn223/euroc-mirror` 的 `V1_01_easy.zip`。只跑了 `EuRoC_TimeStamps/V101.txt` 的前 400 帧（约 19.95 秒），不是整段飞行。
+
+`CameraTrajectory.txt` 有 400 行，没有表头。第一列是纳秒，带 `.000000`。四元数是 `qx qy qz qw`。`KeyFrameTrajectory.txt` 来自 `SaveKeyFrameTrajectoryEuRoC`，同样是纳秒，这一次只有 11 个关键帧。会话时间戳是这些图像纳秒除以 1e9，写成秒。
+
+`summarize_slam.py --backend external_tum`：
+
+| 命令 | 计数 |
+|---|---|
+| 不传 `--tum-time-scale` | `frames=400 ok=0 tracking_lost=400 pose_missing=0 time_unit_mismatch=true world_hands=refused`，退出码 1 |
+| `--tum-time-scale 1e-9` | `frames=400 ok=400 tracking_lost=0 pose_missing=0 world_pose=true world_hands=allowed accuracy=unmeasured`，退出码 0 |
+
+最大关联间隙是 2.4e-7 秒，来自把 1e18 的纳秒放进 float64 再乘 1e-9。半帧门限大约 0.025 秒，对得上，没有改门限。`export_mvp --skip-hands` 退出码 0，`hands=skipped`，`accuracy` 仍是 null。解析器接受了表头注释、`.000000` 和 xyzw。这一次 400 帧都在轨迹里，没有丢帧可标成 `tracking_lost`。
+
+`tests/fixtures/headcam/euroc_orbslam3_v101/CameraTrajectory_excerpt.txt` 是其中第 361–400 行，文件头写了来源。回归测试用这 40 行，不提交数据集、词表或二进制。
+
+同一段前缀对 EuRoC 地面真值做了一次 SE3 对齐（左相机位置：机体位姿乘 `mav0/cam0/sensor.yaml` 的 `T_BS`，Umeyama，尺度固定）。地面真值大约晚 1 秒才开始，对上 379/400 帧。ATE RMSE 0.026 m，中位数 0.022 m，最大 0.051 m。这是 EuRoC 无人机上 ORB-SLAM3 双目管线的检查，不是头戴设备的精度，也没有写进 `accuracy`。
+
+`slam_frames.py` 没有接到这份轨迹上。`tests/fixtures/headcam/wilor_partial/` 是 4 帧合成相机系，时间戳是 0 到 0.1 秒，和 EuRoC 的绝对秒（约 1.403715273e9）不是同一个钟。`slam_frames` 按帧数对齐，不按时间戳。把它们拼在一起对不上，也就没有改时间戳去凑。
+
 ## 下一步
 
-按上面的 Day 1 在实机上跑外部 TUM，用 `summarize_slam.py` 看帧数。`time_unit_mismatch=true` 时先加显式 `--tum-time-scale`，不要放宽门限。每一帧都 `ok` 之后再去掉 `--skip-hands`。
-
-下一次可以做的事：把一份真实 WiLoR 相机系 episode 交给上面的 `slam_frames.py` 命令，看 `sanity_ok` 和 `world_points_scope`。本仓库没有这样的文件。不要把 `sanity_ok` 写成精度，也不要把残缺轨迹标成 `world_yup`。实机 ORB-SLAM3、相机、IMU、WiLoR 和 pyarrow 继续缺着。
+下一次可以做的事：把一份真实 WiLoR 相机系 episode 交给 `slam_frames.py`，看 `sanity_ok` 和 `world_points_scope`。本仓库没有这样的文件。不要把 `sanity_ok` 写成精度，也不要把残缺轨迹标成 `world_yup`。头戴相机、IMU、WiLoR 和 pyarrow 继续缺着。整段 V1_01_easy 和 stereo-inertial 这次没有跑。

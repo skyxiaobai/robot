@@ -875,6 +875,80 @@ class WilorPartialFixtureTest(unittest.TestCase):
             self.assertIsNone(saved["hand_pose"]["slam"]["accuracy"])
 
 
+class EurocOrbslam3ExcerptTest(unittest.TestCase):
+    """ORB-SLAM3 stereo_euroc 在 EuRoC V1_01_easy 上写出的真实片段。
+
+    只提交了 40 行。这是无人机双目轨迹的解析回归，不是头戴精度。
+    """
+
+    def setUp(self):
+        _clear_orb_env()
+        self.tum = ROOT / "tests" / "fixtures" / "headcam" / "euroc_orbslam3_v101" / "CameraTrajectory_excerpt.txt"
+
+    def _stamps(self):
+        stamps = []
+        for line in self.tum.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            stamps.append(int(line.split()[0].split(".")[0]) / 1e9)
+        return stamps
+
+    def test_nanosecond_euroc_file_associates_only_with_explicit_scale(self):
+        import tempfile
+
+        from headcam.summarize_slam import main as summarize_main
+
+        times, poses = load_tum_trajectory(self.tum)
+        self.assertEqual(len(poses), 40)
+        self.assertGreater(float(np.median(np.diff(times))), 1e5)
+        stamps = self._stamps()
+        self.assertEqual(len(stamps), 40)
+        with tempfile.TemporaryDirectory() as tmp:
+            session = _write_session(Path(tmp) / "sess", stamps)
+            raw = run_slam(session, backend="external_tum", tum_path=self.tum)
+            self.assertEqual(raw["tum_time_unit"], "nanoseconds")
+            self.assertTrue(raw["time_unit_mismatch"])
+            self.assertEqual(raw["ok_frames"], 0)
+            self.assertEqual(raw["tracking_lost_frames"], 40)
+            self.assertTrue(all(frame["T_world_cam"] is None for frame in raw["frames"]))
+
+            scaled = run_slam(session, backend="external_tum", tum_path=self.tum, tum_time_scale=1e-9)
+            self.assertFalse(scaled["time_unit_mismatch"])
+            self.assertEqual(scaled["ok_frames"], 40)
+            self.assertEqual(scaled["tracking_lost_frames"], 0)
+            self.assertEqual(scaled["pose_missing_frames"], 0)
+            self.assertTrue(scaled["world_pose"])
+            self.assertIsNone(scaled["accuracy"])
+            last = scaled["frames"][-1]["T_world_cam"]
+            self.assertAlmostEqual(last[0][3], 1.723316908, places=6)
+            self.assertAlmostEqual(last[1][3], -0.190014720, places=6)
+            self.assertAlmostEqual(last[2][3], -0.356315374, places=6)
+            # qx qy qz qw = 0.003649197 0.778750420 0.298360109 0.551829457
+            # 若把第一列四元数当成 qw，R00 会落到约 -0.213。
+            self.assertAlmostEqual(last[0][0], -0.390941890, places=6)
+            self.assertLess(scaled["frames"][-1]["gap_s"], 1e-5)
+
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as tmp:
+            session = _write_session(Path(tmp) / "sess", stamps)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = summarize_main([
+                    "--session", str(session), "--tum", str(self.tum), "--tum-time-scale", "1e-9",
+                ])
+            text = buf.getvalue()
+            self.assertEqual(code, 0)
+            self.assertIn("frames=40\n", text)
+            self.assertIn("ok=40\n", text)
+            self.assertIn("tracking_lost=0\n", text)
+            self.assertIn("pose_missing=0\n", text)
+            self.assertIn("accuracy=unmeasured\n", text)
+            self.assertIn("tum_time_unit=nanoseconds\n", text)
+            self.assertIn("time_unit_mismatch=false\n", text)
+
+
 class PrepareSessionGuardTest(unittest.TestCase):
     def test_refuses_to_nest_work_copy_inside_source(self):
         import tempfile

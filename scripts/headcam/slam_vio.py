@@ -38,8 +38,8 @@ EUROC_STEPS = (
     "按 timestamps.csv 把 stereo/left.mp4 和 stereo/right.mp4 抽成 EuRoC 的 mav0/cam0/data 与 mav0/cam1/data。抽帧不在本模块里做。",
     "把 imu.csv（timestamp_s,gx,gy,gz,ax,ay,az）换成 EuRoC imu0/data.csv 的纳秒时间戳。不要对 IMU 做双重积分来冒充世界位置。",
     "准备 Vocabulary/ORBvoc.txt 和一套双目惯性 yaml。设置 ORB_SLAM3_BIN、ORB_SLAM3_VOCAB、ORB_SLAM3_SETTINGS。",
-    "自行运行 stereo_inertial_euroc，留下 CameraTrajectory.txt（TUM：timestamp tx ty tz qx qy qz qw）。关键帧轨迹盖不住的帧会标成 tracking_lost。",
-    "python scripts/headcam/slam_vio.py --session SESSION --backend external_tum --tum CameraTrajectory.txt --out OUT",
+    "自行运行 stereo_euroc 或 stereo_inertial_euroc，留下 CameraTrajectory.txt（tx ty tz qx qy qz qw）。UZ-SLAMLab 的 SaveTrajectoryEuRoC 把时间写成纳秒（内部秒乘 1e9），不是秒。KeyFrameTrajectory.txt 若来自 SaveKeyFrameTrajectoryEuRoC，也是同一套纳秒。关键帧轨迹盖不住的帧会标成 tracking_lost。",
+    "python scripts/headcam/slam_vio.py --session SESSION --backend external_tum --tum CameraTrajectory.txt --tum-time-scale 1e-9 --out OUT",
     "本仓库没有测过这条轨迹的误差。不要把论文或别人的闭环数字写进报告。",
 )
 
