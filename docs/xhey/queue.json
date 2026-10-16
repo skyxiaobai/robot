@@ -160,7 +160,7 @@
    "name": "HOI4D pretrain (MANO GT hands, camera optical frame)",
    "dir": "kaggle/rsi_c12",
    "slug": "justinz2010/xhey-rsi-c12-hoi4d",
-   "status": "running",
+   "status": "done_worse_vs_ctl",
    "mix": "iphone+hoi4d+xhey_rgb+aug",
    "launched": "2026-10-16 08:11",
    "protocol": "same as C11: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c12 (iphone+hoi4d+xhey_rgb+aug, --qc-filter qc_hoi4d/scorecards.json) then same-code control arm B xhey_c12ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c12/metrics.json; compare to xhey_c12ctl and zero within run.",
@@ -174,7 +174,17 @@
     "justinz2010/xhey-iphone-sessions",
     "justinz2010/xhey-hoi4d-pretrain (hoi4d_unified + qc_hoi4d/scorecards.json + scripts.tgz from c12 worktree)"
    ],
-   "license": "HOI4D CC BY-NC 4.0; MANO model files not uploaded"
+   "license": "HOI4D CC BY-NC 4.0; MANO model files not uploaded",
+   "result": {
+    "C12_overall_ade_cm": 9.845,
+    "C12_delta_overall_cm": 0.066,
+    "C12_moving_ade_cm": 12.619,
+    "C12_moving_minus_zero_cm": -0.064,
+    "C12_moving_ci95": [-0.071, -0.056],
+    "zero_overall_ade_cm": 9.779,
+    "C11ctl_moving_minus_zero_cm": -0.137,
+    "note": "HOI4D beat zero on moving but did not beat the no-HOI4D iPhone-only control (same eval set as C11ctl, moving -0.137) and is worse overall (9.845, +0.066 vs zero 9.779). Charts in experiments/report/C12."
+   }
   }
  ]
 }
