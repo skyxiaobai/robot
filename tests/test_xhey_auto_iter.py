@@ -1,5 +1,6 @@
 """xhey_auto_iter：固定队列先于提议器，jsonl 镜像到 csv，C1 指标可入账。"""
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -215,10 +216,7 @@ class CommittedState(unittest.TestCase):
     def test_c9_done_worse_and_c9b_already_running(self):
         state = json.loads((ROOT / "experiments" / "auto_state.json").read_text(encoding="utf-8"))
         self.assertIsNone(state["running"])
-        self.assertEqual(state["queue_running"]["id"], "C9b")
-        self.assertEqual(state["queue_running"]["slug"], "justinz2010/xhey-rsi-c9b-stera-di-qc")
-        self.assertEqual(state["queue_running"]["mix"], "iphone+stera+di+xhey_rgb+aug")
-        self.assertEqual(state["queue_running"]["launched"], "2026-10-16 09:23")
+        self.assertIsNone(state["queue_running"])
         self.assertNotIn("queue_running_also", state)
         q = json.loads((ROOT / "docs" / "xhey" / "queue.json").read_text(encoding="utf-8"))
         ids = [i["id"] for i in q["queue"]]
@@ -251,10 +249,20 @@ class CommittedState(unittest.TestCase):
         self.assertEqual(c12["result"]["zero_overall_ade_cm"], 9.779)
         self.assertEqual(c12["result"]["C11ctl_moving_minus_zero_cm"], -0.137)
         c9b = by_id["C9b"]
-        self.assertEqual(c9b["status"], "running")
+        self.assertEqual(c9b["status"], "done_worse_vs_ctl")
         self.assertEqual(c9b["slug"], "justinz2010/xhey-rsi-c9b-stera-di-qc")
         self.assertEqual(c9b["mix"], "iphone+stera+di+xhey_rgb+aug")
         self.assertEqual(c9b["kaggle"], "https://www.kaggle.com/code/justinz2010/xhey-rsi-c9b-stera-di-qc")
+        self.assertEqual(c9b["result"]["protocol"], "QC 2-clip LOO (2026-08-22_18-21, 2026-08-24_21-18)")
+        self.assertEqual(c9b["result"]["zero_overall_ade_cm"], 7.227)
+        self.assertEqual(c9b["result"]["C9bctl_overall_ade_cm"], 7.221)
+        self.assertEqual(c9b["result"]["C9bctl_delta_overall_cm"], -0.006)
+        self.assertEqual(c9b["result"]["C9bctl_moving_minus_zero_cm"], -0.068)
+        self.assertEqual(c9b["result"]["C9b_overall_ade_cm"], 7.235)
+        self.assertEqual(c9b["result"]["C9b_delta_overall_cm"], 0.007)
+        self.assertEqual(c9b["result"]["C9b_moving_ade_cm"], 10.383)
+        self.assertEqual(c9b["result"]["C9b_moving_minus_zero_cm"], -0.05)
+        self.assertEqual(c9b["result"]["C9b_moving_ci95"], [-0.056, -0.044])
         self.assertEqual(c9b["qc"]["stera_pass"]["b01"], "213/757")
         self.assertEqual(c9b["qc"]["stera_kept_segments"], 1297)
         self.assertEqual(c9b["qc"]["di_pass"], "25/25")
@@ -264,13 +272,18 @@ class CommittedState(unittest.TestCase):
         self.assertIn("6000", c9b["protocol"])
         self.assertIn("3000", c9b["protocol"])
         ok, skipped = ai.split_qc_ready(ai.ready_queue_items(stera_exists=True, queue=q))
-        self.assertEqual([item["id"] for item in ok], ["C13"])
-        self.assertEqual(skipped, [])
+        self.assertEqual([item["id"] for item in ok], [])
+        self.assertEqual([item["id"] for item in skipped], ["C14"])
         c13 = by_id["C13"]
-        self.assertEqual(c13["status"], "ready")
+        self.assertEqual(c13["status"], "ready_to_relaunch")
         self.assertIn("undefined HO", c13["note_v1"])
+        self.assertIn("credentials were missing", c13["note_v1"])
         self.assertTrue(ai.kernel_has_qc_filter(c13))
-        self.assertEqual(by_id["C14"]["status"], "blocked_hf_access")
+        c13_src = (ROOT / "kaggle" / "rsi_c13" / "xhey-rsi-c13-egodex.py").read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"\bHO\b", c13_src))
+        self.assertIn("EG = find", c13_src)
+        self.assertEqual(by_id["C14"]["status"], "ready")
+        self.assertIn("xphi", by_id["C14"]["caveats"])
         self.assertIn("--qc-filter", ai.KERNEL_TEMPLATE)
         meta = json.loads((ROOT / "kaggle" / "rsi_c9b" / "kernel-metadata.json").read_text(encoding="utf-8"))
         self.assertEqual(meta["id"], "justinz2010/xhey-rsi-c9b-stera-di-qc")
@@ -312,6 +325,28 @@ class CommittedState(unittest.TestCase):
         self.assertEqual(c12row["moving_ade_cm"], 12.61918517304698)
         self.assertEqual(c12row["delta_moving_cm"], -0.06371208950413923)
         self.assertEqual(c12row["delta_moving_ci95"], [-0.0713584667934282, -0.05602845413106699])
+        self.assertEqual(ids.count("C9b"), 1)
+        self.assertEqual(ids.count("C9bctl"), 1)
+        c9brow = rows["C9b"]
+        self.assertEqual(c9brow["status"], "ok")
+        self.assertEqual(c9brow["date"], "2026-10-16")
+        self.assertEqual(c9brow["source"], "justinz2010/xhey-rsi-c9b-stera-di-qc")
+        self.assertEqual(c9brow["config"]["mix"], "iphone+stera+di+xhey_rgb+aug")
+        self.assertEqual(c9brow["overall_ade_cm"], 7.23459540460082)
+        self.assertEqual(c9brow["zero_overall_ade_cm"], 7.227108386200057)
+        self.assertEqual(c9brow["delta_overall_cm"], 0.007487018400761065)
+        self.assertEqual(c9brow["moving_ade_cm"], 10.382878606425848)
+        self.assertEqual(c9brow["delta_moving_cm"], -0.04965893045995437)
+        self.assertEqual(c9brow["delta_moving_ci95"], [-0.05559107366730263, -0.04406222087818459])
+        c9bctl = rows["C9bctl"]
+        self.assertEqual(c9bctl["status"], "ok")
+        self.assertEqual(c9bctl["source"], c9brow["source"])
+        self.assertEqual(c9bctl["config"]["mix"], "iphone+xhey_rgb+aug")
+        self.assertEqual(c9bctl["overall_ade_cm"], 7.221381990047469)
+        self.assertEqual(c9bctl["zero_overall_ade_cm"], 7.227108386200057)
+        self.assertEqual(c9bctl["delta_overall_cm"], -0.005726396152587624)
+        self.assertEqual(c9bctl["moving_ade_cm"], 10.364363733614738)
+        self.assertEqual(c9bctl["delta_moving_cm"], -0.06817380327106637)
 
 
 def _kernel_metrics(mix, moving=-0.05):
