@@ -1,6 +1,11 @@
 {
  "running": null,
- "queue_running": null,
+ "queue_running": {
+  "id": "C13",
+  "slug": "justinz2010/xhey-rsi-c13-egodex",
+  "mix": "iphone+egodex+xhey_rgb+aug",
+  "launched": "2026-10-17 09:20"
+ },
  "last_iteration": 2,
  "last_kernel": "justinz2010/xhey-auto-iter"
 }

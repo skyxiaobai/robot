@@ -207,7 +207,7 @@
    "name": "EgoDex pretrain, camera optical frame (native Vision Pro ARKit joints)",
    "dir": "kaggle/rsi_c13",
    "slug": "justinz2010/xhey-rsi-c13-egodex",
-   "status": "ready_to_relaunch",
+   "status": "running",
    "mix": "iphone+egodex+xhey_rgb+aug",
    "protocol": "same as C11/C12: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c13 (iphone+egodex+xhey_rgb+aug, --qc-filter qc_egodex/scorecards.json) then same-code control arm B xhey_c13ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c13/metrics.json; compare to xhey_c13ctl and zero within run.",
    "qc": {
@@ -224,7 +224,8 @@
    ],
    "license": "EgoDex dataset CC BY-NC-ND (code: Apple sample code license); Kaggle dataset kept private, research use only",
    "launched_v1_broken": "2026-10-16 09:37",
-   "note_v1": "v1 (09:37) crashes: undefined HO in print. Fix is on main (kaggle/rsi_c13/xhey-rsi-c13-egodex.py binds EG, not HO; PR #72 / 36e520f). Not relaunched this pass: Kaggle credentials were missing from the environment."
+   "note_v1": "v1 (09:37) crashes: undefined HO in print. Fix is on main (kaggle/rsi_c13/xhey-rsi-c13-egodex.py binds EG, not HO; PR #72 / 36e520f). Not relaunched this pass: Kaggle credentials were missing from the environment.",
+   "relaunched_v2": "2026-10-17 09:20 by the auto-iter step (v2 with the HO fix)."
   },
   {
    "id": "C14",
