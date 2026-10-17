@@ -70,7 +70,7 @@
     "C9ctl_delta_overall_cm": 0.037,
     "C9ctl_moving_minus_zero_cm": -0.021,
     "C9_mix": "iphone+stera+di+xhey_rgb+aug",
-    "C9_overall_ade_cm": 11.100,
+    "C9_overall_ade_cm": 11.1,
     "C9_delta_overall_cm": 0.075,
     "C9_moving_minus_zero_cm": -0.005,
     "note": "Reported rounded figures from the completed kernel. Did not beat the same-run control (overall 11.100 vs 11.062, moving -0.005 vs -0.021). No per-clip, CI, or absolute moving ADE was supplied; those are not recorded."
@@ -133,7 +133,10 @@
     "C9b_delta_overall_cm": 0.007,
     "C9b_moving_ade_cm": 10.383,
     "C9b_moving_minus_zero_cm": -0.05,
-    "C9b_moving_ci95": [-0.056, -0.044],
+    "C9b_moving_ci95": [
+     -0.056,
+     -0.044
+    ],
     "note": "From xhey_c9b/metrics.json ade_cm_pooled, rounded to 3 decimals. Reported overall 7.24 does not match; pooled is 7.234595 vs control 7.221382 (kernel log rounds those to 7.23 and 7.22). Moving -0.049659 vs control -0.068174. Worse than the same-run control on overall and moving, and worse than zero overall (CI above 0), so done_worse_vs_ctl like C12. Kernel log kept all 25 DI episodes: they were not in the scorecards passed to --qc-filter."
    },
    "note": "Ingested from the completed kernel output. Do not push another copy."
@@ -196,7 +199,10 @@
     "C12_delta_overall_cm": 0.066,
     "C12_moving_ade_cm": 12.619,
     "C12_moving_minus_zero_cm": -0.064,
-    "C12_moving_ci95": [-0.071, -0.056],
+    "C12_moving_ci95": [
+     -0.071,
+     -0.056
+    ],
     "zero_overall_ade_cm": 9.779,
     "C11ctl_moving_minus_zero_cm": -0.137,
     "note": "HOI4D beat zero on moving but did not beat the no-HOI4D iPhone-only control (same eval set as C11ctl, moving -0.137) and is worse overall (9.845, +0.066 vs zero 9.779). Charts in experiments/report/C12."
@@ -207,7 +213,7 @@
    "name": "EgoDex pretrain, camera optical frame (native Vision Pro ARKit joints)",
    "dir": "kaggle/rsi_c13",
    "slug": "justinz2010/xhey-rsi-c13-egodex",
-   "status": "running",
+   "status": "done_worse_vs_ctl",
    "mix": "iphone+egodex+xhey_rgb+aug",
    "protocol": "same as C11/C12: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c13 (iphone+egodex+xhey_rgb+aug, --qc-filter qc_egodex/scorecards.json) then same-code control arm B xhey_c13ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c13/metrics.json; compare to xhey_c13ctl and zero within run.",
    "qc": {
@@ -225,14 +231,33 @@
    "license": "EgoDex dataset CC BY-NC-ND (code: Apple sample code license); Kaggle dataset kept private, research use only",
    "launched_v1_broken": "2026-10-16 09:37",
    "note_v1": "v1 (09:37) crashes: undefined HO in print. Fix is on main (kaggle/rsi_c13/xhey-rsi-c13-egodex.py binds EG, not HO; PR #72 / 36e520f). Not relaunched this pass: Kaggle credentials were missing from the environment.",
-   "relaunched_v2": "2026-10-17 09:20 by the auto-iter step (v2 with the HO fix)."
+   "relaunched_v2": "2026-10-17 09:20 by the auto-iter step (v2 with the HO fix).",
+   "result": {
+    "C13_overall_ade_cm": 9.803,
+    "C13_delta_overall_cm": 0.024,
+    "C13_moving_ade_cm": 12.557,
+    "C13_moving_minus_zero_cm": -0.126,
+    "C13_moving_ci95": [
+     -0.134,
+     -0.117
+    ],
+    "C13ctl_overall_ade_cm": 9.759,
+    "C13ctl_moving_minus_zero_cm": -0.137,
+    "C13ctl_moving_ci95": [
+     -0.146,
+     -0.129
+    ],
+    "zero_overall_ade_cm": 9.779,
+    "note": "EgoDex (camera frame, v2) beat zero on moving (-0.126 cm) but did not beat the same-run no-EgoDex control C13ctl (moving -0.137, overall 9.759) and is worse than zero overall (+0.024). Ingested 2026-10-17 21:27; charts in experiments/report/C13."
+   },
+   "ingested": "2026-10-17 21:27"
   },
   {
    "id": "C14",
    "name": "xPhi-Ego-100 pretrain (WiLoR pseudo-labels, monocular, camera optical frame)",
    "dir": "kaggle/rsi_c14",
    "slug": "justinz2010/xhey-rsi-c14-xphi",
-   "status": "ready",
+   "status": "running",
    "mix": "iphone+xphi+xhey_rgb+aug",
    "protocol": "same as C13: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c14 (iphone+xphi+xhey_rgb+aug, --qc-filter qc_xphi/scorecards.json --qc-segments qc_xphi/segments.json) then same-code control arm B xhey_c14ctl (iphone+xhey_rgb+aug).",
    "caveats": "no depth, no published intrinsics: ASSUMED pinhole HFOV 90 deg (fx=fy=960 @1920x1080, centred, no distortion) -> WiLoR metric translation/scale uncertain; monocular; head motion mixed into camera-frame deltas",
@@ -242,7 +267,8 @@
    "datasets": [
     "justinz2010/xhey-iphone-sessions",
     "justinz2010/xhey-xphi-cam (xphi_cam + qc_xphi/{scorecards,segments}.json + scripts.tgz)"
-   ]
+   ],
+   "launched": "2026-10-17 21:27"
   }
  ]
 }
