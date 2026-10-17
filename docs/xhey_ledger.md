@@ -33,7 +33,9 @@
 
 **C9b（2026-10-16）**：C9b = Stera 五批 + DI（相机系脚本）+ iPhone + xhey_rgb + aug，内核 `justinz2010/xhey-rsi-c9b-stera-di-qc`。评测是质检后的 2 段留出（`2026-08-22_18-21`、`2026-08-24_21-18`），数字来自 `xhey_c9b/metrics.json` 的 `ade_cm_pooled`，不是日志里四舍五入到两位的那一行。zero 整体 7.227 cm；C9bctl（`iphone+xhey_rgb+aug`）7.221 cm（−0.006）、手在动相对 zero −0.068；C9b（`iphone+stera+di+xhey_rgb+aug`）7.235 cm（+0.007，95% 区间 [0.004, 0.011]）、手在动 10.383 cm（−0.050，[−0.056, −0.044]）。口头报的整体 7.24 对不上：pooled 是 7.234595，内核日志印成 7.23。C9b 整体和手在动都不如同一次对照，整体还差于 zero。和 C12 同一条规则（没超过对照，且整体比 zero 差）队列结论 **done_worse_vs_ctl**。C11 是另一条：没超过对照，但整体仍不差于 zero，所以是 done_no_gain_vs_ctl。`ledger.csv` 的 status 列按镜像规则是 win_moving，只表示手在动的置信区间整段落在 0 以下；这不是实验结论。内核日志里 DI 的 25 段不在传给 `--qc-filter` 的成绩单里，被原样保留。
 
-唯一循环驱动是 `scripts/xhey_auto_iter.py`：先收已完成的固定内核，再按 [`docs/xhey/queue.json`](xhey/queue.json) 提交就绪候选。新候选默认必须带 `--qc-filter`。`queue_running` 已清空，没有队列内核占着 GPU。C13 停在 **ready_to_relaunch**：main 上的 `kaggle/rsi_c13/xhey-rsi-c13-egodex.py` 已经用 `EG` 而不是未定义的 `HO`，但这台环境没有 Kaggle 凭证，没有重交。C14 的 HF 门控已打开（`skyxiaobaibai` 能列出 `xPhi-Ego-100/data`），状态改为 **ready**；还没有 `kaggle/rsi_c14` 脚本，也还没有 `xphi` 数据源，这次不启动预训练。
+**C13（2026-10-17）**：C13 = EgoDex 预训练（相机光学系，Vision Pro ARKit 关节，`iphone+egodex+xhey_rgb+aug`），内核 `justinz2010/xhey-rsi-c13-egodex`（v2，2026-10-17 09:20 重交，21:27 入账）。同一次对照 C13ctl 不加 EgoDex（`iphone+xhey_rgb+aug`）。C13 整体 ADE 9.803 cm（比 zero 9.779 +0.024）、手在动 12.557 cm（−0.126，95% 区间 [−0.134, −0.117]）；C13ctl 整体 9.759 cm、手在动相对 zero −0.137（[−0.146, −0.129]）。EgoDex 在手在动上赢了「猜手不动」，但没有超过同一次对照，整体更差。队列结论 **done_worse_vs_ctl**。`ledger.csv` 的 status 列按镜像规则是 win_moving，只表示手在动的置信区间整段落在 0 以下；这不是实验结论。图：[`experiments/report/C13/`](../experiments/report/C13/)。
+
+唯一循环驱动是 `scripts/xhey_auto_iter.py`：先收已完成的固定内核，再按 [`docs/xhey/queue.json`](xhey/queue.json) 提交就绪候选。新候选默认必须带 `--qc-filter`。正在占 GPU 的是 **C14**（`justinz2010/xhey-rsi-c14-xphi`，`iphone+xphi+xhey_rgb+aug`，2026-10-17 21:27 提交）；有内核在跑时不抢占。
 
 ---
 
