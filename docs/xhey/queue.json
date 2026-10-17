@@ -234,10 +234,15 @@
    "slug": "justinz2010/xhey-rsi-c14-xphi",
    "status": "ready",
    "mix": "iphone+xphi+xhey_rgb+aug",
-   "protocol": "same as C13 with control arm; ~5-10 h subset via WiLoR kernel (like xhey-wilor-labels), keep moving segments, QC --qc-filter",
-   "hf_access": "2026-10-16 skyxiaobaibai can list hf://datasets/xphirobotics/xPhi-Ego-100/data (shards present). Former blocker was 403.",
-   "caveats": "no depth, no intrinsics published (assumed FOV needed) -> metric scale of WiLoR translations is uncertain; train_xhey needs an 'xphi' source key before launch. No kaggle/rsi_c14 script yet, so this ready state does not start a pretrain.",
-   "license": "Apache-2.0"
+   "protocol": "same as C13: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c14 (iphone+xphi+xhey_rgb+aug, --qc-filter qc_xphi/scorecards.json --qc-segments qc_xphi/segments.json) then same-code control arm B xhey_c14ctl (iphone+xhey_rgb+aug).",
+   "caveats": "no depth, no published intrinsics: ASSUMED pinhole HFOV 90 deg (fx=fy=960 @1920x1080, centred, no distortion) -> WiLoR metric translation/scale uncertain; monocular; head motion mixed into camera-frame deltas",
+   "license": "Apache-2.0",
+   "data": "102 clips labelled, 5.03 h, QC whole-clip pass 3/102, segment-level retention ~0.32 h; dataset justinz2010/xhey-xphi-cam is uploaded and ready on Kaggle.",
+   "labels": "WiLoR via kaggle/xphi_wilor (justinz2010/xhey-xphi-wilor, same setup as xhey-wilor-labels), stride 1 @10 fps, max 1800 frames/clip",
+   "datasets": [
+    "justinz2010/xhey-iphone-sessions",
+    "justinz2010/xhey-xphi-cam (xphi_cam + qc_xphi/{scorecards,segments}.json + scripts.tgz)"
+   ]
   }
  ]
 }

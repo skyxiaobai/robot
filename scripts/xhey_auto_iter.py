@@ -49,6 +49,7 @@ QUEUE_CONFIG = {
     "C11": {"mix": "iphone+di+xhey_rgb+aug"},
     "C12": {"mix": "iphone+hoi4d+xhey_rgb+aug"},
     "C13": {"mix": "iphone+egodex+xhey_rgb+aug"},
+    "C14": {"mix": "iphone+xphi+xhey_rgb+aug"},
 }
 
 DEFAULT = {"mix": "iphone+xhey_rgb+aug", "openaoe": None, "pre_steps": 6000, "steps": 3000,
