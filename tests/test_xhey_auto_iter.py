@@ -208,19 +208,25 @@ class MirrorAndIngest(unittest.TestCase):
 class CommittedState(unittest.TestCase):
     def test_iteration_2_ingested(self):
         state = json.loads((ROOT / "experiments" / "auto_state.json").read_text(encoding="utf-8"))
-        self.assertIsNone(state["running"])
         self.assertEqual(state["last_iteration"], 2)
+        self.assertEqual(state["last_kernel"], "justinz2010/xhey-auto-iter")
+        running = state["running"]
+        self.assertEqual(running["iteration"], 3)
+        self.assertEqual(running["kernel"], "justinz2010/xhey-auto-iter")
+        self.assertEqual(running["version"], 3)
+        self.assertEqual(running["launched"], "2026-10-18 09:22")
+        self.assertEqual(len(running["candidates"]), 3)
         ids = {json.loads(l)["id"] for l in (ROOT / "experiments" / "ledger.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()}
         self.assertTrue({"iter002_c0", "iter002_c1", "iter002_c2", "C1", "C8"} <= ids)
 
     def test_c9_done_worse_and_c9b_already_running(self):
         state = json.loads((ROOT / "experiments" / "auto_state.json").read_text(encoding="utf-8"))
-        self.assertIsNone(state["running"])
-        qr = state["queue_running"]
-        self.assertEqual(qr["id"], "C14")
-        self.assertEqual(qr["slug"], "justinz2010/xhey-rsi-c14-xphi")
-        self.assertEqual(qr["mix"], "iphone+xphi+xhey_rgb+aug")
-        self.assertEqual(qr["launched"], "2026-10-17 21:27")
+        self.assertIsNone(state["queue_running"])
+        running = state["running"]
+        self.assertEqual(running["iteration"], 3)
+        self.assertEqual(running["kernel"], "justinz2010/xhey-auto-iter")
+        self.assertEqual(running["version"], 3)
+        self.assertEqual(running["launched"], "2026-10-18 09:22")
         self.assertNotIn("queue_running_also", state)
         q = json.loads((ROOT / "docs" / "xhey" / "queue.json").read_text(encoding="utf-8"))
         ids = [i["id"] for i in q["queue"]]
@@ -299,7 +305,7 @@ class CommittedState(unittest.TestCase):
         self.assertIsNone(re.search(r"\bHO\b", c13_src))
         self.assertIn("EG = find", c13_src)
         c14 = by_id["C14"]
-        self.assertEqual(c14["status"], "running")
+        self.assertEqual(c14["status"], "done_win")
         self.assertEqual(c14["slug"], "justinz2010/xhey-rsi-c14-xphi")
         self.assertEqual(c14["launched"], "2026-10-17 21:27")
         self.assertEqual(c14["mix"], "iphone+xphi+xhey_rgb+aug")
@@ -394,6 +400,18 @@ class CommittedState(unittest.TestCase):
         self.assertEqual(c13row["moving_ade_cm"], 12.557135490486884)
         self.assertEqual(c13row["delta_moving_cm"], -0.1257617720642352)
         self.assertEqual(c13row["delta_moving_ci95"], [-0.1344363025584355, -0.11697807499012294])
+        self.assertEqual(ids.count("C14"), 1)
+        c14row = rows["C14"]
+        self.assertEqual(c14row["status"], "ok")
+        self.assertEqual(c14row["date"], "2026-10-18 09:22")
+        self.assertEqual(c14row["source"], "justinz2010/xhey-rsi-c14-xphi")
+        self.assertEqual(c14row["config"]["mix"], "iphone+xphi+xhey_rgb+aug")
+        self.assertEqual(c14row["overall_ade_cm"], 9.750331477450072)
+        self.assertEqual(c14row["zero_overall_ade_cm"], 9.77909130440752)
+        self.assertEqual(c14row["delta_overall_cm"], -0.02875982695745208)
+        self.assertEqual(c14row["moving_ade_cm"], 12.534017037982933)
+        self.assertEqual(c14row["delta_moving_cm"], -0.14888022456818356)
+        self.assertEqual(c14row["delta_moving_ci95"], [-0.15879802343330682, -0.13937611602942523])
 
 
 def _kernel_metrics(mix, moving=-0.05):

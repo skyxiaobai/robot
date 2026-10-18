@@ -1,274 +1,274 @@
 {
- "note": "Justin 10-14 要求 DI / Stera 优先：顺序 C8 → C7 → C9 → C2。每日迭代按顺序取第一个 status=ready 的候选提交到 Kaggle（同时最多 1 个 GPU kernel；不抢占正在跑的）。跑完把结果写进 ledger.csv 并把 status 改成 done_*。C9 v1（2026-10-15 21:24，未质检、世界系 DI）已完成：未过滤 3 段 LOO，zero 11.026，C9ctl 11.062（+0.037，moving -0.021），C9 11.100（+0.075，moving -0.005），没有超过同次对照，结论 done_worse。C9b（质检 + 相机系，2 段 LOO）已入账：整体 7.235 vs 对照 7.221，手在动 −0.050 vs −0.068，没有超过同次对照且整体差于 zero，结论 done_worse_vs_ctl。不要再提交。新候选默认必须带 --qc-filter。",
- "queue": [
-  {
-   "id": "C8",
-   "dir": "kaggle/rsi_c8",
-   "slug": "justinz2010/xhey-rsi-c8-di",
-   "status": "done_better_moving"
-  },
-  {
-   "id": "C7",
-   "dir": "kaggle/rsi_c7",
-   "slug": "justinz2010/xhey-rsi-c7-stera",
-   "status": "done_worse",
-   "stera_batches": {
-    "uploaded": [
-     "b01"
-    ],
-    "pending_local": [
-     "b02",
-     "b03",
-     "b04",
-     "b05"
-    ],
-    "note": "172 sessions (smallest-first, 39.8 GB raw annotations) converted in 5 batches; raw deleted. b01 = 59 sessions, 757 moving segs, 225,863 frames = 4.2 h. b02–b05 (+14.3 h) staged at /workspace/sd/stera_unified on the box; add as new dataset versions in later loop iterations."
-   }
-  },
-  {
-   "id": "C7b",
-   "name": "stera all batches, QC-passed only",
-   "dir": "kaggle/rsi_c7b",
-   "slug": "justinz2010/xhey-rsi-c7b-stera-all",
-   "status": "done_better_moving",
-   "mix": "iphone+stera+xhey_rgb+aug",
-   "protocol": "same as C7: seeds 3, pre-steps 6000, steps 3000, move-cm 5; --qc-filter on Stera b01-b05 + iPhone depth clips + xhey_rgb",
-   "qc": {
-    "stera_pass": {
-     "b01": "213/757",
-     "b02": "285/742",
-     "b03": "256/674",
-     "b04": "283/752",
-     "b05": "260/659"
+  "note": "Justin 10-14 要求 DI / Stera 优先：顺序 C8 → C7 → C9 → C2。每日迭代按顺序取第一个 status=ready 的候选提交到 Kaggle（同时最多 1 个 GPU kernel；不抢占正在跑的）。跑完把结果写进 ledger.csv 并把 status 改成 done_*。C9 v1（2026-10-15 21:24，未质检、世界系 DI）已完成：未过滤 3 段 LOO，zero 11.026，C9ctl 11.062（+0.037，moving -0.021），C9 11.100（+0.075，moving -0.005），没有超过同次对照，结论 done_worse。C9b（质检 + 相机系，2 段 LOO）已入账：整体 7.235 vs 对照 7.221，手在动 −0.050 vs −0.068，没有超过同次对照且整体差于 zero，结论 done_worse_vs_ctl。不要再提交。新候选默认必须带 --qc-filter。",
+  "queue": [
+    {
+      "id": "C8",
+      "dir": "kaggle/rsi_c8",
+      "slug": "justinz2010/xhey-rsi-c8-di",
+      "status": "done_better_moving"
     },
-    "stera_kept_segments": 1297,
-    "stera_kept_hours": 7.14,
-    "stera_total_hours": 19.66,
-    "iphone_depth_pass": "2/3 (09-05_17-16 fails: jitter 4.07cm, 134 swaps)",
-    "xhey_rgb_pass": "14/17",
-    "eval": "LOO over the 2 passing depth clips (08-22_18-21, 08-24_21-18); not directly comparable to 3-clip numbers, compare vs zero within run"
-   },
-   "note": "Kernel v1 was pushed by mistake WITHOUT QC filter (all 3584 segs) and is running; treat as unfiltered control. QC version must be pushed when a GPU slot frees (Kaggle max 2 batch GPU sessions)."
-  },
-  {
-   "id": "C9",
-   "name": "Stera all 5 batches + original DI, unfiltered/world-frame control (v1)",
-   "dir": "kaggle/rsi_c9",
-   "slug": "justinz2010/xhey-rsi-c9-stera-di",
-   "status": "done_worse",
-   "mix": "iphone+stera+di+xhey_rgb+aug",
-   "launched": "2026-10-15 21:24",
-   "control": "unfiltered/world-frame",
-   "qc_filter": false,
-   "frame": "original di_unified from xhey-di-pretrain (convert_di.py camera_yup) via that dataset's scripts.tgz. Not xhey-c11-di-cam, so train_xhey is not the C11 build that canonicalizes to camera optical.",
-   "note": "Kernel v1 pushed 2026-10-15 21:24. No --qc-filter; datasets were xhey-stera-pretrain + xhey-di-pretrain (original DI), not xhey-c11-di-cam. Completed unfiltered/world-frame 3-clip LOO did not beat the same-run control, so done_worse. QC + camera-frame rerun is C9b, ingested as done_worse_vs_ctl; do not push another copy.",
-   "result": {
-    "protocol": "unfiltered/world-frame 3-clip LOO",
-    "zero_overall_ade_cm": 11.026,
-    "C9ctl_mix": "iphone+xhey_rgb+aug",
-    "C9ctl_overall_ade_cm": 11.062,
-    "C9ctl_delta_overall_cm": 0.037,
-    "C9ctl_moving_minus_zero_cm": -0.021,
-    "C9_mix": "iphone+stera+di+xhey_rgb+aug",
-    "C9_overall_ade_cm": 11.1,
-    "C9_delta_overall_cm": 0.075,
-    "C9_moving_minus_zero_cm": -0.005,
-    "note": "Reported rounded figures from the completed kernel. Did not beat the same-run control (overall 11.100 vs 11.062, moving -0.005 vs -0.021). No per-clip, CI, or absolute moving ADE was supplied; those are not recorded."
-   },
-   "stera_batches": {
-    "uploaded": [
-     "b01",
-     "b02",
-     "b03",
-     "b04",
-     "b05"
-    ],
-    "pending_local": [],
-    "note": "dataset xhey-stera-pretrain now holds all 5 batches + qc/*/scorecards.json"
-   }
-  },
-  {
-   "id": "C9b",
-   "name": "Stera all 5 batches + DI camera frame + iPhone + xhey_rgb + aug, QC-filtered",
-   "dir": "kaggle/rsi_c9b",
-   "slug": "justinz2010/xhey-rsi-c9b-stera-di-qc",
-   "status": "done_worse_vs_ctl",
-   "kaggle": "https://www.kaggle.com/code/justinz2010/xhey-rsi-c9b-stera-di-qc",
-   "mix": "iphone+stera+di+xhey_rgb+aug",
-   "protocol": "same as C7b/C9: seeds 3, pre-steps 6000, steps 3000, move-cm 5; --qc-filter on Stera b01-b05 + iPhone depth clips + xhey_rgb (qc/*/scorecards.json) and DI (qc_di/scorecards.json). DI episodes come from xhey-di-pretrain but are loaded with xhey-c11-di-cam scripts.tgz (canonicalize_for_xhey → camera optical, same as C11). Held-out eval stays the depth-clip LOO: failing depth clips drop out the same way as C7b (2/3 pass) and are not replaced.",
-   "qc": {
-    "stera_pass": {
-     "b01": "213/757",
-     "b02": "285/742",
-     "b03": "256/674",
-     "b04": "283/752",
-     "b05": "260/659"
+    {
+      "id": "C7",
+      "dir": "kaggle/rsi_c7",
+      "slug": "justinz2010/xhey-rsi-c7-stera",
+      "status": "done_worse",
+      "stera_batches": {
+        "uploaded": [
+          "b01"
+        ],
+        "pending_local": [
+          "b02",
+          "b03",
+          "b04",
+          "b05"
+        ],
+        "note": "172 sessions (smallest-first, 39.8 GB raw annotations) converted in 5 batches; raw deleted. b01 = 59 sessions, 757 moving segs, 225,863 frames = 4.2 h. b02–b05 (+14.3 h) staged at /workspace/sd/stera_unified on the box; add as new dataset versions in later loop iterations."
+      }
     },
-    "stera_kept_segments": 1297,
-    "stera_kept_hours": 7.14,
-    "stera_total_hours": 19.66,
-    "iphone_depth_pass": "2/3 (09-05_17-16 fails: jitter 4.07cm, 134 swaps)",
-    "xhey_rgb_pass": "14/17",
-    "di_pass": "25/25",
-    "frame": "DI converter camera_yup -> camera optical via common.frames.canonicalize_for_xhey; sanity_check ok 25/25 (wrist z>0, median dist 0.35 m)",
-    "eval": "LOO over the 2 passing depth clips (08-22_18-21, 08-24_21-18); not directly comparable to 3-clip numbers, compare vs zero within run"
-   },
-   "datasets": [
-    "justinz2010/xhey-stera-pretrain",
-    "justinz2010/xhey-di-pretrain",
-    "justinz2010/xhey-c11-di-cam",
-    "justinz2010/xhey-openaoe-pretrain",
-    "justinz2010/xhey-iphone-sessions"
-   ],
-   "result": {
-    "protocol": "QC 2-clip LOO (2026-08-22_18-21, 2026-08-24_21-18)",
-    "zero_overall_ade_cm": 7.227,
-    "C9bctl_mix": "iphone+xhey_rgb+aug",
-    "C9bctl_overall_ade_cm": 7.221,
-    "C9bctl_delta_overall_cm": -0.006,
-    "C9bctl_moving_ade_cm": 10.364,
-    "C9bctl_moving_minus_zero_cm": -0.068,
-    "C9b_mix": "iphone+stera+di+xhey_rgb+aug",
-    "C9b_overall_ade_cm": 7.235,
-    "C9b_delta_overall_cm": 0.007,
-    "C9b_moving_ade_cm": 10.383,
-    "C9b_moving_minus_zero_cm": -0.05,
-    "C9b_moving_ci95": [
-     -0.056,
-     -0.044
-    ],
-    "note": "From xhey_c9b/metrics.json ade_cm_pooled, rounded to 3 decimals. Reported overall 7.24 does not match; pooled is 7.234595 vs control 7.221382 (kernel log rounds those to 7.23 and 7.22). Moving -0.049659 vs control -0.068174. Worse than the same-run control on overall and moving, and worse than zero overall (CI above 0), so done_worse_vs_ctl like C12. Kernel log kept all 25 DI episodes: they were not in the scorecards passed to --qc-filter."
-   },
-   "note": "Ingested from the completed kernel output. Do not push another copy."
-  },
-  {
-   "id": "C2",
-   "dir": "kaggle/rsi_c2",
-   "slug": "justinz2010/xhey-rsi-c2-longft",
-   "status": "done_better_moving"
-  },
-  {
-   "id": "C11",
-   "name": "DI pretrain, camera frame (rerun of C8)",
-   "dir": "kaggle/rsi_c11",
-   "slug": "justinz2010/xhey-rsi-c11-di-cam",
-   "status": "done_no_gain_vs_ctl",
-   "mix": "iphone+di+xhey_rgb+aug",
-   "protocol": "same as C10: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c11 (iphone+di+xhey_rgb+aug, --qc-filter DI scorecards) then same-code control arm B xhey_c11ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c11/metrics.json; compare to xhey_c11ctl and zero within run.",
-   "qc": {
-    "di_pass": "25/25",
-    "frame": "DI converter camera_yup -> camera optical via common.frames.canonicalize_for_xhey; sanity_check ok 25/25 (wrist z>0, median dist 0.35 m)"
-   },
-   "datasets": [
-    "justinz2010/xhey-iphone-sessions",
-    "justinz2010/xhey-di-pretrain",
-    "justinz2010/xhey-c11-di-cam (scripts.tgz from main 6da410f + qc_di/scorecards.json)"
-   ],
-   "launched": "2026-10-15 14:40",
-   "result": {
-    "C11_overall_ade_cm": 9.772,
-    "C11_moving_minus_zero_cm": -0.132,
-    "C11ctl_overall_ade_cm": 9.759,
-    "C11ctl_moving_minus_zero_cm": -0.137,
-    "zero_overall_ade_cm": 9.779,
-    "note": "DI (camera frame) did not beat the no-DI control; ingested 2026-10-15 as C11 / C11ctl, charts in experiments/report/C11_vs_ctl"
-   }
-  },
-  {
-   "id": "C12",
-   "name": "HOI4D pretrain (MANO GT hands, camera optical frame)",
-   "dir": "kaggle/rsi_c12",
-   "slug": "justinz2010/xhey-rsi-c12-hoi4d",
-   "status": "done_worse_vs_ctl",
-   "mix": "iphone+hoi4d+xhey_rgb+aug",
-   "launched": "2026-10-16 08:11",
-   "protocol": "same as C11: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c12 (iphone+hoi4d+xhey_rgb+aug, --qc-filter qc_hoi4d/scorecards.json) then same-code control arm B xhey_c12ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c12/metrics.json; compare to xhey_c12ctl and zero within run.",
-   "qc": {
-    "hoi4d_converted": "1487/1875 released seqs with hand-pose GT pass move filter (>=3 cm/s median), 8.26 h at 15 fps",
-    "hoi4d_pass": "1483/1487",
-    "frame": "MANO GT (poseCoeff/beta/trans) via numpy MANO, camera optical frame metres; reprojection vs official kps2D median 0.76 px; sanity_check ok 1487/1487 (median wrist dist 0.71 m)",
-    "note": "HOI4D annotates only the interacting hand (mostly right); qc_scorecard ignores a never-annotated hand for gap_ratio on source hoi4d"
-   },
-   "datasets": [
-    "justinz2010/xhey-iphone-sessions",
-    "justinz2010/xhey-hoi4d-pretrain (hoi4d_unified + qc_hoi4d/scorecards.json + scripts.tgz from c12 worktree)"
-   ],
-   "license": "HOI4D CC BY-NC 4.0; MANO model files not uploaded",
-   "result": {
-    "C12_overall_ade_cm": 9.845,
-    "C12_delta_overall_cm": 0.066,
-    "C12_moving_ade_cm": 12.619,
-    "C12_moving_minus_zero_cm": -0.064,
-    "C12_moving_ci95": [
-     -0.071,
-     -0.056
-    ],
-    "zero_overall_ade_cm": 9.779,
-    "C11ctl_moving_minus_zero_cm": -0.137,
-    "note": "HOI4D beat zero on moving but did not beat the no-HOI4D iPhone-only control (same eval set as C11ctl, moving -0.137) and is worse overall (9.845, +0.066 vs zero 9.779). Charts in experiments/report/C12."
-   }
-  },
-  {
-   "id": "C13",
-   "name": "EgoDex pretrain, camera optical frame (native Vision Pro ARKit joints)",
-   "dir": "kaggle/rsi_c13",
-   "slug": "justinz2010/xhey-rsi-c13-egodex",
-   "status": "done_worse_vs_ctl",
-   "mix": "iphone+egodex+xhey_rgb+aug",
-   "protocol": "same as C11/C12: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c13 (iphone+egodex+xhey_rgb+aug, --qc-filter qc_egodex/scorecards.json) then same-code control arm B xhey_c13ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c13/metrics.json; compare to xhey_c13ctl and zero within run.",
-   "qc": {
-    "egodex_converted": "3243/3243 episodes of public test split (7.65 h, 30 fps)",
-    "egodex_moving": "2461 eps with median wrist speed >=3 cm/s (5.49 h); round-robin over 107 tasks, fastest first, capped at 4.0 h -> 1384 eps",
-    "egodex_pass": "1328/1384 (fails: move_frac 43, gap 16, detect 3)",
-    "frame": "ARKit world_yup + per-frame camera poses -> camera optical via common.frames.canonicalize_for_xhey; sanity_check ok 3243/3243 (median wrist dist ~0.3-0.4 m, z>0 100%)",
-    "joints": "21 joints in MediaPipe order; EgoDex 'Hand' sits on forearm and ThumbKnuckle != thumb CMC (EGODEX_NONCORRESPONDING_JOINTS)",
-    "note": "converter now writes per-frame label_status; without it hand_fix/QC counted every frame as a gap (0/1384 pass)"
-   },
-   "datasets": [
-    "justinz2010/xhey-iphone-sessions",
-    "justinz2010/xhey-egodex-cam (egodex_cam + qc_egodex/scorecards.json + scripts.tgz from c13 worktree)"
-   ],
-   "license": "EgoDex dataset CC BY-NC-ND (code: Apple sample code license); Kaggle dataset kept private, research use only",
-   "launched_v1_broken": "2026-10-16 09:37",
-   "note_v1": "v1 (09:37) crashes: undefined HO in print. Fix is on main (kaggle/rsi_c13/xhey-rsi-c13-egodex.py binds EG, not HO; PR #72 / 36e520f). Not relaunched this pass: Kaggle credentials were missing from the environment.",
-   "relaunched_v2": "2026-10-17 09:20 by the auto-iter step (v2 with the HO fix).",
-   "result": {
-    "C13_overall_ade_cm": 9.803,
-    "C13_delta_overall_cm": 0.024,
-    "C13_moving_ade_cm": 12.557,
-    "C13_moving_minus_zero_cm": -0.126,
-    "C13_moving_ci95": [
-     -0.134,
-     -0.117
-    ],
-    "C13ctl_overall_ade_cm": 9.759,
-    "C13ctl_moving_minus_zero_cm": -0.137,
-    "C13ctl_moving_ci95": [
-     -0.146,
-     -0.129
-    ],
-    "zero_overall_ade_cm": 9.779,
-    "note": "EgoDex (camera frame, v2) beat zero on moving (-0.126 cm) but did not beat the same-run no-EgoDex control C13ctl (moving -0.137, overall 9.759) and is worse than zero overall (+0.024). Ingested 2026-10-17 21:27; charts in experiments/report/C13."
-   },
-   "ingested": "2026-10-17 21:27"
-  },
-  {
-   "id": "C14",
-   "name": "xPhi-Ego-100 pretrain (WiLoR pseudo-labels, monocular, camera optical frame)",
-   "dir": "kaggle/rsi_c14",
-   "slug": "justinz2010/xhey-rsi-c14-xphi",
-   "status": "running",
-   "mix": "iphone+xphi+xhey_rgb+aug",
-   "protocol": "same as C13: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c14 (iphone+xphi+xhey_rgb+aug, --qc-filter qc_xphi/scorecards.json --qc-segments qc_xphi/segments.json) then same-code control arm B xhey_c14ctl (iphone+xhey_rgb+aug).",
-   "caveats": "no depth, no published intrinsics: ASSUMED pinhole HFOV 90 deg (fx=fy=960 @1920x1080, centred, no distortion) -> WiLoR metric translation/scale uncertain; monocular; head motion mixed into camera-frame deltas",
-   "license": "Apache-2.0",
-   "data": "102 clips labelled, 5.03 h, QC whole-clip pass 3/102, segment-level retention ~0.32 h; dataset justinz2010/xhey-xphi-cam is uploaded and ready on Kaggle.",
-   "labels": "WiLoR via kaggle/xphi_wilor (justinz2010/xhey-xphi-wilor, same setup as xhey-wilor-labels), stride 1 @10 fps, max 1800 frames/clip",
-   "datasets": [
-    "justinz2010/xhey-iphone-sessions",
-    "justinz2010/xhey-xphi-cam (xphi_cam + qc_xphi/{scorecards,segments}.json + scripts.tgz)"
-   ],
-   "launched": "2026-10-17 21:27"
-  }
- ]
+    {
+      "id": "C7b",
+      "name": "stera all batches, QC-passed only",
+      "dir": "kaggle/rsi_c7b",
+      "slug": "justinz2010/xhey-rsi-c7b-stera-all",
+      "status": "done_better_moving",
+      "mix": "iphone+stera+xhey_rgb+aug",
+      "protocol": "same as C7: seeds 3, pre-steps 6000, steps 3000, move-cm 5; --qc-filter on Stera b01-b05 + iPhone depth clips + xhey_rgb",
+      "qc": {
+        "stera_pass": {
+          "b01": "213/757",
+          "b02": "285/742",
+          "b03": "256/674",
+          "b04": "283/752",
+          "b05": "260/659"
+        },
+        "stera_kept_segments": 1297,
+        "stera_kept_hours": 7.14,
+        "stera_total_hours": 19.66,
+        "iphone_depth_pass": "2/3 (09-05_17-16 fails: jitter 4.07cm, 134 swaps)",
+        "xhey_rgb_pass": "14/17",
+        "eval": "LOO over the 2 passing depth clips (08-22_18-21, 08-24_21-18); not directly comparable to 3-clip numbers, compare vs zero within run"
+      },
+      "note": "Kernel v1 was pushed by mistake WITHOUT QC filter (all 3584 segs) and is running; treat as unfiltered control. QC version must be pushed when a GPU slot frees (Kaggle max 2 batch GPU sessions)."
+    },
+    {
+      "id": "C9",
+      "name": "Stera all 5 batches + original DI, unfiltered/world-frame control (v1)",
+      "dir": "kaggle/rsi_c9",
+      "slug": "justinz2010/xhey-rsi-c9-stera-di",
+      "status": "done_worse",
+      "mix": "iphone+stera+di+xhey_rgb+aug",
+      "launched": "2026-10-15 21:24",
+      "control": "unfiltered/world-frame",
+      "qc_filter": false,
+      "frame": "original di_unified from xhey-di-pretrain (convert_di.py camera_yup) via that dataset's scripts.tgz. Not xhey-c11-di-cam, so train_xhey is not the C11 build that canonicalizes to camera optical.",
+      "note": "Kernel v1 pushed 2026-10-15 21:24. No --qc-filter; datasets were xhey-stera-pretrain + xhey-di-pretrain (original DI), not xhey-c11-di-cam. Completed unfiltered/world-frame 3-clip LOO did not beat the same-run control, so done_worse. QC + camera-frame rerun is C9b, ingested as done_worse_vs_ctl; do not push another copy.",
+      "result": {
+        "protocol": "unfiltered/world-frame 3-clip LOO",
+        "zero_overall_ade_cm": 11.026,
+        "C9ctl_mix": "iphone+xhey_rgb+aug",
+        "C9ctl_overall_ade_cm": 11.062,
+        "C9ctl_delta_overall_cm": 0.037,
+        "C9ctl_moving_minus_zero_cm": -0.021,
+        "C9_mix": "iphone+stera+di+xhey_rgb+aug",
+        "C9_overall_ade_cm": 11.1,
+        "C9_delta_overall_cm": 0.075,
+        "C9_moving_minus_zero_cm": -0.005,
+        "note": "Reported rounded figures from the completed kernel. Did not beat the same-run control (overall 11.100 vs 11.062, moving -0.005 vs -0.021). No per-clip, CI, or absolute moving ADE was supplied; those are not recorded."
+      },
+      "stera_batches": {
+        "uploaded": [
+          "b01",
+          "b02",
+          "b03",
+          "b04",
+          "b05"
+        ],
+        "pending_local": [],
+        "note": "dataset xhey-stera-pretrain now holds all 5 batches + qc/*/scorecards.json"
+      }
+    },
+    {
+      "id": "C9b",
+      "name": "Stera all 5 batches + DI camera frame + iPhone + xhey_rgb + aug, QC-filtered",
+      "dir": "kaggle/rsi_c9b",
+      "slug": "justinz2010/xhey-rsi-c9b-stera-di-qc",
+      "status": "done_worse_vs_ctl",
+      "kaggle": "https://www.kaggle.com/code/justinz2010/xhey-rsi-c9b-stera-di-qc",
+      "mix": "iphone+stera+di+xhey_rgb+aug",
+      "protocol": "same as C7b/C9: seeds 3, pre-steps 6000, steps 3000, move-cm 5; --qc-filter on Stera b01-b05 + iPhone depth clips + xhey_rgb (qc/*/scorecards.json) and DI (qc_di/scorecards.json). DI episodes come from xhey-di-pretrain but are loaded with xhey-c11-di-cam scripts.tgz (canonicalize_for_xhey → camera optical, same as C11). Held-out eval stays the depth-clip LOO: failing depth clips drop out the same way as C7b (2/3 pass) and are not replaced.",
+      "qc": {
+        "stera_pass": {
+          "b01": "213/757",
+          "b02": "285/742",
+          "b03": "256/674",
+          "b04": "283/752",
+          "b05": "260/659"
+        },
+        "stera_kept_segments": 1297,
+        "stera_kept_hours": 7.14,
+        "stera_total_hours": 19.66,
+        "iphone_depth_pass": "2/3 (09-05_17-16 fails: jitter 4.07cm, 134 swaps)",
+        "xhey_rgb_pass": "14/17",
+        "di_pass": "25/25",
+        "frame": "DI converter camera_yup -> camera optical via common.frames.canonicalize_for_xhey; sanity_check ok 25/25 (wrist z>0, median dist 0.35 m)",
+        "eval": "LOO over the 2 passing depth clips (08-22_18-21, 08-24_21-18); not directly comparable to 3-clip numbers, compare vs zero within run"
+      },
+      "datasets": [
+        "justinz2010/xhey-stera-pretrain",
+        "justinz2010/xhey-di-pretrain",
+        "justinz2010/xhey-c11-di-cam",
+        "justinz2010/xhey-openaoe-pretrain",
+        "justinz2010/xhey-iphone-sessions"
+      ],
+      "result": {
+        "protocol": "QC 2-clip LOO (2026-08-22_18-21, 2026-08-24_21-18)",
+        "zero_overall_ade_cm": 7.227,
+        "C9bctl_mix": "iphone+xhey_rgb+aug",
+        "C9bctl_overall_ade_cm": 7.221,
+        "C9bctl_delta_overall_cm": -0.006,
+        "C9bctl_moving_ade_cm": 10.364,
+        "C9bctl_moving_minus_zero_cm": -0.068,
+        "C9b_mix": "iphone+stera+di+xhey_rgb+aug",
+        "C9b_overall_ade_cm": 7.235,
+        "C9b_delta_overall_cm": 0.007,
+        "C9b_moving_ade_cm": 10.383,
+        "C9b_moving_minus_zero_cm": -0.05,
+        "C9b_moving_ci95": [
+          -0.056,
+          -0.044
+        ],
+        "note": "From xhey_c9b/metrics.json ade_cm_pooled, rounded to 3 decimals. Reported overall 7.24 does not match; pooled is 7.234595 vs control 7.221382 (kernel log rounds those to 7.23 and 7.22). Moving -0.049659 vs control -0.068174. Worse than the same-run control on overall and moving, and worse than zero overall (CI above 0), so done_worse_vs_ctl like C12. Kernel log kept all 25 DI episodes: they were not in the scorecards passed to --qc-filter."
+      },
+      "note": "Ingested from the completed kernel output. Do not push another copy."
+    },
+    {
+      "id": "C2",
+      "dir": "kaggle/rsi_c2",
+      "slug": "justinz2010/xhey-rsi-c2-longft",
+      "status": "done_better_moving"
+    },
+    {
+      "id": "C11",
+      "name": "DI pretrain, camera frame (rerun of C8)",
+      "dir": "kaggle/rsi_c11",
+      "slug": "justinz2010/xhey-rsi-c11-di-cam",
+      "status": "done_no_gain_vs_ctl",
+      "mix": "iphone+di+xhey_rgb+aug",
+      "protocol": "same as C10: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c11 (iphone+di+xhey_rgb+aug, --qc-filter DI scorecards) then same-code control arm B xhey_c11ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c11/metrics.json; compare to xhey_c11ctl and zero within run.",
+      "qc": {
+        "di_pass": "25/25",
+        "frame": "DI converter camera_yup -> camera optical via common.frames.canonicalize_for_xhey; sanity_check ok 25/25 (wrist z>0, median dist 0.35 m)"
+      },
+      "datasets": [
+        "justinz2010/xhey-iphone-sessions",
+        "justinz2010/xhey-di-pretrain",
+        "justinz2010/xhey-c11-di-cam (scripts.tgz from main 6da410f + qc_di/scorecards.json)"
+      ],
+      "launched": "2026-10-15 14:40",
+      "result": {
+        "C11_overall_ade_cm": 9.772,
+        "C11_moving_minus_zero_cm": -0.132,
+        "C11ctl_overall_ade_cm": 9.759,
+        "C11ctl_moving_minus_zero_cm": -0.137,
+        "zero_overall_ade_cm": 9.779,
+        "note": "DI (camera frame) did not beat the no-DI control; ingested 2026-10-15 as C11 / C11ctl, charts in experiments/report/C11_vs_ctl"
+      }
+    },
+    {
+      "id": "C12",
+      "name": "HOI4D pretrain (MANO GT hands, camera optical frame)",
+      "dir": "kaggle/rsi_c12",
+      "slug": "justinz2010/xhey-rsi-c12-hoi4d",
+      "status": "done_worse_vs_ctl",
+      "mix": "iphone+hoi4d+xhey_rgb+aug",
+      "launched": "2026-10-16 08:11",
+      "protocol": "same as C11: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c12 (iphone+hoi4d+xhey_rgb+aug, --qc-filter qc_hoi4d/scorecards.json) then same-code control arm B xhey_c12ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c12/metrics.json; compare to xhey_c12ctl and zero within run.",
+      "qc": {
+        "hoi4d_converted": "1487/1875 released seqs with hand-pose GT pass move filter (>=3 cm/s median), 8.26 h at 15 fps",
+        "hoi4d_pass": "1483/1487",
+        "frame": "MANO GT (poseCoeff/beta/trans) via numpy MANO, camera optical frame metres; reprojection vs official kps2D median 0.76 px; sanity_check ok 1487/1487 (median wrist dist 0.71 m)",
+        "note": "HOI4D annotates only the interacting hand (mostly right); qc_scorecard ignores a never-annotated hand for gap_ratio on source hoi4d"
+      },
+      "datasets": [
+        "justinz2010/xhey-iphone-sessions",
+        "justinz2010/xhey-hoi4d-pretrain (hoi4d_unified + qc_hoi4d/scorecards.json + scripts.tgz from c12 worktree)"
+      ],
+      "license": "HOI4D CC BY-NC 4.0; MANO model files not uploaded",
+      "result": {
+        "C12_overall_ade_cm": 9.845,
+        "C12_delta_overall_cm": 0.066,
+        "C12_moving_ade_cm": 12.619,
+        "C12_moving_minus_zero_cm": -0.064,
+        "C12_moving_ci95": [
+          -0.071,
+          -0.056
+        ],
+        "zero_overall_ade_cm": 9.779,
+        "C11ctl_moving_minus_zero_cm": -0.137,
+        "note": "HOI4D beat zero on moving but did not beat the no-HOI4D iPhone-only control (same eval set as C11ctl, moving -0.137) and is worse overall (9.845, +0.066 vs zero 9.779). Charts in experiments/report/C12."
+      }
+    },
+    {
+      "id": "C13",
+      "name": "EgoDex pretrain, camera optical frame (native Vision Pro ARKit joints)",
+      "dir": "kaggle/rsi_c13",
+      "slug": "justinz2010/xhey-rsi-c13-egodex",
+      "status": "done_worse_vs_ctl",
+      "mix": "iphone+egodex+xhey_rgb+aug",
+      "protocol": "same as C11/C12: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c13 (iphone+egodex+xhey_rgb+aug, --qc-filter qc_egodex/scorecards.json) then same-code control arm B xhey_c13ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c13/metrics.json; compare to xhey_c13ctl and zero within run.",
+      "qc": {
+        "egodex_converted": "3243/3243 episodes of public test split (7.65 h, 30 fps)",
+        "egodex_moving": "2461 eps with median wrist speed >=3 cm/s (5.49 h); round-robin over 107 tasks, fastest first, capped at 4.0 h -> 1384 eps",
+        "egodex_pass": "1328/1384 (fails: move_frac 43, gap 16, detect 3)",
+        "frame": "ARKit world_yup + per-frame camera poses -> camera optical via common.frames.canonicalize_for_xhey; sanity_check ok 3243/3243 (median wrist dist ~0.3-0.4 m, z>0 100%)",
+        "joints": "21 joints in MediaPipe order; EgoDex 'Hand' sits on forearm and ThumbKnuckle != thumb CMC (EGODEX_NONCORRESPONDING_JOINTS)",
+        "note": "converter now writes per-frame label_status; without it hand_fix/QC counted every frame as a gap (0/1384 pass)"
+      },
+      "datasets": [
+        "justinz2010/xhey-iphone-sessions",
+        "justinz2010/xhey-egodex-cam (egodex_cam + qc_egodex/scorecards.json + scripts.tgz from c13 worktree)"
+      ],
+      "license": "EgoDex dataset CC BY-NC-ND (code: Apple sample code license); Kaggle dataset kept private, research use only",
+      "launched_v1_broken": "2026-10-16 09:37",
+      "note_v1": "v1 (09:37) crashes: undefined HO in print. Fix is on main (kaggle/rsi_c13/xhey-rsi-c13-egodex.py binds EG, not HO; PR #72 / 36e520f). Not relaunched this pass: Kaggle credentials were missing from the environment.",
+      "relaunched_v2": "2026-10-17 09:20 by the auto-iter step (v2 with the HO fix).",
+      "result": {
+        "C13_overall_ade_cm": 9.803,
+        "C13_delta_overall_cm": 0.024,
+        "C13_moving_ade_cm": 12.557,
+        "C13_moving_minus_zero_cm": -0.126,
+        "C13_moving_ci95": [
+          -0.134,
+          -0.117
+        ],
+        "C13ctl_overall_ade_cm": 9.759,
+        "C13ctl_moving_minus_zero_cm": -0.137,
+        "C13ctl_moving_ci95": [
+          -0.146,
+          -0.129
+        ],
+        "zero_overall_ade_cm": 9.779,
+        "note": "EgoDex (camera frame, v2) beat zero on moving (-0.126 cm) but did not beat the same-run no-EgoDex control C13ctl (moving -0.137, overall 9.759) and is worse than zero overall (+0.024). Ingested 2026-10-17 21:27; charts in experiments/report/C13."
+      },
+      "ingested": "2026-10-17 21:27"
+    },
+    {
+      "id": "C14",
+      "name": "xPhi-Ego-100 pretrain (WiLoR pseudo-labels, monocular, camera optical frame)",
+      "dir": "kaggle/rsi_c14",
+      "slug": "justinz2010/xhey-rsi-c14-xphi",
+      "status": "done_win",
+      "mix": "iphone+xphi+xhey_rgb+aug",
+      "protocol": "same as C13: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c14 (iphone+xphi+xhey_rgb+aug, --qc-filter qc_xphi/scorecards.json --qc-segments qc_xphi/segments.json) then same-code control arm B xhey_c14ctl (iphone+xhey_rgb+aug).",
+      "caveats": "no depth, no published intrinsics: ASSUMED pinhole HFOV 90 deg (fx=fy=960 @1920x1080, centred, no distortion) -> WiLoR metric translation/scale uncertain; monocular; head motion mixed into camera-frame deltas",
+      "license": "Apache-2.0",
+      "data": "102 clips labelled, 5.03 h, QC whole-clip pass 3/102, segment-level retention ~0.32 h; dataset justinz2010/xhey-xphi-cam is uploaded and ready on Kaggle.",
+      "labels": "WiLoR via kaggle/xphi_wilor (justinz2010/xhey-xphi-wilor, same setup as xhey-wilor-labels), stride 1 @10 fps, max 1800 frames/clip",
+      "datasets": [
+        "justinz2010/xhey-iphone-sessions",
+        "justinz2010/xhey-xphi-cam (xphi_cam + qc_xphi/{scorecards,segments}.json + scripts.tgz)"
+      ],
+      "launched": "2026-10-17 21:27"
+    }
+  ]
 }

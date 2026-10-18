@@ -35,7 +35,9 @@
 
 **C13（2026-10-17）**：C13 = EgoDex 预训练（相机光学系，Vision Pro ARKit 关节，`iphone+egodex+xhey_rgb+aug`），内核 `justinz2010/xhey-rsi-c13-egodex`（v2，2026-10-17 09:20 重交，21:27 入账）。同一次对照 C13ctl 不加 EgoDex（`iphone+xhey_rgb+aug`）。C13 整体 ADE 9.803 cm（比 zero 9.779 +0.024）、手在动 12.557 cm（−0.126，95% 区间 [−0.134, −0.117]）；C13ctl 整体 9.759 cm、手在动相对 zero −0.137（[−0.146, −0.129]）。EgoDex 在手在动上赢了「猜手不动」，但没有超过同一次对照，整体更差。队列结论 **done_worse_vs_ctl**。`ledger.csv` 的 status 列按镜像规则是 win_moving，只表示手在动的置信区间整段落在 0 以下；这不是实验结论。图：[`experiments/report/C13/`](../experiments/report/C13/)。
 
-唯一循环驱动是 `scripts/xhey_auto_iter.py`：先收已完成的固定内核，再按 [`docs/xhey/queue.json`](xhey/queue.json) 提交就绪候选。新候选默认必须带 `--qc-filter`。正在占 GPU 的是 **C14**（`justinz2010/xhey-rsi-c14-xphi`，`iphone+xphi+xhey_rgb+aug`，2026-10-17 21:27 提交）；有内核在跑时不抢占。
+**C14（2026-10-18）**：C14 = xPhi-Ego-100 预训练（单目 WiLoR 伪标签，假定 HFOV 90° 内参，`iphone+xphi+xhey_rgb+aug`），内核 `justinz2010/xhey-rsi-c14-xphi`（2026-10-17 21:27 提交，2026-10-18 09:22 入账）。同一次对照 C14ctl 不加 xPhi（`iphone+xhey_rgb+aug`）。xPhi 臂整体 ADE 9.750 cm，同一次对照 C14ctl 9.759 cm，zero 9.779 cm；手在动相对 zero −0.149 cm（95% 区间 [−0.159, −0.139]），对照 −0.137 cm（[−0.146, −0.129]）。这是第一份超过同一次对照的外部数据集，优势约 0.012 cm；标签是单目 WiLoR 伪标签，内参按 HFOV 90° 假定。队列结论 **done_win**。`ledger.csv` 的 status 列按镜像规则是 win_moving，只表示手在动的置信区间整段落在 0 以下；队列结论才是 done_win。图：[`experiments/report/C14/`](../experiments/report/C14/)。
+
+唯一循环驱动是 `scripts/xhey_auto_iter.py`：先收已完成的固定内核，再按 [`docs/xhey/queue.json`](xhey/queue.json) 提交就绪候选。新候选默认必须带 `--qc-filter`。C14 已入账，`queue_running` 已清空。正在占 GPU 的是自动迭代第 3 轮（`justinz2010/xhey-auto-iter` v3，2026-10-18 09:22 提交）；有内核在跑时不抢占。
 
 ---
 
