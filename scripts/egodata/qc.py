@@ -37,6 +37,7 @@ STEREO_FLAG_LABELS = {
     "stereo_one_view": "只有一目认到手",
     "stereo_inconsistent": "左右目对不上",
     "stereo_filled": "补出来的帧",
+    "stereo_unmeasured": "手部没有测量",
 }
 
 _EXTRA_LABELS = {
@@ -202,6 +203,11 @@ def frame_qc_flags(episode, **overrides):
     speeds = {side: _speeds(positions[side], dt) for side in ("left", "right")}
 
     for index in range(num_frames):
+        if camera_poses[index] is None:
+            # 这一帧没有测到相机位姿。不用单位阵投影，也不把它算成模糊。
+            flags["hands_out_of_frame"][index] = True
+            flags["staged_static"][index] = True
+            continue
         pose = np.asarray(camera_poses[index], dtype=float)
         forward = pose[:3, 2]
         forward_norm = np.linalg.norm(forward)
@@ -262,6 +268,8 @@ def frame_qc_flags(episode, **overrides):
             flags["staged_static"][index] = True
 
     for index in range(num_frames - 1):
+        if camera_poses[index] is None or camera_poses[index + 1] is None:
+            continue
         before = np.asarray(camera_poses[index], dtype=float)[:3, :3]
         after = np.asarray(camera_poses[index + 1], dtype=float)[:3, :3]
         ang_speed = _rotation_angle(before, after) / dt

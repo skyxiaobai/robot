@@ -11,6 +11,8 @@
 - ``stereo_inconsistent``：左右对不上，或被速度门限、严格门限丢掉。
   状态包括 ``reproj`` / ``depth`` / ``palm`` / ``few_joints`` / ``jump`` / ``strict``。
 - ``stereo_filled``：这一帧的手是时序补出来的（``filled=true``），不是测出来的。
+- ``stereo_unmeasured``：这一帧的手根本没有测（``per_frame`` 为 ``unmeasured``）。
+  不是左右对不上。丢掉的是标注，不因此把片段判成手出画或静止。
 
 只要这一帧里任何一只手落进上面三类，这一帧就算丢掉标注。门限把手腕拿掉之后，
 基础 QC 会把「两只手都没有手腕」看成手出画，也会把长段缺测看成摆拍；这种帧已经算丢掉的标注，
@@ -38,6 +40,8 @@ def stereo_frame_flags(episode):
         for index, value in enumerate(status[:num_frames]):
             if value == "one_view":
                 flags["stereo_one_view"][index] = True
+            elif value == "unmeasured":
+                flags["stereo_unmeasured"][index] = True
             elif value not in (None, "none", "ok"):
                 flags["stereo_inconsistent"][index] = True
         filled = episode["hands"][side].get("filled") or []
