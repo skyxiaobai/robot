@@ -208,25 +208,25 @@ class MirrorAndIngest(unittest.TestCase):
 class CommittedState(unittest.TestCase):
     def test_iteration_2_ingested(self):
         state = json.loads((ROOT / "experiments" / "auto_state.json").read_text(encoding="utf-8"))
-        self.assertEqual(state["last_iteration"], 2)
+        self.assertEqual(state["last_iteration"], 3)
         self.assertEqual(state["last_kernel"], "justinz2010/xhey-auto-iter")
         running = state["running"]
-        self.assertEqual(running["iteration"], 3)
+        self.assertEqual(running["iteration"], 4)
         self.assertEqual(running["kernel"], "justinz2010/xhey-auto-iter")
-        self.assertEqual(running["version"], 3)
-        self.assertEqual(running["launched"], "2026-10-18 09:22")
+        self.assertEqual(running["version"], 4)
+        self.assertEqual(running["launched"], "2026-10-18 21:23")
         self.assertEqual(len(running["candidates"]), 3)
         ids = {json.loads(l)["id"] for l in (ROOT / "experiments" / "ledger.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()}
-        self.assertTrue({"iter002_c0", "iter002_c1", "iter002_c2", "C1", "C8"} <= ids)
+        self.assertTrue({"iter003_c0", "iter003_c1", "iter003_c2", "C1", "C8"} <= ids)
 
     def test_c9_done_worse_and_c9b_already_running(self):
         state = json.loads((ROOT / "experiments" / "auto_state.json").read_text(encoding="utf-8"))
         self.assertIsNone(state["queue_running"])
         running = state["running"]
-        self.assertEqual(running["iteration"], 3)
+        self.assertEqual(running["iteration"], 4)
         self.assertEqual(running["kernel"], "justinz2010/xhey-auto-iter")
-        self.assertEqual(running["version"], 3)
-        self.assertEqual(running["launched"], "2026-10-18 09:22")
+        self.assertEqual(running["version"], 4)
+        self.assertEqual(running["launched"], "2026-10-18 21:23")
         self.assertNotIn("queue_running_also", state)
         q = json.loads((ROOT / "docs" / "xhey" / "queue.json").read_text(encoding="utf-8"))
         ids = [i["id"] for i in q["queue"]]
@@ -412,6 +412,42 @@ class CommittedState(unittest.TestCase):
         self.assertEqual(c14row["moving_ade_cm"], 12.534017037982933)
         self.assertEqual(c14row["delta_moving_cm"], -0.14888022456818356)
         self.assertEqual(c14row["delta_moving_ci95"], [-0.15879802343330682, -0.13937611602942523])
+        self.assertEqual(ids.count("iter003_c0"), 1)
+        self.assertEqual(ids.count("iter003_c1"), 1)
+        self.assertEqual(ids.count("iter003_c2"), 1)
+        c0 = rows["iter003_c0"]
+        self.assertEqual(c0["status"], "ok")
+        self.assertEqual(c0["iteration"], 3)
+        self.assertEqual(c0["date"], "2026-10-18 21:23")
+        self.assertEqual(c0["source"], "justinz2010/xhey-auto-iter")
+        self.assertEqual(c0["config"]["mix"], "iphone+xhey_rgb+aug")
+        self.assertEqual(c0["config"]["lr_scale"], 0.5)
+        self.assertEqual(c0["config"]["aug_noise"], 0.1)
+        self.assertEqual(c0["overall_ade_cm"], 9.804309331131275)
+        self.assertEqual(c0["delta_overall_cm"], 0.02521802672375374)
+        self.assertEqual(c0["moving_ade_cm"], 12.555796291394767)
+        self.assertEqual(c0["delta_moving_cm"], -0.1271009711563525)
+        self.assertEqual(c0["delta_moving_ci95"], [-0.1377246784220152, -0.11678626264060443])
+        c1 = rows["iter003_c1"]
+        self.assertEqual(c1["status"], "ok")
+        self.assertEqual(c1["config"]["mix"], "iphone+xhey_rgb+aug")
+        self.assertEqual(c1["config"]["lr_scale"], 1.0)
+        self.assertEqual(c1["config"]["aug_noise"], 0.2)
+        self.assertEqual(c1["overall_ade_cm"], 9.752460214243373)
+        self.assertEqual(c1["delta_overall_cm"], -0.02663109016415239)
+        self.assertEqual(c1["moving_ade_cm"], 12.535582195742764)
+        self.assertEqual(c1["delta_moving_cm"], -0.1473150668083553)
+        self.assertEqual(c1["delta_moving_ci95"], [-0.15692082101939178, -0.13802075752697976])
+        c2 = rows["iter003_c2"]
+        self.assertEqual(c2["status"], "ok")
+        self.assertEqual(c2["config"]["mix"], "iphone+xphi+xhey_rgb+aug")
+        self.assertEqual(c2["config"]["lr_scale"], 0.5)
+        self.assertEqual(c2["config"]["aug_noise"], 0.2)
+        self.assertEqual(c2["overall_ade_cm"], 9.800702031797082)
+        self.assertEqual(c2["delta_overall_cm"], 0.021610727389559575)
+        self.assertEqual(c2["moving_ade_cm"], 12.554741231319873)
+        self.assertEqual(c2["delta_moving_cm"], -0.12815603123124436)
+        self.assertEqual(c2["delta_moving_ci95"], [-0.13867617152198525, -0.1179699765822357])
 
 
 def _kernel_metrics(mix, moving=-0.05):

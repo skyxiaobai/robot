@@ -42,3 +42,6 @@ C9b,2026-10-16,iphone+stera+di+xhey_rgb+aug,7.2346,10.3829,0.0075,win_moving,jus
 C13,2026-10-17,iphone+egodex+xhey_rgb+aug,9.8031,12.5571,0.0240,win_moving,justinz2010/xhey-rsi-c13-egodex
 C13ctl,2026-10-17,iphone+xhey_rgb+aug,9.7589,12.5459,-0.0202,win_moving,justinz2010/xhey-rsi-c13-egodex
 C14,2026-10-18,iphone+xphi+xhey_rgb+aug,9.7503,12.5340,-0.0288,win_moving,justinz2010/xhey-rsi-c14-xphi
+iter003_c0,2026-10-18,iphone+xhey_rgb+aug lr_scale=0.5,9.8043,12.5558,0.0252,win_moving,justinz2010/xhey-auto-iter
+iter003_c1,2026-10-18,iphone+xhey_rgb+aug aug_noise=0.2,9.7525,12.5356,-0.0266,win_moving,justinz2010/xhey-auto-iter
+iter003_c2,2026-10-18,iphone+xphi+xhey_rgb+aug lr_scale=0.5 aug_noise=0.2,9.8007,12.5547,0.0216,win_moving,justinz2010/xhey-auto-iter
