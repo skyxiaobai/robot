@@ -1,0 +1,22 @@
+{
+  "id": "justinz2010/xhey-xphi-wilor",
+  "title": "xhey-xphi-wilor",
+  "code_file": "xhey-xphi-wilor.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [
+    "gpu"
+  ],
+  "dataset_sources": [
+    "justinz2010/xhey-iphone-sessions",
+    "justinz2010/xhey-xphi-raw"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [],
+  "model_sources": [],
+  "machine_shape": "NvidiaTeslaT4"
+}

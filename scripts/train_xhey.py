@@ -34,6 +34,7 @@ K_HIST = 8
 QC_EXCLUDE = set()  # scorecard failures
 QC_SCORED = set()   # clips named by the supplied scorecards
 QC_STRICT = False   # --strict-qc: missing-from-scorecard is an error; default warns and keeps
+CUM_W = 0.1  # --cum-weight: cumulative (relative-to-current-wrist) displacement loss weight
 SEG_KEEP = {}       # --qc-segments: clip -> {"fps","frames","spans"}；训练块必须整块落在保留区间里（测试段不剪）
 
 
@@ -267,7 +268,7 @@ class XHEY:
                                  nn.Linear(hidden, hidden), nn.GELU(), nn.Dropout(dropout),
                                  nn.Linear(hidden, hidden), nn.GELU(),
                                  nn.Linear(hidden, H * STEP)).to(self.dev)
-        self.norm = None; self.cum_w = 0.1; self.cfg = dict(in_dim=in_dim, hidden=hidden, dropout=dropout)
+        self.norm = None; self.cum_w = CUM_W; self.cfg = dict(in_dim=in_dim, hidden=hidden, dropout=dropout, cum_weight=CUM_W)
 
     def set_norm(self, X, Y):
         sd = X.std(0) + 1e-6; sd[sd < 1e-4] = 1.0
@@ -445,7 +446,7 @@ def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True, lo
             Xe, Ye, Ve = xyv(extra, ex_starts, use_img)
             X, Y, V = np.vstack([X, Xe]), np.concatenate([Y, Ye]), np.concatenate([V, Ve])
     m = XHEY(X.shape[1], seed, hidden=TUNE["hidden"], dropout=TUNE["dropout"]); m.set_norm(X, Y)
-    pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone", "xhey_rgb", "openaoe", "stera", "di")
+    pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone", "xhey_rgb", "openaoe", "stera", "di", "hoi4d", "xphi")
     pre = [ext[k] for k in pre_keys if k in mix and k in ext]
     if pre:
         P = concat(pre); ps = useful(P, seg_chunk_filter(P, ev.chunk_starts(P["episode"], H, 1)))
@@ -564,6 +565,14 @@ def prepare_external(mixes, iph, eps, names, a):
         _d = try_external("di", Path(a.di), cache)
         if _d is not None:
             ext["di"] = _d
+    if "hoi4d" in need:  # HOI4D 头戴 RGB-D，MANO 真值手（相机光学系，米），只标交互手，已过滤「手在动」
+        _d = try_external("hoi4d", Path(a.hoi4d), cache)
+        if _d is not None:
+            ext["hoi4d"] = _d
+    if "xphi" in need:  # xPhi-Ego-100 头戴单目 RGB，WiLoR 伪标签（假设视场角，尺度不可靠），相机光学系，已过滤「手在动」
+        _d = try_external("xphi", Path(a.xphi), cache)
+        if _d is not None:
+            ext["xphi"] = _d
     if "aug" in need:
         mir = mirror_arrays({k: iph[k] for k in ("state", "action", "valid", "episode", "index")})
         img = np.vstack([image_features(e, n, cache, flip=True)[: e["num_frames"] - 1] for e, n in zip(eps, names)])
@@ -612,6 +621,10 @@ def main():
                     help="Stera-10M 转换后的 episode 目录（scripts/convert_stera.py）")
     ap.add_argument("--di", default="data/di/unified",
                     help="DynamicIntelligence 转换后的 episode 目录（scripts/convert_di.py）")
+    ap.add_argument("--hoi4d", default="data/hoi4d/unified",
+                    help="HOI4D 转换后的 episode 目录（scripts/convert_hoi4d.py）")
+    ap.add_argument("--xphi", default="data/xphi/unified",
+                    help="xPhi-Ego-100 WiLoR 伪标签 episode 目录（相机光学系；内参为假设视场角）")
     ap.add_argument("--move-cm", type=float, default=5.0,
                     help="「手在动」子集：未来 16 步手腕真实位移超过多少 cm")
     ap.add_argument("--no-final", action="store_true", help="只做留一段评测，不再训最终模型（自动迭代省时间）")
@@ -619,6 +632,8 @@ def main():
     ap.add_argument("--dropout", type=float, default=0.2)
     ap.add_argument("--lr-scale", type=float, default=1.0, help="学习率倍数（预训练和微调一起缩放）")
     ap.add_argument("--aug-noise", type=float, default=0.1, help="合成增强时的输入噪声")
+    ap.add_argument("--cum-weight", type=float, default=0.1,
+                    help="累计位移损失权重（相对当前手腕，默认 0.1；调大=少盯逐帧增量、多盯整段相对位移，C15 噪声假设验证）")
     ap.add_argument("--loss-move-cm", type=float, default=0.0,
                     help=">0 时微调只保留 GT 手腕位移超过该 cm 的训练块（逼模型学「会动」）")
     ap.add_argument("--qc-filter", nargs="*", default=None,
@@ -635,7 +650,9 @@ def main():
     ap.add_argument("--pre-steps", type=int, default=6000, help="开源数据预训练步数")
     ap.add_argument("--no-eval", action="store_true", help="跳过留一段评测，只用全部片段训最终模型")
     a = ap.parse_args()
-    global QC_STRICT
+    global QC_STRICT, CUM_W
+    CUM_W = float(a.cum_weight)
+    print("cum_weight", CUM_W, flush=True)
     QC_EXCLUDE.clear()
     QC_SCORED.clear()
     QC_STRICT = bool(a.strict_qc)

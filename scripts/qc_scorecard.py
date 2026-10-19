@@ -15,7 +15,7 @@
 
 合格规则（默认，可改）：detect_rate ≥ 0.5、gap_ratio ≤ 0.5、jitter_cm ≤ 2.5、move_frac ≥ 0.05、
 swaps ≤ 每分钟 10 次、depth_valid ≥ 0.5（有实测深度时）、frame_ok。
-stera / dynamic_intelligence / zeno_lidar / iphone_lidar 若转换器没写逐帧深度状态，记 unknown 警告，仍可合格。
+stera / dynamic_intelligence / zeno_lidar / iphone_lidar / hoi4d 若转换器没写逐帧深度状态，记 unknown 警告，仍可合格。
 
 用法：
   python scripts/qc_scorecard.py --episodes data/stera/unified --out outputs/qc/stera
@@ -32,7 +32,9 @@ from egodata.hand_fix import SIDES, _good, fix_episode_hands  # noqa: E402
 DEPTH_BAD = {"lowconf", "fit", "depth"}
 DEPTH_UNKNOWN = {"none", "missing", "unknown"}
 # 这些源的转换器经常不写逐帧深度状态；缺失证据报 unknown，不当作失败，也不再记成 100%。
-DEPTH_UNKNOWN_SOURCES = ("stera", "dynamic_intelligence", "zeno_lidar", "iphone_lidar")
+DEPTH_UNKNOWN_SOURCES = ("stera", "dynamic_intelligence", "zeno_lidar", "iphone_lidar", "hoi4d")
+# 只标注交互手的数据集（HOI4D）：另一只手整段缺失不是质量问题。
+SINGLE_HAND_SOURCES = ("hoi4d",)
 RULES = {"detect_rate_min": 0.5, "gap_ratio_max": 0.5, "jitter_cm_max": 2.5, "move_frac_min": 0.05,
          "swaps_per_min_max": 10.0, "depth_valid_min": 0.5}
 
@@ -73,7 +75,10 @@ def score_episode(ep, name="", move_cm=5.0, max_gap_s=0.3, rules=RULES):
                     depth_all += 1
                     depth_ok += int(token == "ok")
     st = np.concatenate(residuals) if residuals else np.array([])
-    gap = np.mean([fixed[s]["gap_frames"] / max(n, 1) for s in SIDES])
+    gsides = list(SIDES)
+    if str(ep.get("source")) in SINGLE_HAND_SOURCES:  # 只标注了交互手：整段没标的那只手不算缺口
+        gsides = [s for s in SIDES if fixed[s]["gap_frames"] < n] or gsides
+    gap = np.mean([fixed[s]["gap_frames"] / max(n, 1) for s in gsides])
     sanity = F.sanity_check(ep)
     card = {"clip": name or ep.get("episode_id"), "source": ep.get("source"), "frames": n, "fps": round(fps, 2),
             "seconds": round(n / fps, 1), "convention": F.convention_of(ep),

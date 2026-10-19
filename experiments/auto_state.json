@@ -1,11 +1,52 @@
 {
- "running": null,
- "queue_running": {
-  "id": "C9",
-  "slug": "justinz2010/xhey-rsi-c9-stera-di",
-  "mix": "iphone+stera+di+xhey_rgb+aug",
-  "launched": "2026-10-15 21:24"
+ "running": {
+  "iteration": 5,
+  "kernel": "justinz2010/xhey-auto-iter",
+  "version": 5,
+  "candidates": [
+   {
+    "mix": "iphone+xphi+xhey_rgb+aug",
+    "openaoe": null,
+    "pre_steps": 6000,
+    "steps": 3000,
+    "hidden": 512,
+    "dropout": 0.1,
+    "lr_scale": 1.0,
+    "aug_noise": 0.2,
+    "loss_move_cm": 0.0,
+    "seeds": 3,
+    "_pred_delta_moving_cm": -0.0865
+   },
+   {
+    "mix": "iphone+xphi+xhey_rgb+aug",
+    "openaoe": null,
+    "pre_steps": 6000,
+    "steps": 3000,
+    "hidden": 256,
+    "dropout": 0.2,
+    "lr_scale": 1.0,
+    "aug_noise": 0.2,
+    "loss_move_cm": 0.0,
+    "seeds": 3,
+    "_pred_delta_moving_cm": -0.0865
+   },
+   {
+    "mix": "iphone+xphi+xhey_rgb+aug",
+    "openaoe": null,
+    "pre_steps": 6000,
+    "steps": 3000,
+    "hidden": 512,
+    "dropout": 0.2,
+    "lr_scale": 1.0,
+    "aug_noise": 0.05,
+    "loss_move_cm": 0.0,
+    "seeds": 3,
+    "_pred_delta_moving_cm": -0.097
+   }
+  ],
+  "launched": "2026-10-19 09:27"
  },
- "last_iteration": 2,
+ "queue_running": null,
+ "last_iteration": 4,
  "last_kernel": "justinz2010/xhey-auto-iter"
 }
