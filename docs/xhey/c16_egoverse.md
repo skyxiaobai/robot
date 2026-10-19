@@ -1,4 +1,4 @@
-# C16 EgoVerse/Mecka 预训练（已入队 ready，未提交 Kaggle）
+# C16 EgoVerse/Mecka 预训练（已入账 done_worse_vs_ctl）
 
 假设：EgoVerse 自带 MANO 真值 3D 关键点 + 头部位姿 + 真实内参，不需要 WiLoR 打标，
 且静止漂移比 WiLoR 小，可能比 xPhi（猜内参）/HOI4D 更适合做 XHEY 预训练。无深度，结果只作方向参考。
@@ -18,5 +18,15 @@
 ## 训练（kaggle/rsi_c16，dataset justinz2010/xhey-egoverse-cam 私有）
 臂 A `iphone+egoverse+xhey_rgb+aug`（--qc-filter + --qc-segments），臂 B 对照 `iphone+xhey_rgb+aug`；
 其余同 C11–C14：3 段深度片 LOO、3 seeds、pre 6000、steps 3000、move-cm 5、--no-final。
-状态 ready，等待自动迭代/空闲 GPU 槽提交，不要重复提交。许可：目录 freeform 行 license 为空
-（旗舰行 CC BY-SA 4.0），仅私有研究用，不再分发。
+内核 `justinz2010/xhey-rsi-c16-egoverse`（~2026-10-19 12:33 UTC 完成，2026-10-19 21:42 Asia/Shanghai 入账）。
+
+## 结果（done_worse_vs_ctl）
+| | overall ADE (cm) | vs zero | moving ADE (cm) | moving vs zero |
+|---|---:|---:|---:|---:|
+| zero | 9.779 | 0 | 12.683 | 0 |
+| C16ctl（无 EgoVerse） | 9.759 | −0.020 | 12.546 | −0.137 |
+| C16（+EgoVerse） | 9.782 | +0.003 | 12.554 | −0.129 |
+
+EgoVerse 在手在动上赢了「猜手不动」（−0.129 cm，95% 区间 [−0.139, −0.120]），但没有超过同一次对照 C16ctl（手在动 −0.137、整体 9.759），整体还略差于 zero。队列结论 **done_worse_vs_ctl**（同 C13）。图：[`experiments/report/C16/`](../../experiments/report/C16/)、[`C16ctl/`](../../experiments/report/C16ctl/)。
+
+许可：目录 freeform 行 license 为空（旗舰行 CC BY-SA 4.0），仅私有研究用，不再分发。
