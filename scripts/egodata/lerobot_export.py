@@ -43,6 +43,10 @@
 null。``timestamp`` 按 LeRobot 0.6.1 的写法是 ``frame_index / fps``（float32），
 视频解码用它做容差检查。图像时刻另外放在 ``observation.capture_time_ns``
 （int64 纳秒），避免 1e9 秒量级被 float32 吃掉。``accuracy`` 只出现在导出说明里，值是 null。
+
+有手部测量、并且 episode 上已经有逐帧 ``pose_status`` / ``T_world_cam`` 时，
+同一份包再加这三列。没有这组状态的旧导出保持原来的列，不补 0 位姿。
+最后一帧没有下一步动作，整行不写，所以包里的帧数比 episode 少 1。
 """
 import csv
 import json
@@ -527,6 +531,7 @@ def _pack_episode(episode, include_hand):
         "action_valid": action_valid,
         "timestamp": timestamps,
         "text": texts,
+        "pose_columns": _pose_columns_for_episode(episode, kept),
     }
 
 
@@ -544,6 +549,48 @@ def _pose7(matrix):
 
 def _hands_unmeasured(episode):
     return episode.get("hands_measured") is False
+
+
+def _pose_columns_for_episode(episode, kept):
+    """有逐帧位姿状态时返回要写入的列。没有这组字段就返回 None，不补 0。"""
+    slam = (episode.get("hand_pose") or {}).get("slam") or {}
+    statuses = slam.get("pose_status")
+    matrices = slam.get("T_world_cam")
+    if statuses is None and matrices is None:
+        return None
+    if not isinstance(statuses, list) or not isinstance(matrices, list):
+        raise ValueError("%s 的 slam 位姿列不完整" % episode.get("episode_id"))
+    if len(statuses) < kept or len(matrices) < kept:
+        raise ValueError("%s 的 slam 位姿列短于要导出的帧" % episode.get("episode_id"))
+    stamps = episode.get("timestamps")
+    if not isinstance(stamps, list) or len(stamps) < kept:
+        raise ValueError("%s 缺少图像时间戳，不能写 capture_time_ns" % episode.get("episode_id"))
+    pose_rows = []
+    status_rows = []
+    capture_rows = []
+    for frame_index in range(kept):
+        status = statuses[frame_index]
+        if status not in ("ok", "tracking_lost", "pose_missing"):
+            raise ValueError("%s 第 %d 帧的 slam_status 无法识别：%s" % (
+                episode.get("episode_id"), frame_index, status,
+            ))
+        if status == "ok":
+            pose = _pose7(matrices[frame_index])
+            if pose is None:
+                raise ValueError("%s 第 %d 帧是 ok，但没有有限的 T_world_cam" % (
+                    episode.get("episode_id"), frame_index,
+                ))
+        else:
+            pose = None
+        pose_rows.append(pose)
+        status_rows.append(status)
+        capture_rows.append(_capture_time_ns(stamps[frame_index]))
+    return {
+        "pose": pose_rows,
+        "slam_status": status_rows,
+        "capture_time_ns": capture_rows,
+        "pose_source": slam.get("pose_source"),
+    }
 
 
 def _capture_time_ns(stamp):
@@ -869,6 +916,7 @@ def export_lerobot(
     grasp_valid_blocks = []
     action_valid_blocks = []
     timestamp_blocks = []
+    pose_blocks = []
     event_rows = []
     truncated = 0
     frame_indices = []
@@ -898,6 +946,8 @@ def export_lerobot(
         grasp_valid_blocks.append(item["grasp_valid"])
         action_valid_blocks.append(item["action_valid"])
         timestamp_blocks.append(item["timestamp"])
+        if item.get("pose_columns") is not None:
+            pose_blocks.append(item["pose_columns"])
         truncated += int(item["object_truncated"])
         event_rows.append({
             "episode_index": episode_index,
@@ -953,10 +1003,27 @@ def export_lerobot(
     action_valids = np.concatenate(action_valid_blocks, axis=0)
     timestamps = np.concatenate(timestamp_blocks, axis=0)
     validity = validity_summary(action_valids)
+    if pose_blocks and len(pose_blocks) != len(packed):
+        raise ValueError("同一次导出里，有的片段有逐帧位姿，有的没有。")
+    pose_rows = []
+    status_rows = []
+    capture_rows = []
+    pose_source = None
+    if pose_blocks:
+        sources = []
+        for block in pose_blocks:
+            pose_rows.extend(block["pose"])
+            status_rows.extend(block["slam_status"])
+            capture_rows.extend(block["capture_time_ns"])
+            sources.append(block.get("pose_source"))
+        unique_sources = {item for item in sources if item}
+        if len(unique_sources) > 1:
+            raise ValueError("同一次导出里的 pose_source 不一致：%s" % sorted(unique_sources))
+        pose_source = sources[0] if sources else None
 
     data_path = out_dir / "data" / "chunk-000" / "file-000.parquet"
     data_path.parent.mkdir(parents=True, exist_ok=True)
-    table = pa.table({
+    columns = {
         "observation.state": _fixed_list(states, STATE_DIM),
         "observation.hand_valid": _fixed_list(valids, 2),
         "observation.object_pose": _fixed_list(object_pose, OBJECT_POSE_DIM),
@@ -972,7 +1039,15 @@ def export_lerobot(
         "episode_index": pa.array(episode_indices, type=pa.int64()),
         "index": pa.array(global_indices, type=pa.int64()),
         "task_index": pa.array(task_indices, type=pa.int64()),
-    })
+    }
+    if pose_blocks:
+        for pose in pose_rows:
+            if pose is not None and len(pose) != 7:
+                raise ValueError("observation.pose 必须是 7 个数或 null")
+        columns["slam_status"] = pa.array(status_rows, type=pa.string())
+        columns["observation.capture_time_ns"] = pa.array(capture_rows, type=pa.int64())
+        columns["observation.pose"] = pa.array(pose_rows, type=pa.list_(pa.float64()))
+    table = pa.table(columns)
     pq.write_table(table, data_path)
 
     names = [None] * len(task_to_index)
@@ -1005,6 +1080,10 @@ def export_lerobot(
         "action_valid": _stats_json(action_valids),
         "timestamp": _stats_json(timestamps),
     }
+    if pose_blocks:
+        finite_pose = np.asarray([row for row in pose_rows if row is not None], dtype=np.float64)
+        stats["observation.capture_time_ns"] = _stats_json(np.asarray(capture_rows, dtype=np.float64))
+        stats["observation.pose"] = None if finite_pose.size == 0 else _stats_json(finite_pose)
     (out_dir / "meta" / "stats.json").write_text(
         json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8",
     )
@@ -1041,6 +1120,12 @@ def export_lerobot(
         "index": _feature("int64", (1,), fps=fps),
         "task_index": _feature("int64", (1,), fps=fps),
     }
+    if pose_blocks:
+        features["slam_status"] = _feature("string", (1,), ["ok", "tracking_lost", "pose_missing"], fps=fps)
+        features["observation.capture_time_ns"] = _feature("int64", (1,), ["nanoseconds"], fps=fps)
+        features["observation.pose"] = _feature(
+            "float64", (7,), ["tx", "ty", "tz", "qx", "qy", "qz", "qw"], fps=fps,
+        )
     info = {
         "codebase_version": CODEBASE_VERSION,
         "fps": fps,
@@ -1056,6 +1141,8 @@ def export_lerobot(
         "robot_type": "egodex_human",
         "splits": {"train": "0:%d" % len(packed)},
     }
+    if pose_source:
+        info["pose_source"] = pose_source
     (out_dir / "meta" / "info.json").write_text(
         json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8",
     )
@@ -1101,6 +1188,21 @@ def export_lerobot(
             for length in (16, 50, 100)
         },
     }
+    if pose_blocks:
+        note["pose_source"] = pose_source
+        note["accuracy"] = None
+        note["accuracy_note"] = "本导出不测量误差。accuracy 保持 null。手腕误差和短片段 ATE 不写进这个字段。"
+        note["pose"] = (
+            "observation.pose 是 tx ty tz qx qy qz qw，只在 slam_status=ok 时有值。"
+            "其他帧是 null，不是零向量。"
+        )
+        note["capture_time_ns"] = (
+            "observation.capture_time_ns 是图像时刻的纳秒。"
+            "timestamp 仍是 frame_index/fps，给 LeRobot 0.6.1 对视频用。"
+        )
+        note["frame_count_note"] = (
+            "parquet 行数比 episode 的 num_frames 少 1：最后一帧没有下一步 action，整行不写。"
+        )
     events_path = out_dir / "meta" / "interaction_events.jsonl"
     events_path.write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in event_rows),

@@ -380,6 +380,103 @@ backend: pyav
 
 回归：`UnmeasuredLeRobotPackageTest` 仍用摘录前 3 行加一帧对不上的时间。图像是测试里的 8×8 色块，不是 EuRoC 像素。没装 pyarrow 或 ffmpeg 时跳过。`timestamp` 是 `frame_index/20`，`observation.capture_time_ns` 等于原来的纳秒，第 4 行位姿是 null。`OfficialLeRobotLoaderTest` 用官方 `LeRobotDataset` 再读这份小包（含那一帧 `tracking_lost`）。没装 lerobot 或 torch 时跳过，原因写在 `skipTest` 里。系统解释器上 `python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc` 是 42 项、跳过 1 项、通过。装了 lerobot 的 venv 里这两个测试类通过。
 
-## 下一步
+## HOT3D Quest3 clip-000000：带手导出
 
-下一次可以做的事：把一份真实 WiLoR 相机系 episode 交给 `slam_frames.py`。时间戳必须和轨迹在同一个钟上，否则会 `timestamp_alignment=refused`。本仓库没有这样的文件。不要把 `sanity_ok` 写成精度，也不要把残缺轨迹标成 `world_yup`。头戴相机、曝光寄存器和 WiLoR 继续缺着。整段 V1_01_easy 和 stereo-inertial 这次没有跑。短记录到 QC 过滤后的 LeRobot 包，官方 0.6.1 加载器已经读过上面这 40 帧。
+这一节用的是 Hugging Face `bop-benchmark/hot3d` 的 Quest3 `clip-000000`（150 帧，序列 `P0002_210fc0da`，参与者 `P0002`）。图像、真值和权重都没有提交。`origin/main` 仍是 `b51dcc9` 的祖先，没有要合并的新提交。
+
+### 会话
+
+`scripts/headcam/hot3d_session.py` 按该帧自己的 FISHEYE624 去畸变，Quest3 侧放的图和外参一起转 -90°，写成虚拟针孔。不写 `slam.tum`。头戴定位写到 `gt/headset_tum.txt`，文件头是 `pose_source=hot3d_gt_mocap`。
+
+```bash
+python3 scripts/headcam/hot3d_session.py \
+  --clip /tmp/hot3d/clip-000000 \
+  --out /tmp/hot3d/sess \
+  --euroc-out /tmp/hot3d/euroc \
+  --orb-yaml /tmp/hot3d/quest3_pinhole.yaml
+```
+
+对得上的量：150 帧，整数 30 fps（中位间隔 33333333 ns），去畸变后 1024×1280，基线 `0.06368567581770954` m，第一帧外参相对其余帧的平移最大差 `1.34e-7` m。左右 `image_timestamps_ns` 相同，`sync_error_ms.left_right_max=0`。`calib.yaml` 的 `dist_coeffs` 是 0，因为图已经是针孔，不是把鱼眼系数填 0。原始模型和 15 个投影参数留在 `metadata.hot3d.source_cameras`。未知：曝光、任务、指令、IMU 样本、IMU 时间偏移、accuracy。这个 tar 没有 IMU，没有跑 stereo-inertial。
+
+### ORB-SLAM3
+
+上游 `4452a3c` 的 `stereo_euroc`，查看器关掉（`System::STEREO, false`）。词汇、yaml、`mav0/cam0|cam1/data/{ns}.png` 和 `times.txt`。没有把绝对路径当成输出文件名，轨迹写在工作目录的 `CameraTrajectory.txt`。
+
+```bash
+/tmp/src/ORB_SLAM3/Examples/Stereo/stereo_euroc \
+  /tmp/src/ORB_SLAM3/Vocabulary/ORBvoc.txt \
+  /tmp/hot3d/quest3_pinhole.yaml \
+  /tmp/hot3d/euroc \
+  /tmp/hot3d/euroc/times.txt
+```
+
+地图 0 只有 1 个关键帧。日志里 `Fail to track local map!` 146 次。`CameraTrajectory.txt` 53 行，不同时间戳只有 2 个（`42139400000000` 和 `42139433333333` 纳秒），其余是同一行的重复。`external_tum --tum-time-scale 1e-9`：`frames=150 ok=2 tracking_lost=148 pose_missing=0 world_pose=false`。这不是可用轨迹，没有拿它乘手，也没有把它叫成导出位姿。
+
+`hot3d_check.trajectory_ate` 先丢掉重复时间戳。剩下 2 个不同时刻，少于 3，不算 ATE，报告里没有 RMSE。若不去重，53 行重复会被最近邻配成看起来很小的误差，那个数没有采用。
+
+### 手、同一个钟、带手的包
+
+WiLoR 用官方源码树 `github.com/rolpotamias/WiLoR`（`PYTHONPATH`），不是 `wilor_mini`：后者的包名是 `wilor_mini`，没有 `wilor.models.load_wilor`。权重在仓库外：`WILOR_CHECKPOINT=/tmp/wilor/wilor_final.ckpt`，`WILOR_DETECTOR=/tmp/wilor/detector.pt`，`WILOR_CONFIG=/tmp/wilor/model_config.yaml`，`MANO_MODEL_DIR=/tmp/wilor/mano`（只有 `MANO_RIGHT.pkl`）。推理 venv：`torch 2.11.0+cpu`，`ultralytics 8.1.34`，`pytorch-lightning 2.6.6`。`chumpy` 在 Python 3.12 / numpy 2 上要补 `inspect.getfullargspec` 和 `np.int` 这些别名，改的是 venv 里的副本，没有进仓库。
+
+```bash
+PYTHONPATH=/workspace/scripts:/tmp/src/WiLoR \
+MANO_MODEL_DIR=/tmp/wilor/mano \
+WILOR_CHECKPOINT=/tmp/wilor/wilor_final.ckpt \
+WILOR_DETECTOR=/tmp/wilor/detector.pt \
+WILOR_CONFIG=/tmp/wilor/model_config.yaml \
+/tmp/wilor-venv/bin/python -c "
+from headcam.stereo_pipeline import StereoParams, run_pipeline
+run_pipeline(['/tmp/hot3d/sess'], '/tmp/hot3d/hands_cam', params=StereoParams(), export=False)
+"
+```
+
+`StereoParams()` 是现有默认：关联、另一目重裁、RTS。会话里没有 `slam.tum`，所以这段 episode 的 `coordinate_frame=camera`，位姿是单位阵。后端 565.6 秒。逐目状态：左 `ok=144 jump=6`，右 `ok=122 none=14 jump=13 palm=1`。`filled` 左 5、右 17。管线 QC：`accepted`，坏帧 0，`stereo_inconsistent=20`，`stereo_filled=22`，`stereo_one_view=0`，丢掉标注的帧 30，标注覆盖 0.8（120/150）。这些是丢掉的标注，不是从包里删掉的行。
+
+```bash
+python3 scripts/headcam/slam_frames.py \
+  --episode /tmp/hot3d/check/camera_episode.json \
+  --session /tmp/hot3d/sess \
+  --tum /tmp/hot3d/sess/gt/headset_tum.txt \
+  --backend external_tum \
+  --out /tmp/hot3d/world/sess.json
+```
+
+`ok=150 tracking_lost=0 pose_missing=0 timestamp_alignment=timestamps world_points_scope=all_frames pose_source=hot3d_gt_mocap accuracy=unmeasured`，退出码 0。时钟对不上的测试仍然拒绝，没有为了配上而改时间戳。
+
+```bash
+python3 scripts/headcam/export_mvp.py \
+  --session /tmp/hot3d/sess \
+  --episodes /tmp/hot3d/world \
+  --out /tmp/hot3d/mvp \
+  --slam-backend external_tum \
+  --tum /tmp/hot3d/sess/gt/headset_tum.txt \
+  --pose-source hot3d_gt_mocap
+```
+
+退出码 0。`world_pose=true ok=150 hands=external_episodes pose_source=hot3d_gt_mocap accuracy=null`。世界系 episode 再跑 QC 仍然接受（坏帧 0，yield 1）。LeRobot 149 帧，等于 150 减掉没有下一步动作的最后一帧。`observation.state` 形状 `(140,)`，`action` 形状 `(14,)`。`timestamp` 是 `frame_index/30` 的 float32，第 0 帧是 0，第 148 帧是 `4.933333`（148/30）。`observation.capture_time_ns` 第 0 帧是 `42136166666666`，和图像纳秒一致。`observation.pose` 对回 `T_world_cam` 的最大差 `8.49e-9`。`slam_status` 第 0 帧是 `ok`。`meta/info.json` 和 `meta/egodata_export.json` 都写了 `pose_source=hot3d_gt_mocap`，`accuracy` 是 null。官方 `DatasetInfo` 会警告不认识 `info.json` 里的 `pose_source`，文件里的值还在。
+
+第 0 帧左手置信度 0.413，低于 0.5，`observation.hand_valid` 是 `[0, 0]`，关节块按现有约定写成 0，左手手腕 7 个数仍写入。第 10 帧两手都有效，140 维都不是 0。置信度不低于 0.5 的帧：左 142，右 102，两手同时 97。
+
+### 相对 HOT3D 的手腕误差
+
+比的是 `umetrack_pose.T_world_from_wrist.translation_xyz`（世界坐标，米）。WiLoR 空间只发布了 `MANO_RIGHT.pkl`，没有 `MANO_LEFT.pkl`，没有做 MANO 前向运动学，所以这不是以前报告里的 OpenPose 第 0 点，也不能和「4 段 Quest3、中位约 1.22 cm」直接比。
+
+| 量 | n | 中位 | p90 |
+| --- | --- | --- | --- |
+| 相机系手腕，相对 `inv(T) @ umetrack` | 278 | 2.064 cm | 2.740 cm |
+| 世界系手腕，实测（`filled=false`），相对 umetrack | 256 | 2.094 cm | 2.773 cm |
+| 世界系手腕，时序补出来的（`filled=true`） | 22 | 1.651 cm | 2.133 cm |
+
+位姿来源是头戴真值，所以世界系和相机系接近。这些数没有写进 `accuracy`。
+
+### 回归
+
+`HandsPresentPackageTest` 用 4 帧合成相机系（不是 HOT3D 图像）走 `slam_frames` 和 `export_mvp --pose-source hot3d_gt_mocap`。文件头和命令行不一致会拒绝，避免把真值改称 `orbslam3_stereo_euroc`。时钟错 10 秒仍是 `timestamp_alignment=refused`。`HandsPresentOfficialLoaderTest` 没装 lerobot 或 torch 就跳过。`DuplicateTimestampAteTest` 确认两行不同时间加重复行不会写出 `rmse_m`。
+
+系统解释器 `python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc`：46 项，跳过 2 项（两个官方加载器测试），其余通过。系统 numpy 仍是 1.26.4，pyarrow 18.1.0。
+
+隔离加载器：`lerobot 0.6.1`，`torch 2.11.0+cpu`，`numpy 2.2.6`，`datasets 3.6.0`，`av 15.1.0`，`pyarrow 26.0.0`。`av 19` 没有 `av.option`，0.6.1 要 `av>=15,<16`。这次加载器用的是 pyav 回退，没有 torchcodec。
+
+## 还缺什么
+
+短片段上 ORB-SLAM3 没有给出可用轨迹，所以这次包的位姿是标明过的头戴真值，不是 SLAM。没有 `MANO_LEFT.pkl`，手腕真值不是 MANO 关节。没有第二段 clip，没有 IMU，没有 stereo-inertial，没有自采头戴。没有开 Kaggle。

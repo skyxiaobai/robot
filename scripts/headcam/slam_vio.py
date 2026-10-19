@@ -14,6 +14,7 @@ TUM 交给 ``--backend external_tum``。失败、超时、没写出轨迹，都�
 """
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -252,6 +253,56 @@ def orbslam3_plan(session, binary=None, vocab=None, settings=None):
     }
 
 
+_POSE_SOURCE_RE = re.compile(r"pose_source=([A-Za-z0-9_.:-]+)")
+
+
+def read_pose_source(path):
+    """读轨迹文件头里的 ``pose_source=``。没有就返回 None，不猜测。"""
+    if path is None:
+        return None
+    file_path = Path(path)
+    if not file_path.is_file():
+        return None
+    with file_path.open(encoding="utf-8") as handle:
+        for index, line in enumerate(handle):
+            if index >= 20:
+                break
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if not stripped.startswith("#"):
+                break
+            match = _POSE_SOURCE_RE.search(stripped)
+            if match:
+                return match.group(1)
+    return None
+
+
+def _attach_pose_source(result, tum_path, requested):
+    """把调用方或文件头里的来源写上。文件头和命令行不一致就拒绝，避免把真值改称 SLAM。"""
+    declared = read_pose_source(tum_path)
+    if requested and declared and requested != declared:
+        raise ValueError(
+            "轨迹文件标明 pose_source=%s，调用方写成 %s。不把来源改掉。"
+            % (declared, requested)
+        )
+    chosen = requested or declared
+    result["pose_source"] = chosen
+    result["accuracy"] = None
+    if chosen and str(chosen).startswith("hot3d_gt"):
+        result["notes"] = _join_note(
+            result.get("notes"),
+            "pose_source=%s。这是 HOT3D 头戴地面真值（动捕/设备定位），不是 ORB-SLAM3 或其他 SLAM 的输出。"
+            "slam_status 只表示这一帧有没有对上这组位姿。accuracy 仍是 null。" % chosen,
+        )
+    elif chosen:
+        result["notes"] = _join_note(
+            result.get("notes"),
+            "pose_source=%s。这个字段只标明轨迹从哪来。accuracy 仍是 null。" % chosen,
+        )
+    return result
+
+
 def _result(session, frames, max_gap_s, backend, notes, orbslam3=None, imu_present=False, ran=False,
            time_fields=None):
     summary = _coverage(frames)
@@ -376,7 +427,7 @@ def run_orbslam3_process(plan, run_dir, timeout_s=None):
 
 
 def run_slam(session, backend="auto", tum_path=None, max_gap_s=None, out_dir=None,
-            run_orbslam3=None, timeout_s=None, tum_time_scale=None):
+            run_orbslam3=None, timeout_s=None, tum_time_scale=None, pose_source=None):
     """读会话并返回可 JSON 化的位姿结果。``auto`` 只读已有 TUM，不启动 ORB-SLAM3。
 
     ``backend=none`` 即使目录里已有 ``slam.tum`` 也标记 ``pose_missing``。
@@ -437,6 +488,22 @@ def run_slam(session, backend="auto", tum_path=None, max_gap_s=None, out_dir=Non
             )
     else:
         raise ValueError("未知 backend %s（可用 auto、none、external_tum、orbslam3）" % backend)
+
+    if backend == "none":
+        used_tum = None
+    else:
+        used_tum = explicit if explicit is not None and explicit.is_file() else None
+    if backend == "orbslam3" and isinstance(result.get("orbslam3"), dict) and result["orbslam3"].get("source"):
+        used_tum = Path(result["orbslam3"]["source"])
+    elif backend == "auto" and used_tum is None:
+        found = _find_tum(session)
+        if found is not None and found.is_file() and result.get("backend") == "external_tum":
+            used_tum = found
+    elif backend == "external_tum" and used_tum is None:
+        found = _find_tum(session)
+        if found is not None and found.is_file():
+            used_tum = found
+    result = _attach_pose_source(result, used_tum, pose_source)
 
     if out_dir is not None:
         out = Path(out_dir)
@@ -541,7 +608,10 @@ def write_slam_tum(path, result):
     ]
     if not ok_frames:
         return None
-    lines = ["# headcam_slam_status_v1 backend=%s accuracy=unmeasured" % result.get("backend")]
+    header = "# headcam_slam_status_v1 backend=%s accuracy=unmeasured" % result.get("backend")
+    if result.get("pose_source"):
+        header += " pose_source=%s" % result["pose_source"]
+    lines = [header]
     for frame in ok_frames:
         matrix = np.asarray(frame["T_world_cam"], dtype=float)
         quat = rotmat_to_quat_xyzw(matrix[:3, :3])

@@ -100,6 +100,7 @@ def slam_public_summary(slam):
         "tum_time_scale": slam.get("tum_time_scale"),
         "time_unit_mismatch": bool(slam.get("time_unit_mismatch")),
         "accuracy": None,
+        "pose_source": slam.get("pose_source"),
         "imu_used_for_pose": False,
         "notes": slam.get("notes"),
         "frame_convention": "world" if slam.get("world_pose") else "camera",
@@ -301,7 +302,7 @@ def prepare_unmeasured_episode(session, slam, calib_document, episode_dir):
 
 def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None, run_hands=True,
                episodes=None, export=True, hand_pipeline=None, repo_id="local/headcam_mvp",
-               run_orbslam3=None, allow_partial=False, tum_time_scale=None, log=print):
+               run_orbslam3=None, allow_partial=False, tum_time_scale=None, pose_source=None, log=print):
     """跑 MVP 前半段并接上现有 QC / LeRobot。返回报告字典，同时写 ``out/report.json``。"""
     session = Path(session)
     out = Path(out)
@@ -313,6 +314,7 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
     slam = run_slam(
         session, backend=slam_backend, tum_path=tum_path, max_gap_s=max_gap_s,
         out_dir=out, run_orbslam3=run_orbslam3, tum_time_scale=tum_time_scale,
+        pose_source=pose_source,
     )
     gate = world_hands_gate(slam, allow_partial=allow_partial)
     hand_session = prepare_hand_session(session, out / "hand_session", slam)
@@ -423,6 +425,7 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
         "pipeline": pipeline_summary,
         "qc": qc_report,
         "lerobot": lerobot,
+        "pose_source": slam.get("pose_source"),
         "accuracy": None,
         "limits": [
             "没有完整 SLAM 轨迹时 world_pose=false，不写单位阵 slam.tum。",
@@ -433,6 +436,11 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
             "轨迹时间单位和会话不一致时不自动换算，也不把跨单位的最近邻写成 T_world_cam。",
         ],
     }
+    if slam.get("pose_source") and str(slam.get("pose_source")).startswith("hot3d_gt"):
+        report["limits"].append(
+            "pose_source=%s。轨迹是 HOT3D 头戴地面真值，不是 SLAM 输出。accuracy 仍是 null。"
+            % slam.get("pose_source")
+        )
     if slam.get("time_unit_mismatch"):
         report["limits"].append(
             "time_unit_mismatch=true。确认轨迹是纳秒后，用 --tum-time-scale 1e-9 再跑，不要放宽 max_gap_s。"
@@ -476,6 +484,8 @@ def main(argv=None):
     parser.add_argument("--no-export", action="store_true")
     parser.add_argument("--run-orbslam3", action="store_true")
     parser.add_argument("--repo-id", default="local/headcam_mvp")
+    parser.add_argument("--pose-source", default=None,
+                        help="轨迹来源。HOT3D 头戴真值用 hot3d_gt_mocap，不要把它叫成 SLAM")
     args = parser.parse_args(argv)
     try:
         report = export_mvp(
@@ -484,6 +494,7 @@ def main(argv=None):
             export=not args.no_export, repo_id=args.repo_id,
             run_orbslam3=True if args.run_orbslam3 else None,
             allow_partial=args.allow_partial, tum_time_scale=args.tum_time_scale,
+            pose_source=args.pose_source,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc), file=sys.stderr)

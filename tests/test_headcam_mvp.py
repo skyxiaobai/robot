@@ -1304,5 +1304,272 @@ class PrepareSessionGuardTest(unittest.TestCase):
                 prepare_hand_session(root, root / "nested", slam)
 
 
+def _hands_episode(stamps, translation=(1.0, 0.0, 0.0)):
+    """4 帧相机系手。数字是夹具，不是 WiLoR，也不是 HOT3D。"""
+    num_frames = len(stamps)
+    identity = np.eye(4)
+    joints = []
+    wrists = []
+    for index, _stamp in enumerate(stamps):
+        wrist = [0.0, 0.0, 0.50 + 0.01 * index]
+        frame = []
+        for joint in range(21):
+            frame.append([wrist[0] + 0.001 * joint, wrist[1], wrist[2]])
+        joints.append(frame)
+        wrists.append(wrist + [0.0, 0.0, 0.0, 1.0])
+    def _side(x_shift):
+        shifted = [[[point[0] + x_shift, point[1], point[2]] for point in frame] for frame in joints]
+        shifted_wrists = [[wrist[0] + x_shift, wrist[1], wrist[2], 0.0, 0.0, 0.0, 1.0] for wrist in wrists]
+        return {
+            "joints": shifted,
+            "wrist_pose": shifted_wrists,
+            "confidence": [1.0] * num_frames,
+            "filled": [False] * num_frames,
+            "valid": [True] * num_frames,
+        }
+    return {
+        "episode_id": "headcam/hands-fixture",
+        "num_frames": num_frames,
+        "fps": 30.0,
+        "timestamps": [float(stamp) for stamp in stamps],
+        "image_width": 320,
+        "image_height": 240,
+        "camera_intrinsic": _calib()["K_left"].tolist(),
+        "camera_poses": [identity.tolist() for _ in range(num_frames)],
+        "coordinate_frame": "camera",
+        "hands_measured": True,
+        "hands": {"left": _side(0.0), "right": _side(0.02)},
+        "stereo": {"per_frame": {"left": ["ok"] * num_frames, "right": ["ok"] * num_frames}},
+        "annotation": {"task": {"instruction": "fixture-hands", "name": "fixture-hands"}},
+        "hand_pose": {"backend": "fixture_not_wilor"},
+    }
+
+
+def _gt_tum_text(stamps):
+    lines = [
+        "# pose_source=hot3d_gt_mocap",
+        "# fixture ground truth, not SLAM output",
+    ]
+    for stamp in stamps:
+        lines.append("%.9f 1.000000000 0.000000000 0.000000000 0.000000000 0.000000000 0.000000000 1.000000000" % float(stamp))
+    return "\n".join(lines) + "\n"
+
+
+class HandsPresentPackageTest(unittest.TestCase):
+    """有手的导出。不需要 WiLoR。没装 pyarrow 或 ffmpeg 就跳过包写入。"""
+
+    def _session_and_episode(self, tmp, stamp_shift=0.0):
+        from headcam.euroc_session import ns_to_second_text
+
+        origin = 1000000000000
+        step = 33333333
+        stamps_ns = [origin + index * step for index in range(4)]
+        texts = [ns_to_second_text(value) for value in stamps_ns]
+        stamps = [float(text) for text in texts]
+        session = _write_session(Path(tmp) / "sess", stamps)
+        raw = bytearray()
+        for index in range(4):
+            raw.extend(bytes((40 + index, 90, 140)) * (320 * 240))
+        import subprocess
+        for name in ("left.mp4", "right.mp4"):
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "320x240", "-r", "30",
+                    "-i", "pipe:0", "-frames:v", "4",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+                    str(session / "stereo" / name),
+                ],
+                input=bytes(raw),
+                check=True,
+            )
+        tum = Path(tmp) / "headset_tum.txt"
+        tum.write_text(_gt_tum_text(stamps), encoding="utf-8")
+        episode = _hands_episode([stamp + stamp_shift for stamp in stamps])
+        episode_path = Path(tmp) / "camera_episode.json"
+        episode_path.write_text(json.dumps(episode), encoding="utf-8")
+        return session, tum, episode_path, stamps
+
+    def test_mismatched_clock_is_still_refused(self):
+        import tempfile
+
+        from headcam.slam_frames import main as slam_frames_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session, tum, episode_path, _stamps = self._session_and_episode(tmp, stamp_shift=10.0)
+            before = json.loads(episode_path.read_text(encoding="utf-8"))
+            out = Path(tmp) / "checked.json"
+            code = slam_frames_main([
+                "--episode", str(episode_path),
+                "--session", str(session),
+                "--tum", str(tum),
+                "--backend", "external_tum",
+                "--out", str(out),
+            ])
+            self.assertEqual(code, 1)
+            checked = json.loads(out.read_text(encoding="utf-8"))
+            self.assertEqual(checked["hand_pose"]["slam"]["timestamp_alignment"], "refused")
+            self.assertEqual(checked["hands"]["left"]["joints"][0][0], before["hands"]["left"]["joints"][0][0])
+            self.assertIsNone(checked["hand_pose"]["slam"]["accuracy"])
+
+    def test_export_labels_ground_truth_and_writes_state(self):
+        import shutil
+        import tempfile
+
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:
+            self.skipTest("未安装 pyarrow，跳过带手部的 LeRobot 包写入")
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("没有 ffmpeg，跳过带手部的 LeRobot 包写入")
+
+        from headcam.export_mvp import main as export_main
+        from headcam.slam_frames import main as slam_frames_main
+        from headcam.slam_vio import run_slam
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            session, tum, episode_path, stamps = self._session_and_episode(tmp)
+            with self.assertRaises(ValueError):
+                run_slam(session, backend="external_tum", tum_path=tum, pose_source="orbslam3_stereo_euroc")
+            checked = tmp / "episodes" / "session.json"
+            code = slam_frames_main([
+                "--episode", str(episode_path),
+                "--session", str(session),
+                "--tum", str(tum),
+                "--backend", "external_tum",
+                "--out", str(checked),
+            ])
+            world = json.loads(checked.read_text(encoding="utf-8"))
+            block = world["hand_pose"]["slam"]
+            self.assertEqual(block["timestamp_alignment"], "timestamps")
+            self.assertEqual(block["pose_source"], "hot3d_gt_mocap")
+            self.assertIsNone(block["accuracy"])
+            self.assertEqual(block.get("world_points_scope"), "all_frames")
+            self.assertAlmostEqual(world["hands"]["left"]["joints"][0][0][0], 1.0, places=6)
+            out = tmp / "out"
+            export_code = export_main([
+                "--session", str(session),
+                "--out", str(out),
+                "--slam-backend", "external_tum",
+                "--tum", str(tum),
+                "--episodes", str(tmp / "episodes"),
+                "--pose-source", "hot3d_gt_mocap",
+            ])
+            report_path = out / "report.json"
+            report_text = report_path.read_text(encoding="utf-8") if report_path.is_file() else ""
+            self.assertEqual(export_code, 0, report_text)
+            report = json.loads(report_text)
+            self.assertEqual(report["pose_source"], "hot3d_gt_mocap")
+            self.assertIsNone(report["accuracy"])
+            self.assertIsNone(report["slam"]["accuracy"])
+            self.assertIn("不是 ORB-SLAM3", report["slam"]["notes"])
+            note = json.loads((out / "lerobot" / "meta" / "egodata_export.json").read_text(encoding="utf-8"))
+            self.assertEqual(note["pose_source"], "hot3d_gt_mocap")
+            self.assertIsNone(note["accuracy"])
+            info = json.loads((out / "lerobot" / "meta" / "info.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["features"]["observation.state"]["shape"], [140])
+            self.assertEqual(info["features"]["action"]["shape"], [14])
+            self.assertEqual(info["total_frames"], 3)
+            table = pq.read_table(out / "lerobot" / "data" / "chunk-000" / "file-000.parquet")
+            self.assertEqual(table.num_rows, 3)
+            state = np.asarray(table.column("observation.state").combine_chunks().flatten().to_numpy(), dtype=float).reshape(3, 140)
+            action = np.asarray(table.column("action").combine_chunks().flatten().to_numpy(), dtype=float).reshape(3, 14)
+            self.assertFalse(np.allclose(state[:, :63], 0.0))
+            self.assertAlmostEqual(state[0, 0], 1.0, places=5)
+            self.assertAlmostEqual(state[0, 2], 0.50, places=5)
+            self.assertFalse(np.allclose(action[:, :3], 0.0))
+            poses = table.column("observation.pose").to_pylist()
+            self.assertEqual(len(poses[0]), 7)
+            self.assertAlmostEqual(poses[0][0], 1.0, places=6)
+            self.assertAlmostEqual(poses[0][6], 1.0, places=6)
+            capture = table.column("observation.capture_time_ns").to_pylist()
+            self.assertEqual(capture[0], int(round(stamps[0] * 1e9)))
+            self.assertIn(code, (0, 1))
+
+
+class HandsPresentOfficialLoaderTest(unittest.TestCase):
+    """官方加载器读带手的包。没装 lerobot 或 torch 就跳过。"""
+
+    def test_loader_reads_state_action_and_pose(self):
+        import shutil
+        import tempfile
+
+        try:
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        except ImportError as exc:
+            self.skipTest("未安装 lerobot 或 torch，跳过官方 Dataset 加载：%s" % exc)
+        try:
+            import pyarrow.parquet  # noqa: F401
+        except ImportError:
+            self.skipTest("未安装 pyarrow，跳过官方 Dataset 加载")
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("没有 ffmpeg，跳过官方 Dataset 加载")
+        case = HandsPresentPackageTest()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            session, tum, episode_path, stamps = case._session_and_episode(tmp)
+            from headcam.export_mvp import main as export_main
+            from headcam.slam_frames import main as slam_frames_main
+            checked = tmp / "episodes" / "session.json"
+            slam_frames_main([
+                "--episode", str(episode_path),
+                "--session", str(session),
+                "--tum", str(tum),
+                "--backend", "external_tum",
+                "--out", str(checked),
+            ])
+            out = tmp / "out"
+            code = export_main([
+                "--session", str(session),
+                "--out", str(out),
+                "--slam-backend", "external_tum",
+                "--tum", str(tum),
+                "--episodes", str(tmp / "episodes"),
+                "--pose-source", "hot3d_gt_mocap",
+            ])
+            self.assertEqual(code, 0)
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            dataset = LeRobotDataset(repo_id="local/headcam_mvp", root=out / "lerobot")
+            self.assertEqual(dataset.num_frames, 3)
+            self.assertEqual(tuple(dataset[0]["observation.state"].shape), (140,))
+            self.assertEqual(tuple(dataset[0]["action"].shape), (14,))
+            self.assertAlmostEqual(float(dataset[0]["timestamp"]), 0.0, places=5)
+            pose = dataset[0]["observation.pose"]
+            self.assertAlmostEqual(float(pose[0]), 1.0, places=4)
+
+
+class DuplicateTimestampAteTest(unittest.TestCase):
+    """重复时间戳不能凑成 ATE。不需要 WiLoR、lerobot 或 HOT3D 图像。"""
+
+    def test_two_unique_times_do_not_report_rmse(self):
+        import tempfile
+
+        from headcam.hot3d_check import trajectory_ate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            estimate = root / "estimate.txt"
+            truth = root / "gt.txt"
+            # 两行不同时间，其余是同一时刻的重复。尺度是秒。
+            estimate.write_text(
+                "1.0 0 0 0 0 0 0 1\n"
+                "1.1 0.01 0 0 0 0 0 1\n"
+                + "1.1 0.01 0 0 0 0 0 1\n" * 20,
+                encoding="utf-8",
+            )
+            truth.write_text(
+                "".join(
+                    "%s 0 0 0 0 0 0 1\n" % (1.0 + index * 0.1) for index in range(5)
+                ),
+                encoding="utf-8",
+            )
+            report = trajectory_ate(estimate, truth)
+        self.assertLess(report["n"], 3)
+        self.assertNotIn("rmse_m", report)
+        self.assertGreater(report["duplicate_rows_ignored"], 0)
+        self.assertEqual(report["unique_timestamps"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

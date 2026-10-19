@@ -196,6 +196,7 @@ def apply_ok_frame_world(episode, slam):
     aligned = isinstance(frames, list) and num_frames > 0 and len(frames) == num_frames
     summary["pose_status_aligned"] = bool(aligned)
     summary["accuracy"] = None
+    summary["pose_source"] = slam.get("pose_source") if isinstance(slam, dict) else None
     track_status, depth_status = _per_frame_lists(episode, num_frames) if num_frames else (None, None)
     summary["track_status"] = track_status
     summary["depth_status"] = depth_status
