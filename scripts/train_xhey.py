@@ -34,6 +34,7 @@ K_HIST = 8
 QC_EXCLUDE = set()  # scorecard failures
 QC_SCORED = set()   # clips named by the supplied scorecards
 QC_STRICT = False   # --strict-qc: missing-from-scorecard is an error; default warns and keeps
+CUM_W = 0.1  # --cum-weight: cumulative (relative-to-current-wrist) displacement loss weight
 SEG_KEEP = {}       # --qc-segments: clip -> {"fps","frames","spans"}；训练块必须整块落在保留区间里（测试段不剪）
 
 
@@ -267,7 +268,7 @@ class XHEY:
                                  nn.Linear(hidden, hidden), nn.GELU(), nn.Dropout(dropout),
                                  nn.Linear(hidden, hidden), nn.GELU(),
                                  nn.Linear(hidden, H * STEP)).to(self.dev)
-        self.norm = None; self.cum_w = 0.1; self.cfg = dict(in_dim=in_dim, hidden=hidden, dropout=dropout)
+        self.norm = None; self.cum_w = CUM_W; self.cfg = dict(in_dim=in_dim, hidden=hidden, dropout=dropout, cum_weight=CUM_W)
 
     def set_norm(self, X, Y):
         sd = X.std(0) + 1e-6; sd[sd < 1e-4] = 1.0
@@ -631,6 +632,8 @@ def main():
     ap.add_argument("--dropout", type=float, default=0.2)
     ap.add_argument("--lr-scale", type=float, default=1.0, help="学习率倍数（预训练和微调一起缩放）")
     ap.add_argument("--aug-noise", type=float, default=0.1, help="合成增强时的输入噪声")
+    ap.add_argument("--cum-weight", type=float, default=0.1,
+                    help="累计位移损失权重（相对当前手腕，默认 0.1；调大=少盯逐帧增量、多盯整段相对位移，C15 噪声假设验证）")
     ap.add_argument("--loss-move-cm", type=float, default=0.0,
                     help=">0 时微调只保留 GT 手腕位移超过该 cm 的训练块（逼模型学「会动」）")
     ap.add_argument("--qc-filter", nargs="*", default=None,
@@ -647,7 +650,9 @@ def main():
     ap.add_argument("--pre-steps", type=int, default=6000, help="开源数据预训练步数")
     ap.add_argument("--no-eval", action="store_true", help="跳过留一段评测，只用全部片段训最终模型")
     a = ap.parse_args()
-    global QC_STRICT
+    global QC_STRICT, CUM_W
+    CUM_W = float(a.cum_weight)
+    print("cum_weight", CUM_W, flush=True)
     QC_EXCLUDE.clear()
     QC_SCORED.clear()
     QC_STRICT = bool(a.strict_qc)

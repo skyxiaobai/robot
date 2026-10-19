@@ -1,0 +1,260 @@
+{
+ "hypothesis": "UNVERIFIED WiLoR wrist noise (ESTHER arXiv:2609.34817 ~101.6mm absolute, not tested here: no mocap GT)",
+ "step1": {
+  "iphone": {
+   "jump_cm": {
+    "n": 50695,
+    "median": 1.383154299610268,
+    "p90": 5.01405996031218,
+    "p99": 11.637193847512837
+   },
+   "disp_1s_cm": {
+    "n": 49936,
+    "median": 6.170674234326569,
+    "p90": 25.079831276177295,
+    "p99": 57.397300041657566
+   },
+   "disp_1s_ge5cm": {
+    "n": 29364,
+    "median": 11.553910500880729,
+    "p90": 32.17707945375681,
+    "p99": 65.32580158079297
+   },
+   "jump_median_over_disp1s_median": 0.2241496224052763,
+   "static_drift_rms_cm_median_of_hands": 1.0633200467740238,
+   "static_range_cm_median_of_hands": 3.5852360677548814,
+   "jitter_cm_median_of_hands": 1.8038487724971777
+  },
+  "xhey_rgb": {
+   "jump_cm": {
+    "n": 24882,
+    "median": 1.1798190661566337,
+    "p90": 3.7941370949530144,
+    "p99": 21.449077733191427
+   },
+   "disp_1s_cm": {
+    "n": 23933,
+    "median": 5.4933388309401785,
+    "p90": 16.598987156440373,
+    "p99": 32.451449698246634
+   },
+   "disp_1s_ge5cm": {
+    "n": 12846,
+    "median": 9.90364089602641,
+    "p90": 20.867557101042294,
+    "p99": 36.505721520925675
+   },
+   "jump_median_over_disp1s_median": 0.21477267331691408,
+   "static_drift_rms_cm_median_of_hands": 0.9912278555189002,
+   "static_range_cm_median_of_hands": 3.9451865023407757,
+   "jitter_cm_median_of_hands": 1.4214399460139038
+  },
+  "xphi": {
+   "jump_cm": {
+    "n": 166890,
+    "median": 2.6865276198842643,
+    "p90": 17.008272502302077,
+    "p99": 116.17062680370393
+   },
+   "disp_1s_cm": {
+    "n": 150663,
+    "median": 13.801926128081329,
+    "p90": 65.47776354707523,
+    "p99": 163.64113167785212
+   },
+   "disp_1s_ge5cm": {
+    "n": 113445,
+    "median": 20.760965098879495,
+    "p90": 79.21997550437978,
+    "p99": 176.26984474727294
+   },
+   "jump_median_over_disp1s_median": 0.19464874648316433,
+   "static_drift_rms_cm_median_of_hands": 0.6741771006694641,
+   "static_range_cm_median_of_hands": 2.5649514016136306,
+   "jitter_cm_median_of_hands": 7.351613988828734
+  }
+ },
+ "step2": {
+  "2026-08-22_18-21": {
+   "left": {
+    "corrected_frac": 0.9437607103910266,
+    "abs_dz_cm": {
+     "median": 2.5308738805234765,
+     "p90": 5.109997138121159
+    },
+    "before": {
+     "jump_cm": {
+      "n": 12054,
+      "median": 1.9144368909657947,
+      "p90": 4.931185907128222,
+      "p99": 12.651836360045404
+     },
+     "jitter_cm_median": 2.142889608604694,
+     "windows": {
+      "n": 1711,
+      "static_n": 84,
+      "moving_n": 993,
+      "static_drift_rms_cm_median": 1.0533337504547107,
+      "static_range_cm_median": 3.599582779467034,
+      "static_jump_med_cm_median": 0.7205287197276911,
+      "moving_jump_med_cm_median": 2.3610409983357403
+     }
+    },
+    "after": {
+     "jump_cm": {
+      "n": 12054,
+      "median": 2.5717571454692782,
+      "p90": 5.534735286894723,
+      "p99": 19.097704175531124
+     },
+     "jitter_cm_median": 2.7256818455645404,
+     "windows": {
+      "n": 1711,
+      "static_n": 87,
+      "moving_n": 1045,
+      "static_drift_rms_cm_median": 1.2204856592661333,
+      "static_range_cm_median": 3.4592694661243697,
+      "static_jump_med_cm_median": 0.6251541697936426,
+      "moving_jump_med_cm_median": 2.7613549799813226
+     }
+    }
+   },
+   "right": {
+    "corrected_frac": 0.9322324349587163,
+    "abs_dz_cm": {
+     "median": 2.4608334585677127,
+     "p90": 5.0628072472835814
+    },
+    "before": {
+     "jump_cm": {
+      "n": 11881,
+      "median": 3.0446936313453357,
+      "p90": 8.121511949494135,
+      "p99": 15.6568407884705
+     },
+     "jitter_cm_median": 2.965897645151336,
+     "windows": {
+      "n": 1678,
+      "static_n": 41,
+      "moving_n": 1303,
+      "static_drift_rms_cm_median": 1.0733063430933367,
+      "static_range_cm_median": 3.570889356042729,
+      "static_jump_med_cm_median": 0.7838159219003816,
+      "moving_jump_med_cm_median": 3.6641083700316575
+     }
+    },
+    "after": {
+     "jump_cm": {
+      "n": 11881,
+      "median": 3.1290474183040637,
+      "p90": 8.36142315501405,
+      "p99": 20.291077385429414
+     },
+     "jitter_cm_median": 3.174841836992499,
+     "windows": {
+      "n": 1678,
+      "static_n": 32,
+      "moving_n": 1296,
+      "static_drift_rms_cm_median": 1.0696954035542892,
+      "static_range_cm_median": 3.5502868475856437,
+      "static_jump_med_cm_median": 0.7375933638558869,
+      "moving_jump_med_cm_median": 3.773410375019762
+     }
+    }
+   }
+  },
+  "2026-08-24_21-18": {
+   "left": {
+    "corrected_frac": 0.9857060767131159,
+    "abs_dz_cm": {
+     "median": 0.5586551703066656,
+     "p90": 8.146633796337671
+    },
+    "before": {
+     "jump_cm": {
+      "n": 13718,
+      "median": 0.6650203525553369,
+      "p90": 2.3507583419034668,
+      "p99": 5.469248624463092
+     },
+     "jitter_cm_median": 0.8321360008483646,
+     "windows": {
+      "n": 1956,
+      "static_n": 170,
+      "moving_n": 741,
+      "static_drift_rms_cm_median": 0.9120647640689654,
+      "static_range_cm_median": 3.220522708357196,
+      "static_jump_med_cm_median": 0.4391632651744235,
+      "moving_jump_med_cm_median": 1.1438135366876283
+     }
+    },
+    "after": {
+     "jump_cm": {
+      "n": 13718,
+      "median": 0.6462233007171028,
+      "p90": 2.774106256370737,
+      "p99": 5.811160290532823
+     },
+     "jitter_cm_median": 0.8266683904666532,
+     "windows": {
+      "n": 1956,
+      "static_n": 179,
+      "moving_n": 788,
+      "static_drift_rms_cm_median": 0.9998297165587484,
+      "static_range_cm_median": 3.1978954193186873,
+      "static_jump_med_cm_median": 0.4158462039756312,
+      "moving_jump_med_cm_median": 1.08025636053647
+     }
+    }
+   },
+   "right": {
+    "corrected_frac": 0.912728056313748,
+    "abs_dz_cm": {
+     "median": 0.4295773117579671,
+     "p90": 2.854898237307683
+    },
+    "before": {
+     "jump_cm": {
+      "n": 13042,
+      "median": 1.1041874113751016,
+      "p90": 3.006393311908635,
+      "p99": 6.234952954231973
+     },
+     "jitter_cm_median": 1.4648079363896613,
+     "windows": {
+      "n": 1848,
+      "static_n": 95,
+      "moving_n": 843,
+      "static_drift_rms_cm_median": 1.3962093391418708,
+      "static_range_cm_median": 4.609337383625565,
+      "static_jump_med_cm_median": 0.8653670858651293,
+      "moving_jump_med_cm_median": 1.4093762443409326
+     }
+    },
+    "after": {
+     "jump_cm": {
+      "n": 13042,
+      "median": 1.252250700149709,
+      "p90": 3.506116396159543,
+      "p99": 7.963911511524745
+     },
+     "jitter_cm_median": 2.0874805267944314,
+     "windows": {
+      "n": 1848,
+      "static_n": 77,
+      "moving_n": 873,
+      "static_drift_rms_cm_median": 1.523557459775418,
+      "static_range_cm_median": 4.7170484716598,
+      "static_jump_med_cm_median": 0.8703017153119605,
+      "moving_jump_med_cm_median": 1.651103154221781
+     }
+    }
+   }
+  }
+ },
+ "notes": [
+  "pooled hands entries keep per-hand detail in box /workspace/c15/step1/*/noise.json",
+  "xhey_rgb measured on 8 downloaded episodes (1 zero-byte file dropped, of 17)",
+  "iphone third clip 2026-09-05_17-16 episode download failed (0 byte); it is the QC-fail clip"
+ ]
+}
