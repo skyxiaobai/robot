@@ -1161,8 +1161,137 @@ class UnmeasuredLeRobotPackageTest(unittest.TestCase):
                 np.testing.assert_allclose(pose[:3], matrix[:3, 3], atol=1e-8)
                 np.testing.assert_allclose(quat_xyzw_to_rotmat(pose[3:]), matrix[:3, :3], atol=1e-6)
             read_back = [float(value) for value in table.column("timestamp").to_pylist()]
-            for got, stamp in zip(read_back, stamps_ns):
-                self.assertAlmostEqual(got, int(stamp) / 1e9, places=6)
+            for index, got in enumerate(read_back):
+                self.assertAlmostEqual(got, index / 20.0, places=5)
+            capture_ns = [int(value) for value in table.column("observation.capture_time_ns").to_pylist()]
+            self.assertEqual(capture_ns, stamps_ns)
+
+
+class OfficialLeRobotLoaderTest(unittest.TestCase):
+    """官方 LeRobotDataset 读缺测手的包。没装 lerobot 或 torch 就跳过。"""
+
+    def test_loader_reads_pose_video_and_fps_timestamps(self):
+        import shutil
+        import subprocess
+        import tempfile
+
+        try:
+            import torch
+            from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        except ImportError as exc:
+            self.skipTest("未安装 lerobot 或 torch，跳过官方 Dataset 加载：%s" % exc)
+        try:
+            import pyarrow.parquet  # noqa: F401
+        except ImportError:
+            self.skipTest("未安装 pyarrow，跳过官方 Dataset 加载")
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("没有 ffmpeg，跳过官方 Dataset 加载")
+
+        excerpt = ROOT / "tests" / "fixtures" / "headcam" / "euroc_orbslam3_v101" / "CameraTrajectory_excerpt.txt"
+        lines = []
+        for line in excerpt.read_text(encoding="utf-8").splitlines():
+            if line.strip() and not line.startswith("#"):
+                lines.append(line.strip())
+        lines = lines[:3]
+        stamps_ns = [int(line.split()[0].split(".")[0]) for line in lines]
+        stamps_ns.append(stamps_ns[-1] + 10000000000)
+
+        from headcam.export_mvp import main as export_main
+        from headcam.euroc_session import ns_to_second_text
+        from headcam.hand_pose import quat_xyzw_to_rotmat
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            session = tmp / "sess"
+            (session / "stereo").mkdir(parents=True)
+            (session / "metadata.json").write_text(json.dumps({
+                "episode_id": "euroc/excerpt-prefix",
+                "fps": 20.0,
+            }), encoding="utf-8")
+            stamp_lines = ["frame_index,timestamp_s"]
+            lr_lines = ["frame_index,left_s,right_s"]
+            for index, stamp in enumerate(stamps_ns):
+                text = ns_to_second_text(stamp)
+                stamp_lines.append("%d,%s" % (index, text))
+                lr_lines.append("%d,%s,%s" % (index, text, text))
+            (session / "timestamps.csv").write_text("\n".join(stamp_lines) + "\n", encoding="utf-8")
+            (session / "stereo" / "timestamps_lr.csv").write_text("\n".join(lr_lines) + "\n", encoding="utf-8")
+            write_calibration_yaml(session / "calib.yaml", _calib())
+            raw = bytearray()
+            for index in range(4):
+                raw.extend(bytes((index * 40 % 256, 90, 140)) * (8 * 8))
+            for name in ("left.mp4", "right.mp4"):
+                subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-loglevel", "error",
+                        "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "8x8", "-r", "20",
+                        "-i", "pipe:0", "-frames:v", "4",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+                        str(session / "stereo" / name),
+                    ],
+                    input=bytes(raw),
+                    check=True,
+                )
+            tum = tmp / "CameraTrajectory.txt"
+            tum.write_text(
+                "# 摘自 tests/fixtures/headcam/euroc_orbslam3_v101/CameraTrajectory_excerpt.txt 前 3 行。\n"
+                + "\n".join(lines) + "\n",
+                encoding="utf-8",
+            )
+            out = tmp / "out"
+            code = export_main([
+                "--session", str(session),
+                "--out", str(out),
+                "--slam-backend", "external_tum",
+                "--tum", str(tum),
+                "--tum-time-scale", "1e-9",
+                "--skip-hands",
+            ])
+            self.assertEqual(code, 0)
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            dataset = LeRobotDataset(repo_id="local/unmeasured_excerpt", root=out / "lerobot")
+            self.assertEqual(dataset.meta.info.codebase_version, CODEBASE_VERSION)
+            self.assertEqual(CODEBASE_VERSION, "v3.0")
+            self.assertEqual(dataset.num_frames, 4)
+            self.assertEqual(dataset.fps, 20)
+            self.assertNotIn("observation.state", dataset.meta.features)
+            self.assertNotIn("action", dataset.meta.features)
+            self.assertNotIn("observation.hand_joints", dataset.meta.features)
+            self.assertIn("timestamp", dataset.meta.stats)
+            self.assertIn("observation.pose", dataset.meta.stats)
+            self.assertIn("observation.image", dataset.meta.stats)
+            self.assertEqual(len(dataset.meta.episodes), 1)
+            self.assertEqual(int(dataset.meta.episodes[0]["length"]), 4)
+            self.assertEqual(dataset.meta.tasks.index.tolist(), ["unknown"])
+            note = json.loads((out / "lerobot" / "meta" / "egodata_export.json").read_text(encoding="utf-8"))
+            self.assertIsNone(note["accuracy"])
+            self.assertEqual(note["hands"], "absent")
+            status = json.loads((out / "slam_status.json").read_text(encoding="utf-8"))
+            frames = [dataset[index] for index in range(4)]
+            images = []
+            for index, item in enumerate(frames):
+                self.assertEqual(item["task"], "unknown")
+                self.assertEqual(item["slam_status"], "ok" if index < 3 else "tracking_lost")
+                self.assertAlmostEqual(float(item["timestamp"]), index / 20.0, places=5)
+                self.assertLess(abs(float(item["timestamp"]) - index / 20.0), 1e-4)
+                self.assertEqual(int(item["observation.capture_time_ns"]), stamps_ns[index])
+                image = item["observation.image"]
+                self.assertEqual(tuple(image.shape), (3, 224, 224))
+                self.assertEqual(image.dtype, torch.float32)
+                self.assertGreater(float(image.max()), float(image.min()))
+                self.assertGreaterEqual(float(image.min()), 0.0)
+                self.assertLessEqual(float(image.max()), 1.0)
+                images.append(image)
+                pose = item["observation.pose"]
+                if index < 3:
+                    matrix = np.asarray(status["frames"][index]["T_world_cam"], dtype=float)
+                    values = pose.detach().cpu().numpy()
+                    np.testing.assert_allclose(values[:3], matrix[:3, 3], atol=1e-5)
+                    np.testing.assert_allclose(quat_xyzw_to_rotmat(values[3:]), matrix[:3, :3], atol=1e-5)
+                else:
+                    self.assertTrue(pose is None or not torch.isfinite(pose).any())
+            self.assertFalse(torch.equal(images[0], images[1]))
 
 
 class PrepareSessionGuardTest(unittest.TestCase):

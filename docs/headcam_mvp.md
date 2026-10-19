@@ -284,7 +284,7 @@ python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01
 - 残缺轨迹的世界点只出现在 `hand_pose.slam.world_hands`。丢失帧是 null，不用最近邻，也不把整段标成 `world` 或 `world_yup`。
 - `record_session capture` 不是硬件同步采集。IMU 驱动、曝光寄存器、左右时间戳都还要在板上接。
 - 手部仍要 WiLoR / HaMeR / MediaPipe 那套环境和 `scripts/run_stereo_pipeline.py` 的参数。轨迹不完整时，不带 `--allow-partial` 的 `export_mvp` 拒绝跑手部。`--skip-hands` 不跑手部；有标定且 QC 通过时仍可导出，手部列不写。
-- LeRobot 导出需要 pyarrow 和 pandas。当前解释器没有时，报告里给出 `ego_to_lerobot.py` 的命令，不写空数据集。pyarrow 26 要求 numpy 2；这台机器的 numpy 是 1.26.4，用的是 pyarrow 18.1.0。
+- LeRobot 导出需要 pyarrow 和 pandas。当前解释器没有时，报告里给出 `ego_to_lerobot.py` 的命令，不写空数据集。仓库测试用的系统 numpy 是 1.26.4，配 pyarrow 18.1.0。官方 `lerobot==0.6.1` 要 numpy 2 和 torch，装在单独的 venv 里，不改系统 numpy。
 - 有手部测量的导出仍把无效手的关节块写成 0，并用 `observation.hand_valid` 标成无效。没测量过的片段不走这条，避免把 0 当成手腕在原点。
 - 本模块没有在 10 分钟实拍上测过运行时间或轨迹误差。
 - 纳秒轨迹不会自动除以 1e9。`tests/fixtures/headcam/offline_skip_hands/` 用合成的秒轨迹和纳秒轨迹检查这件事，不代表实机精度。
@@ -339,14 +339,47 @@ python scripts/headcam/export_mvp.py \
 
 结果：退出码 0。`world_pose=true`，`ok=40`，`tracking_lost=0`，`pose_missing=0`，`hands=skipped`，`accuracy=null`。QC：`accepted=yes`，`bad_fraction=0`，`stereo_unmeasured=40`，`label_coverage=0`（手没测，默认覆盖率门限是 0，不因此拒绝），`blur=0`。
 
-LeRobot 包 `40` 行，等于 ok 帧数。`slam_status` 全是 `ok`。`observation.pose` 的平移和旋转对回 `slam_status.json` 的 `T_world_cam`，平移最大差 0，旋转最大差约 7e-16。`timestamp` 是 float64 的图像秒。没有 `observation.state`、`action`、手腕列。`meta/egodata_export.json` 里 `hands=absent`，`accuracy=null`。任务文本是 `unknown`。视频来自真实 png，现有导出把它缩成 224 的正方形（`image_source=source_mp4`，40 帧），不是 16×16 占位。
-
 QC 的 CSV 里 `valid_action_ratio=0`：没有实测手腕，所以没有可监督的动作。包本身不写这些手部列，导出说明里的 `valid_action_ratio` 是 null。
 
-当前 PyPI 上的 `lerobot==0.6.1` 加载器要 torch 和 numpy 2，这次没有装。包是用 pyarrow 18.1.0 打开核对的。
+第一版包把图像秒写进 `timestamp`（float64）。用 pyarrow 18.1.0 读，40 行，位姿对回 `T_world_cam` 的平移差是 0、旋转差约 7e-16。官方加载器不接受这个钟。
 
-回归：`tests/test_headcam_mvp.py` 的 `UnmeasuredLeRobotPackageTest` 用摘录的前 3 行加一帧对不上的时间。图像是测试里生成的 8×8 色块，不是 EuRoC 像素。没装 pyarrow 时跳过，原因写在 `skipTest` 里。3 行 ok 的位姿能读回，第 4 行 `tracking_lost` 的位姿是 null。
+隔离环境（不改系统 numpy 1.26.4）：
+
+```bash
+python3 -m venv /tmp/lerobot-venv
+/tmp/lerobot-venv/bin/pip install 'torch==2.11.0' 'torchvision==0.26.0' 'numpy>=2,<2.3' \
+  --index-url https://download.pytorch.org/whl/cpu
+printf 'torch==2.11.0+cpu\ntorchvision==0.26.0+cpu\nnumpy==2.2.6\n' > /tmp/lerobot-constraints.txt
+/tmp/lerobot-venv/bin/pip install 'lerobot[dataset]==0.6.1' \
+  -c /tmp/lerobot-constraints.txt --extra-index-url https://download.pytorch.org/whl/cpu
+```
+
+装上的版本：`lerobot 0.6.1`（`CODEBASE_VERSION` 是 `v3.0`），`torch 2.11.0+cpu`（`cuda False`，`torch.version.cuda is None`），`torchvision 0.26.0+cpu`，`numpy 2.2.6`，`pyarrow 26.0.0`，`pandas 2.3.3`，`av 15.1.0`，`torchcodec 0.11.1+cpu`，`datasets 4.8.5`。
+
+`LeRobotDataset(repo_id="local/euroc_excerpt", root=/tmp/euroc/mvp/lerobot, video_backend="pyav")` 能打开元数据，40 帧，fps 20，`codebase_version v3.0`。逐帧 `__getitem__` 在解视频时拒绝：
+
+```text
+FrameTimestampError: query timestamps tensor([1.4037e+09]) > tolerance_s=0.0001
+loaded timestamps: 0.0000, 0.0500, ... 1.9500
+video: .../videos/observation.image/chunk-000/file-000.mp4
+backend: pyav
+```
+
+加载器把 `timestamp` 加上 episode 的 `from_timestamp`（这里是 0）去对视频时间轴，容差默认 `1e-4` 秒。绝对时间大约 1.4e9 秒，对不上 0 到 1.95 秒的视频。而且 `__getitem__` 把标量浮点收成 float32，这一量级的 40 个图像秒变成同一个 `1403715328.0`。
+
+缺测手的导出现在按 0.6.1 写 `timestamp = frame_index / fps`（float32）。图像时刻改放 `observation.capture_time_ns`（int64 纳秒，由 episode 里的秒 `round(秒 * 1e9)` 得到）。仍不写 `observation.state`、`action`、手腕列，也不把缺测手填 0。`accuracy` 仍是 null。位姿只在 `slam_status=ok` 时有 7 个数，否则是 null。
+
+按上面的命令重新导出后，用默认后端 torchcodec 逐帧读完 40 帧，没有版本或 schema 错误：
+
+- 帧数 40，等于 ok 帧。`slam_status` 全是 `ok`。任务文本是 `unknown`。
+- `timestamp` 相对 `frame_index/20` 的最大差 `4.77e-8` 秒，小于加载器容差 `1e-4`。
+- `observation.capture_time_ns` 从 `1403715291262142976` 到 `1403715293212143104`，和 `timestamps.csv` 的纳秒一致。
+- `observation.pose` 对回 `T_world_cam`：平移最大差 `4.99e-10`，旋转最大差 `6.33e-8`（加载器把列表收成 float32）。
+- 解码图像是 `torch.float32`、形状 `(3, 224, 224)`，数值在 `[0, 1]`。40 帧的标准差大约 0.194 到 0.225，相邻帧都不相同。来源是真实 png 缩到 224，不是 16×16 占位。
+- `info.json` 的 `codebase_version` 是加载器自己的 `v3.0`。`stats` 含图像、timestamp、capture_time_ns、pose。episodes 长度 40，`from_timestamp=0`，`to_timestamp=2`。tasks 只有 `unknown`。`hands=absent`，`accuracy=null`。
+
+回归：`UnmeasuredLeRobotPackageTest` 仍用摘录前 3 行加一帧对不上的时间。图像是测试里的 8×8 色块，不是 EuRoC 像素。没装 pyarrow 或 ffmpeg 时跳过。`timestamp` 是 `frame_index/20`，`observation.capture_time_ns` 等于原来的纳秒，第 4 行位姿是 null。`OfficialLeRobotLoaderTest` 用官方 `LeRobotDataset` 再读这份小包（含那一帧 `tracking_lost`）。没装 lerobot 或 torch 时跳过，原因写在 `skipTest` 里。系统解释器上 `python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc` 是 42 项、跳过 1 项、通过。装了 lerobot 的 venv 里这两个测试类通过。
 
 ## 下一步
 
-下一次可以做的事：把一份真实 WiLoR 相机系 episode 交给 `slam_frames.py`。时间戳必须和轨迹在同一个钟上，否则会 `timestamp_alignment=refused`。本仓库没有这样的文件。不要把 `sanity_ok` 写成精度，也不要把残缺轨迹标成 `world_yup`。头戴相机、曝光寄存器和 WiLoR 继续缺着。整段 V1_01_easy 和 stereo-inertial 这次没有跑。LeRobot 自带的 Dataset 加载器这次没有装，因为它要 torch。
+下一次可以做的事：把一份真实 WiLoR 相机系 episode 交给 `slam_frames.py`。时间戳必须和轨迹在同一个钟上，否则会 `timestamp_alignment=refused`。本仓库没有这样的文件。不要把 `sanity_ok` 写成精度，也不要把残缺轨迹标成 `world_yup`。头戴相机、曝光寄存器和 WiLoR 继续缺着。整段 V1_01_easy 和 stereo-inertial 这次没有跑。短记录到 QC 过滤后的 LeRobot 包，官方 0.6.1 加载器已经读过上面这 40 帧。

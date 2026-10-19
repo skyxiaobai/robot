@@ -38,9 +38,11 @@
 避免按 1080p 重编码。
 
 ``hands_measured is False`` 的片段走另一条落盘：不写 ``observation.state``、
-``action`` 和手腕列，也不把缺测手填成 0。每一行保留图像时间戳、
-``slam_status`` 和 ``observation.pose``（``tx ty tz qx qy qz qw``）。
-状态不是 ``ok`` 时位姿格是 null。``accuracy`` 只出现在导出说明里，值是 null。
+``action`` 和手腕列，也不把缺测手填成 0。每一行有 ``slam_status`` 和
+``observation.pose``（``tx ty tz qx qy qz qw``）。状态不是 ``ok`` 时位姿格是
+null。``timestamp`` 按 LeRobot 0.6.1 的写法是 ``frame_index / fps``（float32），
+视频解码用它做容差检查。图像时刻另外放在 ``observation.capture_time_ns``
+（int64 纳秒），避免 1e9 秒量级被 float32 吃掉。``accuracy`` 只出现在导出说明里，值是 null。
 """
 import csv
 import json
@@ -544,11 +546,17 @@ def _hands_unmeasured(episode):
     return episode.get("hands_measured") is False
 
 
+def _capture_time_ns(stamp):
+    """图像时刻的纳秒。episode 里是秒；``round(秒 * 1e9)`` 回到整数纳秒。"""
+    return int(round(float(stamp) * 1e9))
+
+
 def _export_unmeasured_hands(episodes, out_dir, repo_id, video_size, horizon):
     """手部没有测量时的 LeRobot v3.0 目录。
 
     不写 state / action / 手腕。位姿只在 ``slam_status=ok`` 时有值，否则是 null。
-    ``timestamp`` 用 episode 里的图像时间（float64），不用 ``frame_index/fps``。
+    ``timestamp`` 是 ``frame_index / fps`` 的 float32，和 0.6.1 写数据集、解视频的
+    容差一致。图像时刻在 ``observation.capture_time_ns``。
     """
     episodes = sorted(episodes, key=lambda item: str(item.get("episode_id")))
     fps_values = {float(item["fps"]) for item in episodes}
@@ -568,6 +576,7 @@ def _export_unmeasured_hands(episodes, out_dir, repo_id, video_size, horizon):
     pose_rows = []
     status_rows = []
     timestamp_rows = []
+    capture_ns_rows = []
     frame_indices = []
     episode_indices = []
     global_indices = []
@@ -616,7 +625,8 @@ def _export_unmeasured_hands(episodes, out_dir, repo_id, video_size, horizon):
                 task_to_index[text] = len(task_to_index)
             pose_rows.append(pose)
             status_rows.append(status)
-            timestamp_rows.append(stamp)
+            timestamp_rows.append(np.float32(frame_index) / np.float32(fps))
+            capture_ns_rows.append(_capture_time_ns(stamp))
             frame_indices.append(frame_index)
             episode_indices.append(episode_index)
             global_indices.append(cursor)
@@ -664,12 +674,13 @@ def _export_unmeasured_hands(episodes, out_dir, repo_id, video_size, horizon):
     data_path = out_dir / "data" / "chunk-000" / "file-000.parquet"
     data_path.parent.mkdir(parents=True, exist_ok=True)
     table = pa.table({
-        "timestamp": pa.array(np.asarray(timestamp_rows, dtype=np.float64)),
+        "timestamp": pa.array(np.asarray(timestamp_rows, dtype=np.float32)),
         "frame_index": pa.array(frame_indices, type=pa.int64()),
         "episode_index": pa.array(episode_indices, type=pa.int64()),
         "index": pa.array(global_indices, type=pa.int64()),
         "task_index": pa.array(task_indices, type=pa.int64()),
         "slam_status": pa.array(status_rows, type=pa.string()),
+        "observation.capture_time_ns": pa.array(capture_ns_rows, type=pa.int64()),
         "observation.pose": pa.array(pose_rows, type=pose_type),
     })
     pq.write_table(table, data_path)
@@ -692,9 +703,11 @@ def _export_unmeasured_hands(episodes, out_dir, repo_id, video_size, horizon):
 
     finite_pose = np.asarray([row for row in pose_rows if row is not None], dtype=np.float64)
     timestamps = np.asarray(timestamp_rows, dtype=np.float64)
+    capture_ns = np.asarray(capture_ns_rows, dtype=np.float64)
     stats = {
         IMAGE_KEY: _image_stats_json(),
         "timestamp": _stats_json(timestamps),
+        "observation.capture_time_ns": _stats_json(capture_ns),
         "observation.pose": None if finite_pose.size == 0 else _stats_json(finite_pose),
     }
     (out_dir / "meta" / "stats.json").write_text(
@@ -714,12 +727,13 @@ def _export_unmeasured_hands(episodes, out_dir, repo_id, video_size, horizon):
                 "egodata.image_source": image_source,
             },
         ),
-        "timestamp": _feature("float64", (1,), fps=fps),
+        "timestamp": _feature("float32", (1,), fps=fps),
         "frame_index": _feature("int64", (1,), fps=fps),
         "episode_index": _feature("int64", (1,), fps=fps),
         "index": _feature("int64", (1,), fps=fps),
         "task_index": _feature("int64", (1,), fps=fps),
         "slam_status": _feature("string", (1,), ["ok", "tracking_lost", "pose_missing"], fps=fps),
+        "observation.capture_time_ns": _feature("int64", (1,), ["nanoseconds"], fps=fps),
         "observation.pose": _feature(
             "float64", (7,), ["tx", "ty", "tz", "qx", "qy", "qz", "qw"], fps=fps,
         ),
@@ -759,8 +773,10 @@ def _export_unmeasured_hands(episodes, out_dir, repo_id, video_size, horizon):
             "其他帧是 null，不是零向量，也不是单位四元数。"
         ),
         "timestamp_doc": (
-            "timestamp 是 episode 里的图像时间，单位秒，float64。"
-            "不用 frame_index/fps 代替。绝对时间用 float32 会把 1e9 秒量级的小数吃掉。"
+            "timestamp 是 frame_index/fps，float32，给 LeRobot 0.6.1 的视频容差检查用。"
+            "图像时刻在 observation.capture_time_ns，单位纳秒，int64。"
+            "不把绝对时间放进 timestamp：加载器拿它去对视频时间轴，"
+            "容差默认 1e-4 秒，1e9 秒量级对不上，而且 float32 会把这一量级收成同一个数。"
         ),
         "ok_frames": ok_frames,
         "frames": cursor,
