@@ -10,7 +10,7 @@ class XphiSourceKey(unittest.TestCase):
     def test_xphi_is_pretrain_key_and_loaded(self):
         import train_xhey as tx
         src = (ROOT / "scripts" / "train_xhey.py").read_text(encoding="utf-8")
-        self.assertIn('"hoi4d", "xphi")', src)
+        self.assertIn('"hoi4d", "xphi", "egoverse")', src)
         self.assertIn('"--xphi"', src)
         calls = []
         a = types.SimpleNamespace(out="/tmp/xphi_test_out", xphi="/nonexistent/xphi")
