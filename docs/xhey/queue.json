@@ -269,6 +269,21 @@
         "justinz2010/xhey-xphi-cam (xphi_cam + qc_xphi/{scorecards,segments}.json + scripts.tgz)"
       ],
       "launched": "2026-10-17 21:27"
+    },
+    {
+      "id": "C15",
+      "name": "Wrist-noise hypothesis: cumulative relative-displacement loss weight (cum-weight 1.0 vs 0.1 control)",
+      "dir": "kaggle/rsi_c15",
+      "slug": "justinz2010/xhey-rsi-c15-wrist",
+      "status": "ready",
+      "mix": "iphone+xhey_rgb+aug",
+      "protocol": "same as C11-C14: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; --qc-filter qc_xhey_rgb/scorecards.json both arms; arm A xhey_c15 --cum-weight 1.0, arm B xhey_c15ctl --cum-weight 0.1 (default). Ingest A from xhey_c15/metrics.json vs ctl and zero within run.",
+      "hypothesis": "UNVERIFIED (ESTHER arXiv:2609.34817). Step1 measured: jump med 1.18-1.38 cm/frame, static drift RMS ~1.0 cm, 1s disp med 5.5-6.2 cm. Step2 wrist-pixel depth correction: no material noise drop, no corrected-label arm. XHEY already predicts per-step deltas; C15 up-weights cumulative relative displacement loss. See docs/xhey/c15_wrist_noise.md",
+      "datasets": [
+        "justinz2010/xhey-iphone-sessions",
+        "justinz2010/xhey-c15-wrist-data (scripts.tgz from c15 worktree + qc_xhey_rgb/scorecards.json)"
+      ],
+      "note": "Queued 2026-10-19. Do not push a second copy if status becomes running/done_*."
     }
   ]
 }

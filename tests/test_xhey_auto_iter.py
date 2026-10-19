@@ -282,8 +282,13 @@ class CommittedState(unittest.TestCase):
         self.assertIn("6000", c9b["protocol"])
         self.assertIn("3000", c9b["protocol"])
         ok, skipped = ai.split_qc_ready(ai.ready_queue_items(stera_exists=True, queue=q))
-        self.assertEqual([item["id"] for item in ok], [])
+        self.assertEqual([item["id"] for item in ok], ["C15"])  # C15 wrist-noise arm is the only ready QC candidate
         self.assertEqual(skipped, [])
+        c15 = by_id["C15"]
+        self.assertEqual(c15["status"], "ready")
+        self.assertEqual(c15["mix"], "iphone+xhey_rgb+aug")
+        self.assertIn("--cum-weight 1.0", c15["protocol"])
+        self.assertIn("--qc-filter", c15["protocol"])
         c13 = by_id["C13"]
         self.assertEqual(c13["status"], "done_worse_vs_ctl")
         self.assertEqual(c13["mix"], "iphone+egodex+xhey_rgb+aug")
