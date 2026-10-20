@@ -1539,6 +1539,237 @@ class HandsPresentOfficialLoaderTest(unittest.TestCase):
             self.assertAlmostEqual(float(pose[0]), 1.0, places=4)
 
 
+def _gt_tum_at(stamps, translation):
+    tx, ty, tz = translation
+    lines = [
+        "# pose_source=hot3d_gt_mocap",
+        "# fixture ground truth, not SLAM output",
+    ]
+    for stamp in stamps:
+        lines.append(
+            "%.9f %.9f %.9f %.9f 0.000000000 0.000000000 0.000000000 1.000000000"
+            % (float(stamp), float(tx), float(ty), float(tz))
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _retarget_wrists(episode, z0, dz):
+    """只改夹具手腕的 z，让两段的下一步增量不一样。"""
+    for side in ("left", "right"):
+        hand = episode["hands"][side]
+        for index, frame in enumerate(hand["joints"]):
+            z = float(z0) + float(dz) * index
+            for point in frame:
+                point[2] = z
+            hand["wrist_pose"][index][2] = z
+    return episode
+
+
+class MultiEpisodePackageTest(unittest.TestCase):
+    """多段已经标好的世界 episode 打成一个包。不用某一段的轨迹覆盖其他段。"""
+
+    def _world_file(self, root, name, stamps_ns, translation, z0, dz, episode_id):
+        from headcam.euroc_session import ns_to_second_text
+        from headcam.slam_frames import main as slam_frames_main
+
+        texts = [ns_to_second_text(value) for value in stamps_ns]
+        stamps = [float(text) for text in texts]
+        session = _write_session(root / ("sess-" + name), stamps)
+        episode = _hands_episode(stamps)
+        episode["episode_id"] = episode_id
+        _retarget_wrists(episode, z0, dz)
+        camera = root / ("%s_camera.json" % name)
+        camera.write_text(json.dumps(episode), encoding="utf-8")
+        tum = root / ("%s_tum.txt" % name)
+        tum.write_text(_gt_tum_at(stamps, translation), encoding="utf-8")
+        out = root / "episodes" / ("%s.json" % name)
+        code = slam_frames_main([
+            "--episode", str(camera),
+            "--session", str(session),
+            "--tum", str(tum),
+            "--backend", "external_tum",
+            "--out", str(out),
+        ])
+        self.assertEqual(code, 0, out.read_text(encoding="utf-8") if out.is_file() else "no episode")
+        return out, stamps
+
+    def test_packaged_episodes_do_not_share_poses_or_actions(self):
+        import shutil
+        import tempfile
+
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:
+            self.skipTest("未安装 pyarrow，跳过多 episode 包写入")
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("没有 ffmpeg，跳过多 episode 包写入")
+
+        from egodata.lerobot_export import pack_action, wrist_delta
+        from headcam.export_mvp import main as export_main
+        from headcam.hand_pose import quat_xyzw_to_rotmat
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            origin = 1000000000000
+            step = 33333333
+            path_a, stamps_a = self._world_file(
+                root, "a",
+                [origin + index * step for index in range(4)],
+                (1.0, 0.0, 0.0), 0.50, 0.01,
+                "hot3d/quest3/clip-a",
+            )
+            path_b, stamps_b = self._world_file(
+                root, "b",
+                [2 * origin + index * step for index in range(5)],
+                (3.0, 0.0, 0.2), 0.40, -0.02,
+                "hot3d/quest3/clip-b",
+            )
+            path_bad, _stamps_bad = self._world_file(
+                root, "bad",
+                [3 * origin + index * step for index in range(4)],
+                (5.0, 0.0, 0.0), 0.40, 0.02,
+                "hot3d/quest3/clip-bad",
+            )
+            bad = json.loads(path_bad.read_text(encoding="utf-8"))
+            for side in ("left", "right"):
+                bad["hands"][side]["confidence"] = [0.0] * bad["num_frames"]
+            path_bad.write_text(json.dumps(bad), encoding="utf-8")
+            world_a = json.loads(path_a.read_text(encoding="utf-8"))
+            world_b = json.loads(path_b.read_text(encoding="utf-8"))
+            world_a["hand_pose"]["slam"]["accuracy"] = 0.02
+            path_a.write_text(json.dumps(world_a), encoding="utf-8")
+            before = {
+                path_a: path_a.read_text(encoding="utf-8"),
+                path_b: path_b.read_text(encoding="utf-8"),
+                path_bad: path_bad.read_text(encoding="utf-8"),
+            }
+            out = root / "out"
+            code = export_main([
+                "--package-annotated",
+                "--episodes", str(root / "episodes"),
+                "--out", str(out),
+                "--repo-id", "local/headcam_mvp_multi",
+            ])
+            report_text = (out / "report.json").read_text(encoding="utf-8") if (out / "report.json").is_file() else ""
+            self.assertEqual(code, 0, report_text)
+            for path, text in before.items():
+                self.assertEqual(path.read_text(encoding="utf-8"), text)
+            report = json.loads(report_text)
+            self.assertEqual(report["pose_source"], "hot3d_gt_mocap")
+            self.assertIsNone(report["accuracy"])
+            rejected_ids = [item["episode_id"] for item in report["rejected_episodes"]]
+            self.assertEqual(rejected_ids, ["hot3d/quest3/clip-bad"])
+            self.assertTrue(report["rejected_episodes"][0]["reasons"])
+            note = json.loads((out / "lerobot" / "meta" / "egodata_export.json").read_text(encoding="utf-8"))
+            self.assertEqual(note["pose_source"], "hot3d_gt_mocap")
+            self.assertIsNone(note["accuracy"])
+            info = json.loads((out / "lerobot" / "meta" / "info.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["total_episodes"], 2)
+            self.assertEqual(info["total_frames"], 7)
+            self.assertEqual(info["pose_source"], "hot3d_gt_mocap")
+            self.assertNotIn("accuracy", info)
+            events = [
+                json.loads(line)
+                for line in (out / "lerobot" / "meta" / "interaction_events.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            by_id = {item["episode_id"]: item["episode_index"] for item in events}
+            self.assertEqual(set(by_id), {"hot3d/quest3/clip-a", "hot3d/quest3/clip-b"})
+            episodes = pq.read_table(
+                out / "lerobot" / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+            ).to_pylist()
+            self.assertEqual(len(episodes), 2)
+            lengths = {item["episode_index"]: item["length"] for item in episodes}
+            self.assertEqual(lengths[by_id["hot3d/quest3/clip-a"]], 3)
+            self.assertEqual(lengths[by_id["hot3d/quest3/clip-b"]], 4)
+            for item in episodes:
+                self.assertEqual(item["videos/observation.image/from_timestamp"], 0.0)
+                self.assertNotEqual(item["dataset_from_index"], item["dataset_to_index"])
+            spans = sorted((item["dataset_from_index"], item["dataset_to_index"]) for item in episodes)
+            self.assertEqual(spans[0][0], 0)
+            self.assertEqual(spans[0][1], spans[1][0])
+            self.assertEqual(spans[1][1], 7)
+            table = pq.read_table(out / "lerobot" / "data" / "chunk-000" / "file-000.parquet")
+            rows = table.to_pylist()
+            self.assertEqual(len(rows), 7)
+            worlds = {
+                "hot3d/quest3/clip-a": world_a,
+                "hot3d/quest3/clip-b": world_b,
+            }
+            stamps = {
+                "hot3d/quest3/clip-a": stamps_a,
+                "hot3d/quest3/clip-b": stamps_b,
+            }
+            for episode_id, index in by_id.items():
+                world = worlds[episode_id]
+                kept = int(world["num_frames"]) - 1
+                subset = [row for row in rows if row["episode_index"] == index]
+                self.assertEqual(len(subset), kept)
+                for frame_index, row in enumerate(subset):
+                    self.assertEqual(row["frame_index"], frame_index)
+                    self.assertAlmostEqual(float(row["timestamp"]), frame_index / 30.0, places=5)
+                    self.assertEqual(int(row["observation.capture_time_ns"]), int(round(stamps[episode_id][frame_index] * 1e9)))
+                    matrix = np.asarray(world["hand_pose"]["slam"]["T_world_cam"][frame_index], dtype=float)
+                    pose = row["observation.pose"]
+                    np.testing.assert_allclose(pose[:3], matrix[:3, 3], atol=1e-6)
+                    np.testing.assert_allclose(quat_xyzw_to_rotmat(pose[3:]), matrix[:3, :3], atol=1e-6)
+                    expected = pack_action(world, frame_index)
+                    np.testing.assert_allclose(row["action"], expected, atol=1e-5)
+                last = kept - 1
+                stored = np.asarray(subset[last]["action"], dtype=float)
+                other_id = "hot3d/quest3/clip-b" if episode_id.endswith("clip-a") else "hot3d/quest3/clip-a"
+                other = worlds[other_id]
+                crossed = np.concatenate([
+                    wrist_delta(
+                        world["hands"][side]["wrist_pose"][last],
+                        other["hands"][side]["wrist_pose"][0],
+                    )
+                    for side in ("left", "right")
+                ])
+                self.assertGreater(float(np.linalg.norm(stored - crossed)), 0.5)
+
+    def test_mismatched_pose_source_is_refused(self):
+        import shutil
+        import tempfile
+
+        try:
+            import pyarrow.parquet  # noqa: F401
+        except ImportError:
+            self.skipTest("未安装 pyarrow，跳过 pose_source 一致性检查")
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("没有 ffmpeg，跳过 pose_source 一致性检查")
+
+        from headcam.export_mvp import main as export_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            origin = 1000000000000
+            step = 33333333
+            path_a, _ = self._world_file(
+                root, "a",
+                [origin + index * step for index in range(4)],
+                (1.0, 0.0, 0.0), 0.50, 0.01,
+                "hot3d/quest3/clip-a",
+            )
+            self._world_file(
+                root, "b",
+                [2 * origin + index * step for index in range(4)],
+                (2.0, 0.0, 0.0), 0.50, 0.01,
+                "hot3d/quest3/clip-b",
+            )
+            episode = json.loads(path_a.read_text(encoding="utf-8"))
+            episode["hand_pose"]["slam"]["pose_source"] = "orbslam3_stereo_euroc"
+            path_a.write_text(json.dumps(episode), encoding="utf-8")
+            out = root / "out"
+            code = export_main([
+                "--package-annotated",
+                "--episodes", str(root / "episodes"),
+                "--out", str(out),
+            ])
+            self.assertEqual(code, 1)
+            self.assertFalse((out / "lerobot").exists())
+
+
 class DuplicateTimestampAteTest(unittest.TestCase):
     """重复时间戳不能凑成 ATE。不需要 WiLoR、lerobot 或 HOT3D 图像。"""
 

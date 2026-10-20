@@ -466,11 +466,127 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
     return report
 
 
+def _require_annotated_source(episode):
+    """已标好的世界片段必须自带逐帧位姿和同一个来源名。不猜测。"""
+    episode_id = episode.get("episode_id")
+    slam = (episode.get("hand_pose") or {}).get("slam") if isinstance(episode.get("hand_pose"), dict) else None
+    if not isinstance(slam, dict):
+        raise ValueError("%s 没有 hand_pose.slam，不能当成已经标好的世界片段" % episode_id)
+    if slam.get("timestamp_alignment") == "refused":
+        raise ValueError("%s 的时间对齐被拒绝，不打包" % episode_id)
+    if slam.get("world_points_scope") != "all_frames":
+        raise ValueError(
+            "%s 的 world_points_scope=%s，不是 all_frames。不把相机系手腕和世界系打在一个包里。"
+            % (episode_id, slam.get("world_points_scope"))
+        )
+    source = slam.get("pose_source")
+    if not isinstance(source, str) or not source:
+        raise ValueError("%s 没有 pose_source" % episode_id)
+    num_frames = int(episode.get("num_frames") or 0)
+    statuses = slam.get("pose_status")
+    matrices = slam.get("T_world_cam")
+    if not isinstance(statuses, list) or not isinstance(matrices, list):
+        raise ValueError("%s 的逐帧位姿不完整" % episode_id)
+    if len(statuses) < num_frames or len(matrices) < num_frames:
+        raise ValueError("%s 的逐帧位姿短于帧数" % episode_id)
+    return source
+
+
+def _qc_brief(item):
+    return {
+        "episode_id": item.get("episode_id"),
+        "num_frames": item.get("num_frames"),
+        "accepted": bool(item.get("accepted")),
+        "bad_frames": item.get("bad_frames"),
+        "bad_fraction": item.get("bad_fraction"),
+        "labeled_frames": item.get("labeled_frames"),
+        "dropped_label_frames": item.get("dropped_label_frames"),
+        "label_coverage": item.get("label_coverage"),
+        "reasons": list(item.get("reasons") or []),
+        "flags": item.get("flags"),
+    }
+
+
+def package_annotated_episodes(episodes_dir, out, repo_id="local/headcam_mvp", log=print):
+    """把各自已经写好世界位姿的 episode 打成一个 LeRobot 数据集。
+
+    不读取某一个会话的轨迹，也不调用 ``annotate_episode``。
+    每一份的 ``hand_pose.slam.T_world_cam`` 原样进入 ``observation.pose``。
+    ``pose_source`` 必须相同。``accuracy`` 写成 null，不从 episode 里抄数字。
+    QC 拒绝的片段留在报告里，不写进包。
+    """
+    root = Path(episodes_dir)
+    if not root.is_dir():
+        raise FileNotFoundError("没有 episode 目录：%s" % root)
+    paths = sorted(path for path in root.glob("*.json") if path.is_file())
+    if not paths:
+        raise ValueError("没有可打包的 episode：%s" % root)
+    sources = []
+    for path in paths:
+        episode = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(episode, dict):
+            raise ValueError("episode 必须是对象：%s" % path)
+        sources.append(_require_annotated_source(episode))
+    unique = sorted(set(sources))
+    if len(unique) != 1:
+        raise ValueError("同一次导出里的 pose_source 不一致：%s" % unique)
+    pose_source = unique[0]
+
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    qc_report, _html, csv_path = qc_episode_dir(root, out)
+    packaged = []
+    rejected = []
+    for item in qc_report.get("results") or []:
+        brief = _qc_brief(item)
+        if brief["accepted"]:
+            packaged.append(brief)
+        else:
+            rejected.append(brief)
+    accepted = int(qc_report.get("accepted_episodes") or 0)
+    if accepted and csv_path is not None:
+        lerobot = export_lerobot_dir(root, csv_path, out / "lerobot", repo_id)
+    else:
+        lerobot = {"dir": None, "result": "没有通过 QC 的片段，未导出"}
+    report = {
+        "package": "annotated_episodes",
+        "episodes_dir": str(root),
+        "pose_source": pose_source,
+        "accuracy": None,
+        "episodes": len(paths),
+        "packaged_episodes": packaged,
+        "rejected_episodes": rejected,
+        "qc": {
+            "yield": qc_report.get("yield"),
+            "raw_frames": qc_report.get("raw_frames"),
+            "usable_frames": qc_report.get("usable_frames"),
+            "episodes": qc_report.get("episodes"),
+            "accepted_episodes": qc_report.get("accepted_episodes"),
+            "rejected_count": qc_report.get("rejected_episodes"),
+            "source": "egodata.stereo_qc.qc_stereo_episode",
+        },
+        "lerobot": lerobot,
+        "limits": [
+            "每一份 episode 用自己的 hand_pose.slam.T_world_cam。没有用某一个会话的轨迹覆盖其他片段。",
+            "pose_source=%s。这个字段只标明轨迹从哪来，不是 SLAM 精度。" % pose_source,
+            "accuracy 是 null。episode 里如果写了数字，也不抄进导出说明。",
+            "QC 拒绝的片段留在 rejected_episodes，不写进 LeRobot 包。",
+        ],
+    }
+    _dump(out / "report.json", _jsonable(report))
+    if log:
+        log(
+            "package=annotated episodes=%d accepted=%d rejected=%d pose_source=%s accuracy=null"
+            % (len(paths), accepted, len(rejected), pose_source)
+        )
+    return report
+
+
 def main(argv=None):
     import argparse
     import sys
     parser = argparse.ArgumentParser(description="头戴 MVP：同步 + 位姿状态 + 现有 QC/LeRobot")
-    parser.add_argument("--session", required=True)
+    parser.add_argument("--session", default=None)
     parser.add_argument("--out", required=True)
     parser.add_argument("--slam-backend", default="auto", choices=("auto", "none", "external_tum", "orbslam3"))
     parser.add_argument("--tum", default=None)
@@ -481,12 +597,40 @@ def main(argv=None):
     parser.add_argument("--allow-partial", action="store_true",
                         help="轨迹不完整时仍在相机系跑手部。世界系双手仍然拒绝，并打印警告")
     parser.add_argument("--episodes", default=None, help="已有统一 episode 目录：跳过手部，做 QC 和 LeRobot")
+    parser.add_argument("--package-annotated", action="store_true",
+                        help="episodes 里每份已经有自己的世界位姿。不再用一个会话的轨迹覆盖它们")
     parser.add_argument("--no-export", action="store_true")
     parser.add_argument("--run-orbslam3", action="store_true")
     parser.add_argument("--repo-id", default="local/headcam_mvp")
     parser.add_argument("--pose-source", default=None,
                         help="轨迹来源。HOT3D 头戴真值用 hot3d_gt_mocap，不要把它叫成 SLAM")
     args = parser.parse_args(argv)
+    if args.package_annotated:
+        if not args.episodes:
+            print("需要 --episodes", file=sys.stderr)
+            return 1
+        if args.session or args.tum or args.pose_source:
+            print(
+                "--package-annotated 不再读取会话或另一条轨迹。不要同时传 --session、--tum、--pose-source。",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            report = package_annotated_episodes(args.episodes, args.out, repo_id=args.repo_id)
+        except (FileNotFoundError, ValueError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        lerobot = report.get("lerobot") or {}
+        if lerobot.get("error") and not lerobot.get("dependency_missing"):
+            print(lerobot["error"], file=sys.stderr)
+            return 1
+        if not lerobot.get("dir"):
+            print(lerobot.get("result") or "未导出", file=sys.stderr)
+            return 1
+        return 0
+    if not args.session:
+        print("需要 --session", file=sys.stderr)
+        return 1
     try:
         report = export_mvp(
             args.session, args.out, slam_backend=args.slam_backend, tum_path=args.tum,
