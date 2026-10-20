@@ -477,6 +477,69 @@ python3 scripts/headcam/export_mvp.py \
 
 隔离加载器：`lerobot 0.6.1`，`torch 2.11.0+cpu`，`numpy 2.2.6`，`datasets 3.6.0`，`av 15.1.0`，`pyarrow 26.0.0`。`av 19` 没有 `av.option`，0.6.1 要 `av>=15,<16`。这次加载器用的是 pyav 回退，没有 torchcodec。
 
+## 四段 Quest3，一个多 episode 包
+
+`main` 已合进这条分支（C16 EgoVerse 入账，合并提交 `5398af9`）。上面 `clip-000000` 那一节是上一次单独跑的记录，数字留在那里。这一节把同一条路径再跑四段，打成一个数据集。四段都是 Hugging Face `bop-benchmark/hot3d` 的 Quest3，各 150 帧、30 fps。图像、真值、权重没有入库。
+
+| clip | 序列 | 参与者 | 物体 | 手腕路程（左 / 右） |
+| --- | --- | --- | --- | --- |
+| clip-000000 | `P0002_210fc0da` | P0002 | 芥末瓶、沙拉酱瓶、遥控器、烧瓶、木勺、aria_small | 1.765 m / 1.560 m |
+| clip-000300 | `P0003_5e1a34f8` | P0003 | 杯子、花瓶、白板笔、板擦、黑色支架、aria_small | 1.136 m / 0.031 m |
+| clip-000700 | `P0010_3224a967` | P0010 | 碗、咖啡壶、蔬菜、华夫、芥末瓶、木勺 | 0.560 m / 0.616 m |
+| clip-001100 | `P0017_d2495f49` | P0017 | 手机、键盘、鼠标、白板笔、板擦、黑色支架 | 0.609 m / 1.324 m |
+
+四个参与者，四组物体。clip-000300 的右手几乎不动。去畸变后都是 1024×1280，基线 0.06361–0.06369 m，第一帧外参相对其余帧的平移最大差约 1.3e-7 到 1.8e-7 m。不写 `slam.tum`。头戴定位仍是 `gt/headset_tum.txt`，`pose_source=hot3d_gt_mocap`。这台机器没有现成的 ORB-SLAM3，编译它不是顺手的事，所以这四段没有再跑 stereo，也没有 ATE。
+
+每段先在相机系跑 WiLoR（`StereoParams()` 默认关联），再用该段自己的头戴真值做 `slam_frames.py`。四段都是 `ok=150 timestamp_alignment=timestamps world_points_scope=all_frames`。后端秒数：515.2、469.8、564.1、557.4。
+
+导出入口多了 `--package-annotated`。它只读已经写好的 episode，不用某一个会话的轨迹覆盖其他段。`pose_source` 不一致就拒绝，不写出包。QC 没过的片段留在 `rejected_episodes`，不写进包。`accuracy` 仍是 null，episode 里如果写了数字也不抄。
+
+```bash
+python3 scripts/headcam/export_mvp.py \
+  --package-annotated \
+  --episodes /tmp/hot3d/world_episodes \
+  --out /tmp/hot3d/mvp \
+  --repo-id local/headcam_mvp
+```
+
+退出码 0。`episodes=4 accepted=4 rejected=0 pose_source=hot3d_gt_mocap accuracy=null`。
+
+下面的 QC 和手腕是世界系 episode 上的，也就是进包的那一份。相机系管线当时的坏帧更少：那时候 `camera_poses` 还是单位阵，头戴转动不算运动模糊。乘上头戴真值之后，clip-000300 多出 3 帧模糊（坏帧 13→16），clip-001100 多出 10 帧模糊（坏帧 1→11）。门限仍是坏帧 20%，四段都过了。`stereo_filled` 是「这一帧至少有一只手是补出来的」的帧数，不是两只手的个数相加。
+
+| clip | 帧 | QC | 坏帧 | 丢掉的标注 | stereo_filled | 覆盖 | 世界系手腕中位 | p90 | n |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| clip-000000 | 150 | 接受 | 0 | 29 | 19 | 0.807 | 1.986 cm | 2.794 cm | 258 |
+| clip-000300 | 150 | 接受 | 16 | 27 | 24 | 0.820 | 2.108 cm | 3.054 cm | 168 |
+| clip-000700 | 150 | 接受 | 0 | 45 | 42 | 0.700 | 2.326 cm | 3.641 cm | 250 |
+| clip-001100 | 150 | 接受 | 11 | 84 | 37 | 0.440 | 2.285 cm | 6.084 cm | 196 |
+| 四段合在一起 | 600 | 4/4 |  |  |  |  | 2.153 cm | 3.557 cm | 872 |
+
+手腕比的仍是 `umetrack_pose.T_world_from_wrist.translation_xyz`。没有 `MANO_LEFT.pkl`，没有做 MANO 前向。这些数没有写进 `accuracy`。
+
+clip-000000 这次和上一节不是同一次进程。上一节世界系实测是中位 2.094 cm、p90 2.773 cm、n=256。这次左目 `ok=143 jump=7`（上次 144/6），右目 `ok=126 none=13 jump=8 one_view=3`。中位差大约 0.1 cm。表里用的是这一次，四段同一个进程。
+
+clip-000300 的右手路程只有 0.031 m。WiLoR 右目 `none=104 ok=45 jump=1`，104 帧没有预测，所以不进 n。测到的右手中位 2.01 cm、p90 2.21 cm（n=45）。左手实测中位 2.20 cm（n=123）。坏帧 16 里 13 帧是手出画、3 帧是头戴转动带来的模糊。段还在包里。
+
+clip-000700 两只手都在动，跳变多（左 jump 16，右 jump 25），丢掉 45 帧标注，覆盖 0.70。实测中位 2.326 cm，比 clip-000000 大约高 0.3 cm。坏帧 0。段还在包里。
+
+clip-001100 覆盖只有 0.440，是四段里差得明显的一段，没有把它从包里拿掉。左目 `ok=82 one_view=17 none=15 jump=26 palm=10`，右目 `ok=116 jump=26 one_view=7`。头戴角速度中位 27 度/秒，p90 80 度/秒，最大 109 度/秒。状态是 `ok` 的帧里，左手中位 2.40 cm、p90 4.91 cm（n=82），右手中位 2.20 cm、p90 6.14 cm（n=114）。尾巴是少数帧：左手第 63、90 帧大约 26 cm，右手第 29 帧 15 cm。补出来的 40 只手中位 6.69 cm、p90 16.1 cm，比实测差一截，因为补的是 jump。中位数还在 2 cm 附近，所以不是整段坐标系反了。
+
+官方 `lerobot==0.6.1` 的 `LeRobotDataset`，默认后端（装了 `torchcodec 0.11.1+cpu`），逐帧读完 596 行：
+
+- `num_episodes=4`，`num_frames=596`，fps 30，`codebase_version v3.0`。每段 149 行，等于 150 减掉没有下一步的最后一帧。
+- 行范围 0–149、149–298、298–447、447–596。每段 `from_timestamp=0`，第 0 行 `timestamp=0`，第 148 行 `4.933333`（148/30）。相对 `frame_index/30` 的最大差 `2.23e-7` 秒。
+- `observation.capture_time_ns` 和该段图像纳秒一致，596 行没有一帧对错。clip-000000 第 0 帧仍是 `42136166666666`。
+- `observation.state` `(140,)`，`action` `(14,)`。每一行的 `action` 等于该段自己的 `pack_action`（只用段内下一帧）。clip-000000 和 clip-000700 的最后一行两只手腕都缺，增量是占位的保持不动；下一段第 0 帧并没有被写进这一行。clip-000300 最后一行也是占位，它和「接到下一段第 0 帧」的差是 1.31。
+- `observation.pose` 对回该段自己的 `T_world_cam`：平移最大差 `5.00e-10`，旋转最大差 `7.42e-8`。四段的平移不一样，没有被收成同一条轨迹。
+- `meta/info.json` 和 `meta/egodata_export.json` 的 `pose_source` 是 `hot3d_gt_mocap`，`accuracy` 是 null。
+
+加载器版本：`lerobot 0.6.1`，`torch 2.11.0+cpu`（`cuda False`），`torchvision 0.26.0+cpu`，`numpy 2.2.6`，`pyarrow 26.0.0`，`pandas 2.3.3`，`av 15.1.0`，`torchcodec 0.11.1+cpu`，`datasets 4.8.5`。系统 numpy 仍是 1.26.4。
+
+`MultiEpisodePackageTest` 用两段合成世界 episode（平移 1 m 和 3 m，不是 HOT3D 图像）加上一段置信度被写成 0 的片段。包里只有前两段，时间戳各自从 0 开始，动作不跨段，位姿对回各自的 `T_world_cam`。被拒绝的那段写在 `rejected_episodes`。`pose_source` 一个写成 `orbslam3_stereo_euroc` 就退出码 1，并且不写 `lerobot/`。
+
+系统解释器 `python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc`：48 项，跳过 2 项（两个官方加载器测试），其余通过。
+
 ## 还缺什么
 
-短片段上 ORB-SLAM3 没有给出可用轨迹，所以这次包的位姿是标明过的头戴真值，不是 SLAM。没有 `MANO_LEFT.pkl`，手腕真值不是 MANO 关节。没有第二段 clip，没有 IMU，没有 stereo-inertial，没有自采头戴。没有开 Kaggle。
+这四段的位姿仍是标明过的头戴真值，不是 SLAM。这台机器没有 ORB-SLAM3，没有新的跟踪帧数，也没有 ATE。没有 `MANO_LEFT.pkl`，手腕真值不是 MANO 关节。没有 IMU，没有 stereo-inertial，没有自采头戴。没有开 Kaggle。
+
