@@ -48,3 +48,5 @@ iter003_c2,2026-10-18,iphone+xphi+xhey_rgb+aug lr_scale=0.5 aug_noise=0.2,9.8007
 iter004_c0,2026-10-19,iphone+xphi+xhey_rgb+aug lr_scale=0.5 aug_noise=0.05,9.8054,12.5561,0.0263,win_moving,justinz2010/xhey-auto-iter
 iter004_c1,2026-10-19,iphone+xhey_rgb+aug aug_noise=0.05,9.7598,12.5461,-0.0193,win_moving,justinz2010/xhey-auto-iter
 iter004_c2,2026-10-19,iphone+xphi+xhey_rgb+aug aug_noise=0.2,9.7525,12.5356,-0.0266,win_moving,justinz2010/xhey-auto-iter
+C16,2026-10-19,iphone+egoverse+xhey_rgb+aug,9.7818,12.5536,0.0027,win_moving,justinz2010/xhey-rsi-c16-egoverse
+C16ctl,2026-10-19,iphone+xhey_rgb+aug,9.7589,12.5459,-0.0202,win_moving,justinz2010/xhey-rsi-c16-egoverse

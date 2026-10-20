@@ -284,6 +284,48 @@
         "justinz2010/xhey-c15-wrist-data (scripts.tgz from c15 worktree + qc_xhey_rgb/scorecards.json)"
       ],
       "note": "Queued 2026-10-19. Do not push a second copy if status becomes running/done_*."
+    },
+    {
+      "id": "C16",
+      "name": "EgoVerse/Mecka pretrain (MANO GT keypoints + head pose + real intrinsics, camera optical, native 10 Hz)",
+      "dir": "kaggle/rsi_c16",
+      "slug": "justinz2010/xhey-rsi-c16-egoverse",
+      "status": "done_worse_vs_ctl",
+      "mix": "iphone+egoverse+xhey_rgb+aug",
+      "protocol": "same as C11-C14: LOO over 3 depth clips, seeds 3, pre-steps 6000, steps 3000, move-cm 5, --no-final; arm A xhey_c16 (iphone+egoverse+xhey_rgb+aug, --qc-filter qc_egoverse/scorecards.json --qc-segments qc_egoverse/segments.json) then control arm B xhey_c16ctl (iphone+xhey_rgb+aug). Ingest arm A from xhey_c16/metrics.json vs ctl and zero within run.",
+      "qc": {
+        "sample100_native10hz": "whole-clip pass 57/100, segment retention 50.2% of hours (1.019/2.028 h), top fail jitter 42/100",
+        "pool": "random batches (seeds 42/123/777) QC'd at native 10 Hz; fastest-moving non-constant-head episodes selected, segment-retained capped ~4 h (see /workspace/c16/STATUS.md; final numbers recorded at upload)",
+        "head_const": "episodes with constant head pose flagged in converter (egoverse.head_const) and excluded from training selection",
+        "frame": "world z-up keypoints -> camera optical via inverse obs_head_pose; projection check on first 15: z>0 100%, joints in 640x360 99.2-100%; intrinsics present 100/100 in sample",
+        "training_pool": "600 random eps (12.00 h) native-10Hz QC: whole-pass 50.7%, segment-kept 5.63 h (46.9%), head_const 42/600 (7.0%) excluded; fastest-first selection = 401 eps, 8.03 h total, 3.994 h segment-kept, 227/401 whole-pass"
+      },
+      "datasets": [
+        "justinz2010/xhey-iphone-sessions",
+        "justinz2010/xhey-egoverse-cam (egoverse_cam + qc_egoverse/{scorecards,segments}.json + scripts.tgz from c16 worktree)"
+      ],
+      "license": "EgoVerse/Mecka catalog license blank for freeform rows (flagship CC BY-SA 4.0); Kaggle dataset private, research use only. No depth: directional only.",
+      "note": "Ingested from completed kernel justinz2010/xhey-rsi-c16-egoverse. Do not push another copy.",
+      "dataset_uploaded": "justinz2010/xhey-egoverse-cam (401 egoverse_cam/*.json + qc_egoverse/{scorecards,segments}.json + scripts.tgz), verified via kaggle datasets files",
+      "result": {
+        "C16_overall_ade_cm": 9.782,
+        "C16_delta_overall_cm": 0.003,
+        "C16_moving_ade_cm": 12.554,
+        "C16_moving_minus_zero_cm": -0.129,
+        "C16_moving_ci95": [
+          -0.139,
+          -0.12
+        ],
+        "C16ctl_overall_ade_cm": 9.759,
+        "C16ctl_moving_minus_zero_cm": -0.137,
+        "C16ctl_moving_ci95": [
+          -0.146,
+          -0.129
+        ],
+        "zero_overall_ade_cm": 9.779,
+        "note": "EgoVerse (camera frame, native 10 Hz, segment QC) beat zero on moving (-0.129 cm) but did not beat the same-run no-EgoVerse control C16ctl (moving -0.137, overall 9.759) and is slightly worse than zero overall (+0.003). Ingested 2026-10-19 21:42; charts in experiments/report/C16."
+      },
+      "ingested": "2026-10-19 21:42"
     }
   ]
 }
