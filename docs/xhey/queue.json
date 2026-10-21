@@ -403,6 +403,64 @@
         "dyn_hamr": "blocked at dh_run (v6): HaMeR preprocessing subprocess launched with bare python (system py3.13, not the py3.10 venv) -> No module named pyrender -> HaMeR pkl missing; all install steps OK (~12.5 min on T4); no per-window runtime measured",
         "charts": "experiments/report/C17/"
       }
+    },
+    {
+      "id": "C18",
+      "name": "NVIDIA Flora-TempSeg clip selection vs motion-threshold+QC on Open-AoE nano + xPhi-Ego-100",
+      "dir": "kaggle/c18_flora",
+      "slug": "justinz2010/xhey-c18-flora",
+      "status": "done_blocked_hw",
+      "mix": "n/a (selection study)",
+      "protocol": "Flora-segmenter-9B (human profile, 16 s windows @4 Hz) on 100 s chunks, 2x T4 device_map split; compare with current selection (xPhi QC spans / AoE move-median>=3 cm/s)",
+      "qc": "QC pass rate + jitter of selected segments (see doc)",
+      "datasets": [
+        "justinz2010/xhey-xphi-raw",
+        "HF inclusionAI/OpenAoE-2000h rev nano (fetched in kernel)"
+      ],
+      "license": "Flora weights: NVIDIA OneWay Noncommercial License (research only; not usable for XHEY production)",
+      "note": "Analysis study; not an auto-iter training candidate. Do not launch.",
+      "doc": "docs/xhey/c18_flora.md",
+      "result": {
+        "current_selection": {
+          "xphi": {
+            "clips": 102,
+            "labelled_h": 5.028,
+            "current_h": 0.315,
+            "current_segments": 196,
+            "current_qc_pass": 1.0,
+            "current_jitter_med_cm": 2.4,
+            "all_jitter_med_cm": 9.42
+          },
+          "aoe": {
+            "clips": 111,
+            "labelled_h": 2.939,
+            "current_h": 2.542,
+            "current_segments": 129,
+            "current_qc_pass": 1.0,
+            "current_jitter_med_cm": 0.71,
+            "all_jitter_med_cm": 0.66
+          }
+        },
+        "flora_t4x2": {
+          "load_s": [
+            822,
+            938
+          ],
+          "one_window_prefill_s": [
+            651,
+            823
+          ],
+          "generated_tokens": 1,
+          "complete": false,
+          "extrapolated_gpu_h": [
+            432,
+            546
+          ],
+          "windows_needed": 2390
+        },
+        "blocked": "Flora-9B on Kaggle 2xT4 cannot finish one 16 s window within its own 300 s generate limit (v4 torch GDN fallback 651 s, v5 +flash-linear-attention 823 s); needs Ampere+ 80 GB",
+        "charts": "experiments/report/C18/"
+      }
     }
   ]
 }
