@@ -1,0 +1,17 @@
+{
+  "id": "justinz2010/xhey-c18-flora",
+  "title": "xhey-c18-flora",
+  "code_file": "xhey-c18-flora.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": ["gpu"],
+  "dataset_sources": ["justinz2010/xhey-xphi-raw"],
+  "kernel_sources": [],
+  "competition_sources": [],
+  "model_sources": [],
+  "machine_shape": "NvidiaTeslaT4"
+}

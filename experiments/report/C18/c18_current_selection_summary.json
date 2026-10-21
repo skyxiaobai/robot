@@ -1,0 +1,220 @@
+{
+ "xphi": {
+  "clips": 102,
+  "labelled_hours": 5.028,
+  "flora_segments": 0,
+  "flora_chunk_errors": 0,
+  "iou": 0.0,
+  "flora_recall_of_current": 0.0,
+  "current_recall_of_flora": 0.0,
+  "sec_per_video_min": 0.0,
+  "windows": 0,
+  "table": [
+   {
+    "src": "xphi",
+    "sel": "all",
+    "hours": 5.028,
+    "frac": 1.0,
+    "runs": 102,
+    "detect": 0.649,
+    "speed_med_cm": 21.23628849654627,
+    "moving_frac": 0.52,
+    "jitter_med_cm": 9.418140376777941,
+    "qc_pass_frac": 0.063
+   },
+   {
+    "src": "xphi",
+    "sel": "current",
+    "hours": 0.315,
+    "frac": 0.063,
+    "runs": 196,
+    "detect": 0.996,
+    "speed_med_cm": 2.9028150316334833,
+    "moving_frac": 0.48,
+    "jitter_med_cm": 2.4012510087143335,
+    "qc_pass_frac": 1.0
+   },
+   {
+    "src": "xphi",
+    "sel": "flora",
+    "hours": 0.0,
+    "frac": 0.0,
+    "runs": 0,
+    "detect": null,
+    "speed_med_cm": null,
+    "moving_frac": null,
+    "jitter_med_cm": null,
+    "qc_pass_frac": null
+   },
+   {
+    "src": "xphi",
+    "sel": "flora_and_qc",
+    "hours": 0.0,
+    "frac": 0.0,
+    "runs": 0,
+    "detect": null,
+    "speed_med_cm": null,
+    "moving_frac": null,
+    "jitter_med_cm": null,
+    "qc_pass_frac": null
+   },
+   {
+    "src": "xphi",
+    "sel": "both",
+    "hours": 0.0,
+    "frac": 0.0,
+    "runs": 0,
+    "detect": null,
+    "speed_med_cm": null,
+    "moving_frac": null,
+    "jitter_med_cm": null,
+    "qc_pass_frac": null
+   },
+   {
+    "src": "xphi",
+    "sel": "flora_only",
+    "hours": 0.0,
+    "frac": 0.0,
+    "runs": 0,
+    "detect": null,
+    "speed_med_cm": null,
+    "moving_frac": null,
+    "jitter_med_cm": null,
+    "qc_pass_frac": null
+   },
+   {
+    "src": "xphi",
+    "sel": "current_only",
+    "hours": 0.315,
+    "frac": 0.063,
+    "runs": 196,
+    "detect": 0.996,
+    "speed_med_cm": 2.9028150316334833,
+    "moving_frac": 0.48,
+    "jitter_med_cm": 2.4012510087143335,
+    "qc_pass_frac": 1.0
+   },
+   {
+    "src": "xphi",
+    "sel": "neither",
+    "hours": 4.713,
+    "frac": 0.937,
+    "runs": 284,
+    "detect": 0.626,
+    "speed_med_cm": 24.27219072916673,
+    "moving_frac": 0.523,
+    "jitter_med_cm": 10.910851199031045,
+    "qc_pass_frac": 0.0
+   }
+  ]
+ },
+ "aoe": {
+  "clips": 111,
+  "labelled_hours": 2.939,
+  "flora_segments": 0,
+  "flora_chunk_errors": 0,
+  "iou": 0.0,
+  "flora_recall_of_current": 0.0,
+  "current_recall_of_flora": 0.0,
+  "sec_per_video_min": 0.0,
+  "windows": 0,
+  "table": [
+   {
+    "src": "aoe",
+    "sel": "all",
+    "hours": 2.939,
+    "frac": 1.0,
+    "runs": 111,
+    "detect": 0.996,
+    "speed_med_cm": 7.621704371649383,
+    "moving_frac": 0.86,
+    "jitter_med_cm": 0.658269371068931,
+    "qc_pass_frac": 1.0
+   },
+   {
+    "src": "aoe",
+    "sel": "current",
+    "hours": 2.542,
+    "frac": 0.865,
+    "runs": 129,
+    "detect": 0.996,
+    "speed_med_cm": 8.462495494349351,
+    "moving_frac": 0.91,
+    "jitter_med_cm": 0.7107799736128527,
+    "qc_pass_frac": 1.0
+   },
+   {
+    "src": "aoe",
+    "sel": "flora",
+    "hours": 0.0,
+    "frac": 0.0,
+    "runs": 0,
+    "detect": null,
+    "speed_med_cm": null,
+    "moving_frac": null,
+    "jitter_med_cm": null,
+    "qc_pass_frac": null
+   },
+   {
+    "src": "aoe",
+    "sel": "flora_and_qc",
+    "hours": 0.0,
+    "frac": 0.0,
+    "runs": 0,
+    "detect": null,
+    "speed_med_cm": null,
+    "moving_frac": null,
+    "jitter_med_cm": null,
+    "qc_pass_frac": null
+   },
+   {
+    "src": "aoe",
+    "sel": "both",
+    "hours": 0.0,
+    "frac": 0.0,
+    "runs": 0,
+    "detect": null,
+    "speed_med_cm": null,
+    "moving_frac": null,
+    "jitter_med_cm": null,
+    "qc_pass_frac": null
+   },
+   {
+    "src": "aoe",
+    "sel": "flora_only",
+    "hours": 0.0,
+    "frac": 0.0,
+    "runs": 0,
+    "detect": null,
+    "speed_med_cm": null,
+    "moving_frac": null,
+    "jitter_med_cm": null,
+    "qc_pass_frac": null
+   },
+   {
+    "src": "aoe",
+    "sel": "current_only",
+    "hours": 2.542,
+    "frac": 0.865,
+    "runs": 129,
+    "detect": 0.996,
+    "speed_med_cm": 8.462495494349351,
+    "moving_frac": 0.91,
+    "jitter_med_cm": 0.7107799736128527,
+    "qc_pass_frac": 1.0
+   },
+   {
+    "src": "aoe",
+    "sel": "neither",
+    "hours": 0.397,
+    "frac": 0.135,
+    "runs": 46,
+    "detect": 1.0,
+    "speed_med_cm": 3.239904632261829,
+    "moving_frac": 0.54,
+    "jitter_med_cm": 0.36001159232203667,
+    "qc_pass_frac": 1.0
+   }
+  ]
+ }
+}
