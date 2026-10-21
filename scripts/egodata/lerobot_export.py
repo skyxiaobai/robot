@@ -551,6 +551,12 @@ def _hands_unmeasured(episode):
     return episode.get("hands_measured") is False
 
 
+def _export_accuracy(episodes):
+    """测过的 Umeyama 结构原样写入说明。手写数字和头戴真值来源保持 null。"""
+    from headcam.hot3d_check import shared_measured_accuracy
+    return shared_measured_accuracy(episodes)
+
+
 def _pose_columns_for_episode(episode, kept):
     """有逐帧位姿状态时返回要写入的列。没有这组字段就返回 None，不补 0。"""
     slam = (episode.get("hand_pose") or {}).get("slam") or {}
@@ -800,6 +806,13 @@ def _export_unmeasured_hands(episodes, out_dir, repo_id, video_size, horizon):
         "robot_type": "headcam_pose_only",
         "splits": {"train": "0:%d" % len(episodes)},
     }
+    pose_sources = {
+        ((episode.get("hand_pose") or {}).get("slam") or {}).get("pose_source")
+        for episode in episodes
+    }
+    pose_sources.discard(None)
+    if len(pose_sources) == 1:
+        info["pose_source"] = next(iter(pose_sources))
     (out_dir / "meta" / "info.json").write_text(
         json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8",
     )
@@ -812,8 +825,12 @@ def _export_unmeasured_hands(episodes, out_dir, repo_id, video_size, horizon):
             "手部没有测量。parquet 里没有 observation.state、action、"
             "observation.hand_joints、observation.wrist_pose，也不写 0。"
         ),
-        "accuracy": None,
-        "accuracy_note": "本导出不测量 SLAM 误差。accuracy 保持 null。",
+        "accuracy": _export_accuracy(episodes),
+        "pose_source": info.get("pose_source"),
+        "accuracy_note": (
+            "accuracy 有值时是相对真值轨迹的 Umeyama ATE/RPE，方法写在这个对象里。"
+            "没有另给真值、来源是头戴真值、或只是手写数字时为 null。"
+        ),
         "slam_status": "逐帧标签：ok、tracking_lost 或 pose_missing。frame_label 就是这一列。",
         "pose": (
             "observation.pose 是 tx ty tz qx qy qz qw，只在 slam_status=ok 时有值。"
@@ -845,7 +862,7 @@ def _export_unmeasured_hands(episodes, out_dir, repo_id, video_size, horizon):
         "out": str(out_dir),
         "horizon": horizon,
         "hands": "absent",
-        "accuracy": None,
+        "accuracy": _export_accuracy(episodes),
         "valid_action_ratio": None,
         "valid_action_count": 0,
         "action_count": 0,
@@ -1190,8 +1207,11 @@ def export_lerobot(
     }
     if pose_blocks:
         note["pose_source"] = pose_source
-        note["accuracy"] = None
-        note["accuracy_note"] = "本导出不测量误差。accuracy 保持 null。手腕误差和短片段 ATE 不写进这个字段。"
+        note["accuracy"] = _export_accuracy(selected)
+        note["accuracy_note"] = (
+            "accuracy 有值时是相对真值轨迹的 Umeyama ATE/RPE。"
+            "没有这份测量、来源是头戴真值、或 episode 里只写了一个数字时为 null。"
+        )
         note["pose"] = (
             "observation.pose 是 tx ty tz qx qy qz qw，只在 slam_status=ok 时有值。"
             "其他帧是 null，不是零向量。"

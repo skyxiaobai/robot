@@ -298,8 +298,69 @@ def _attach_pose_source(result, tum_path, requested):
     elif chosen:
         result["notes"] = _join_note(
             result.get("notes"),
-            "pose_source=%s。这个字段只标明轨迹从哪来。accuracy 仍是 null。" % chosen,
+            "pose_source=%s。这个字段只标明轨迹从哪来。没有另给真值轨迹时 accuracy 仍是 null。" % chosen,
         )
+    return result
+
+
+def _attach_measured_accuracy(result, estimate_tum, gt_tum_path, gt_time_scale, estimate_scale):
+    """有另一份真值轨迹时，把 Umeyama ATE/RPE 写进 accuracy。没有、或来源是头戴真值，保持 null。"""
+    result["accuracy"] = None
+    source = result.get("pose_source")
+    if gt_tum_path is None:
+        return result
+    gt_path = Path(gt_tum_path)
+    if source and str(source).startswith("hot3d_gt"):
+        result["notes"] = _join_note(
+            result.get("notes"),
+            "轨迹来源是头戴真值，不相对另一份轨迹计算 ATE。accuracy 仍是 null。",
+        )
+        return result
+    if not source:
+        result["notes"] = _join_note(
+            result.get("notes"),
+            "没有 pose_source，不把相对真值的误差写成 accuracy。",
+        )
+        return result
+    if estimate_tum is None or not Path(estimate_tum).is_file():
+        result["notes"] = _join_note(
+            result.get("notes"),
+            "没有估计轨迹文件，不能计算 ATE。accuracy 仍是 null。",
+        )
+        return result
+    if not gt_path.is_file():
+        raise FileNotFoundError("没有真值轨迹：%s" % gt_path)
+    reference = read_pose_source(gt_path)
+    if not reference:
+        result["notes"] = _join_note(
+            result.get("notes"),
+            "真值轨迹文件头没有 pose_source，不猜测来源。accuracy 仍是 null。",
+        )
+        return result
+    from headcam.hot3d_check import is_measured_accuracy, trajectory_accuracy
+    measured = trajectory_accuracy(
+        estimate_tum, gt_path,
+        estimate_scale=1.0 if estimate_scale is None else float(estimate_scale),
+        gt_scale=1.0 if gt_time_scale is None else float(gt_time_scale),
+        estimate_pose_source=source,
+        reference_pose_source=reference,
+    )
+    if not is_measured_accuracy(measured, source):
+        result["notes"] = _join_note(
+            result.get("notes"),
+            "相对真值对上的不同时间戳少于 3，不算 ATE。accuracy 仍是 null。",
+        )
+        return result
+    result["accuracy"] = measured
+    se3 = measured["ate"]["se3"]
+    result["notes"] = _join_note(
+        result.get("notes"),
+        "accuracy 是相对 %s 的 Umeyama。SE3 RMSE %.6f m，n=%s，max_dt_s=%s。Sim3 尺度 %s。"
+        % (
+            reference, se3["rmse_m"], se3["n"], measured["max_dt_s"],
+            measured["ate"]["sim3"]["similarity_scale"],
+        ),
+    )
     return result
 
 
@@ -427,7 +488,8 @@ def run_orbslam3_process(plan, run_dir, timeout_s=None):
 
 
 def run_slam(session, backend="auto", tum_path=None, max_gap_s=None, out_dir=None,
-            run_orbslam3=None, timeout_s=None, tum_time_scale=None, pose_source=None):
+            run_orbslam3=None, timeout_s=None, tum_time_scale=None, pose_source=None,
+            gt_tum_path=None, gt_time_scale=None):
     """读会话并返回可 JSON 化的位姿结果。``auto`` 只读已有 TUM，不启动 ORB-SLAM3。
 
     ``backend=none`` 即使目录里已有 ``slam.tum`` 也标记 ``pose_missing``。
@@ -504,6 +566,7 @@ def run_slam(session, backend="auto", tum_path=None, max_gap_s=None, out_dir=Non
         if found is not None and found.is_file():
             used_tum = found
     result = _attach_pose_source(result, used_tum, pose_source)
+    result = _attach_measured_accuracy(result, used_tum, gt_tum_path, gt_time_scale, tum_time_scale)
 
     if out_dir is not None:
         out = Path(out_dir)
@@ -636,6 +699,10 @@ def main(argv=None):
     parser.add_argument("--tum", default=None, help="已有 TUM 轨迹。不执行 SLAM")
     parser.add_argument("--tum-time-scale", type=float, default=None,
                         help="显式缩放轨迹时间戳。纳秒轨迹用 1e-9。不自动换算")
+    parser.add_argument("--gt-tum", default=None, help="另一份真值轨迹，只用来算 ATE/RPE，不作为输出位姿")
+    parser.add_argument("--gt-tum-time-scale", type=float, default=None,
+                        help="真值轨迹的时间缩放。不自动换算")
+    parser.add_argument("--pose-source", default=None)
     parser.add_argument("--max-gap-s", type=float, default=None)
     parser.add_argument("--run-orbslam3", action="store_true", help="backend=orbslam3 时真的执行二进制")
     parser.add_argument("--strict", action="store_true", help="没有完整世界位姿时退出码 1")
@@ -644,19 +711,25 @@ def main(argv=None):
         result = run_slam(
             args.session, backend=args.backend, tum_path=args.tum, max_gap_s=args.max_gap_s,
             out_dir=args.out, run_orbslam3=True if args.run_orbslam3 else None,
-            tum_time_scale=args.tum_time_scale,
+            tum_time_scale=args.tum_time_scale, pose_source=args.pose_source,
+            gt_tum_path=args.gt_tum, gt_time_scale=args.gt_tum_time_scale,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    accuracy = result.get("accuracy")
+    if isinstance(accuracy, dict) and isinstance(accuracy.get("ate"), dict):
+        accuracy_text = "accuracy=measured ate_se3_rmse_m=%.6f" % accuracy["ate"]["se3"]["rmse_m"]
+    else:
+        accuracy_text = "accuracy=unmeasured"
     print(
         "world_pose=%s coordinate_frame=%s ok=%d pose_missing=%d tracking_lost=%d "
-        "frame_time_unit=%s tum_time_unit=%s time_unit_mismatch=%s accuracy=unmeasured"
+        "frame_time_unit=%s tum_time_unit=%s time_unit_mismatch=%s %s"
         % (
             str(result["world_pose"]).lower(), result["coordinate_frame"],
             result["ok_frames"], result["pose_missing_frames"], result["tracking_lost_frames"],
             result["frame_time_unit"], result["tum_time_unit"],
-            str(result["time_unit_mismatch"]).lower(),
+            str(result["time_unit_mismatch"]).lower(), accuracy_text,
         )
     )
     if args.strict and not result["world_pose"]:

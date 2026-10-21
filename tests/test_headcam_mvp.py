@@ -2045,5 +2045,231 @@ class Orbslam3ExtrinsicConventionTest(unittest.TestCase):
         self.assertAlmostEqual(rectified["baseline_m"], 0.10, places=3)
 
 
+class SlamAccuracyPackagingTest(unittest.TestCase):
+    """测过的 Umeyama 误差可以进 accuracy。头戴真值改称 SLAM、或手写数字，都不进。"""
+
+    def _moving_pair(self, root):
+        stamps = [index / 30.0 for index in range(4)]
+        points = [
+            np.array([0.0, 0.0, 0.0]),
+            np.array([1.0, 0.0, 0.0]),
+            np.array([1.0, 1.0, 0.0]),
+            np.array([0.0, 1.0, 0.0]),
+        ]
+        shift = np.array([0.4, -0.2, 0.1])
+        rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        gt_poses = []
+        est_poses = []
+        for point in points:
+            gt = np.eye(4)
+            gt[:3, 3] = point
+            est = np.eye(4)
+            est[:3, :3] = rotation
+            est[:3, 3] = rotation @ point + shift
+            gt_poses.append(gt)
+            est_poses.append(est)
+        gt_path = root / "gt.txt"
+        est_path = root / "slam.txt"
+        gt_path.write_text(
+            "# pose_source=hot3d_gt_mocap\n" + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(stamps, gt_poses)),
+            encoding="utf-8",
+        )
+        est_path.write_text(
+            "# pose_source=orbslam3_stereo_euroc\n" + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(stamps, est_poses)),
+            encoding="utf-8",
+        )
+        return stamps, est_path, gt_path, points
+
+    def test_known_rigid_motion_publishes_se3_and_sim3(self):
+        import tempfile
+
+        from headcam.hot3d_check import is_measured_accuracy, trajectory_accuracy
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _stamps, est_path, gt_path, points = self._moving_pair(Path(tmp))
+            measured = trajectory_accuracy(
+                est_path, gt_path,
+                estimate_pose_source="orbslam3_stereo_euroc",
+                reference_pose_source="hot3d_gt_mocap",
+            )
+            refused = trajectory_accuracy(
+                est_path, gt_path,
+                estimate_pose_source="hot3d_gt_mocap",
+                reference_pose_source="hot3d_gt_mocap",
+            )
+        self.assertIsNone(refused)
+        self.assertTrue(is_measured_accuracy(measured, "orbslam3_stereo_euroc"))
+        self.assertLess(measured["ate"]["se3"]["rmse_m"], 1e-8)
+        self.assertAlmostEqual(measured["ate"]["sim3"]["similarity_scale"], 1.0, places=6)
+        self.assertEqual(measured["ate"]["se3"]["alignment"], "umeyama_se3")
+        self.assertEqual(measured["ate"]["sim3"]["alignment"], "umeyama_sim3")
+        self.assertEqual(measured["max_dt_s"], 0.05)
+        self.assertEqual([row["delta_s"] for row in measured["rpe"]], [1.0, 5.0])
+        rotation = np.asarray(measured["ate"]["se3"]["rotation_row_major"], dtype=float).reshape(3, 3)
+        translation = np.asarray(measured["ate"]["se3"]["translation"], dtype=float)
+        # The stored SE3 is the same Umeyama that produced the RMSE.
+        estimate_centers = []
+        for point in points:
+            pose = np.eye(4)
+            pose[:3, :3] = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+            pose[:3, 3] = pose[:3, :3] @ point + np.array([0.4, -0.2, 0.1])
+            estimate_centers.append(pose[:3, 3])
+        aligned = (rotation @ np.asarray(estimate_centers).T).T + translation
+        self.assertLess(float(np.max(np.linalg.norm(aligned - np.asarray(points), axis=1))), 1e-8)
+        self.assertIsNone(trajectory_accuracy(
+            est_path, gt_path,
+            estimate_pose_source="hot3d_gt_mocap",
+            reference_pose_source="hot3d_gt_mocap",
+        ))
+        self.assertFalse(is_measured_accuracy(0.01, "orbslam3_stereo_euroc"))
+        self.assertFalse(is_measured_accuracy(measured, "hot3d_gt_mocap"))
+
+    def test_two_poses_leave_accuracy_null_and_gt_label_is_refused(self):
+        import tempfile
+
+        from headcam.hot3d_check import trajectory_accuracy
+        from headcam.slam_vio import run_slam
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stamps, est_path, gt_path, _points = self._moving_pair(root)
+            pose = np.eye(4)
+            tiny = root / "tiny.txt"
+            _write_pose_tum(tiny, ["0.0", "1.0"], [pose, pose])
+            self.assertIsNone(trajectory_accuracy(
+                tiny, tiny,
+                estimate_pose_source="orbslam3_stereo_euroc",
+                reference_pose_source="hot3d_gt_mocap",
+            ))
+            session = _write_session(root / "sess", stamps)
+            bare = run_slam(
+                session, backend="external_tum", tum_path=est_path, pose_source="orbslam3_stereo_euroc",
+            )
+            self.assertIsNone(bare["accuracy"])
+            self.assertEqual(bare["pose_source"], "orbslam3_stereo_euroc")
+            measured = run_slam(
+                session, backend="external_tum", tum_path=est_path, pose_source="orbslam3_stereo_euroc",
+                gt_tum_path=gt_path,
+            )
+            self.assertLess(measured["accuracy"]["ate"]["se3"]["rmse_m"], 1e-8)
+            gt_only = run_slam(
+                session, backend="external_tum", tum_path=gt_path, pose_source="hot3d_gt_mocap",
+                gt_tum_path=gt_path,
+            )
+            self.assertIsNone(gt_only["accuracy"])
+            with self.assertRaises(ValueError):
+                run_slam(
+                    session, backend="external_tum", tum_path=gt_path, pose_source="orbslam3_stereo_euroc",
+                    gt_tum_path=gt_path,
+                )
+
+    def test_skip_hands_package_keeps_slam_source_and_measured_accuracy(self):
+        import shutil
+        import tempfile
+
+        try:
+            import pyarrow.parquet  # noqa: F401
+        except ImportError:
+            self.skipTest("未安装 pyarrow，跳过 SLAM 来源的 LeRobot 包")
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("没有 ffmpeg，跳过 SLAM 来源的 LeRobot 包")
+
+        from headcam.export_mvp import main as export_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stamps, est_path, gt_path, _points = self._moving_pair(root)
+            session = _write_session(root / "sess", stamps)
+            out = root / "out"
+            code = export_main([
+                "--session", str(session),
+                "--out", str(out),
+                "--skip-hands",
+                "--slam-backend", "external_tum",
+                "--tum", str(est_path),
+                "--pose-source", "orbslam3_stereo_euroc",
+                "--gt-tum", str(gt_path),
+            ])
+            report_text = (out / "report.json").read_text(encoding="utf-8") if (out / "report.json").is_file() else ""
+            self.assertEqual(code, 0, report_text)
+            report = json.loads(report_text)
+            self.assertEqual(report["pose_source"], "orbslam3_stereo_euroc")
+            self.assertLess(report["accuracy"]["ate"]["se3"]["rmse_m"], 1e-8)
+            self.assertEqual(report["accuracy"]["ate"]["se3"]["scale"], "fixed_1")
+            self.assertEqual(report["accuracy"]["reference_pose_source"], "hot3d_gt_mocap")
+            note = json.loads((out / "lerobot" / "meta" / "egodata_export.json").read_text(encoding="utf-8"))
+            self.assertEqual(note["pose_source"], "orbslam3_stereo_euroc")
+            self.assertEqual(note["hands"], "absent")
+            self.assertLess(note["accuracy"]["ate"]["se3"]["rmse_m"], 1e-8)
+            info = json.loads((out / "lerobot" / "meta" / "info.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["pose_source"], "orbslam3_stereo_euroc")
+            self.assertNotIn("accuracy", info)
+
+            from headcam.slam_frames import main as slam_frames_main
+            hands = _hands_episode(stamps)
+            hands["episode_id"] = "headcam/slam-accuracy"
+            camera = root / "camera.json"
+            camera.write_text(json.dumps(hands), encoding="utf-8")
+            world = root / "world.json"
+            slam_code = slam_frames_main([
+                "--episode", str(camera),
+                "--session", str(session),
+                "--tum", str(est_path),
+                "--backend", "external_tum",
+                "--out", str(world),
+            ])
+            self.assertEqual(slam_code, 0, world.read_text(encoding="utf-8") if world.is_file() else "no world")
+            world_episode = json.loads(world.read_text(encoding="utf-8"))
+            world_episode["hand_pose"]["slam"]["accuracy"] = report["accuracy"]
+            packaged = root / "pack"
+            packaged.mkdir()
+            (packaged / "world.json").write_text(json.dumps(world_episode), encoding="utf-8")
+            pack_out = root / "pack-out"
+            pack_code = export_main([
+                "--package-annotated",
+                "--episodes", str(packaged),
+                "--out", str(pack_out),
+            ])
+            pack_report = json.loads((pack_out / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(pack_code, 0, pack_report)
+            self.assertEqual(pack_report["pose_source"], "orbslam3_stereo_euroc")
+            self.assertLess(pack_report["accuracy"]["ate"]["se3"]["rmse_m"], 1e-8)
+            pack_note = json.loads((pack_out / "lerobot" / "meta" / "egodata_export.json").read_text(encoding="utf-8"))
+            self.assertEqual(pack_note["pose_source"], "orbslam3_stereo_euroc")
+            self.assertLess(pack_note["accuracy"]["ate"]["se3"]["rmse_m"], 1e-8)
+
+            relabeled = json.loads(world.read_text(encoding="utf-8"))
+            relabeled["hand_pose"]["slam"]["pose_source"] = "hot3d_gt_mocap"
+            relabeled["hand_pose"]["slam"]["accuracy"] = report["accuracy"]
+            relabel_dir = root / "relabeled"
+            relabel_dir.mkdir()
+            (relabel_dir / "world.json").write_text(json.dumps(relabeled), encoding="utf-8")
+            relabel_out = root / "relabel-out"
+            relabel_code = export_main([
+                "--package-annotated",
+                "--episodes", str(relabel_dir),
+                "--out", str(relabel_out),
+            ])
+            relabel_report = json.loads((relabel_out / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(relabel_code, 0, relabel_report)
+            self.assertEqual(relabel_report["pose_source"], "hot3d_gt_mocap")
+            self.assertIsNone(relabel_report["accuracy"])
+
+            claimed = json.loads(world.read_text(encoding="utf-8"))
+            claimed["hand_pose"]["slam"]["accuracy"] = 0.02
+            claimed_dir = root / "claimed"
+            claimed_dir.mkdir()
+            (claimed_dir / "world.json").write_text(json.dumps(claimed), encoding="utf-8")
+            claimed_out = root / "claimed-out"
+            claimed_code = export_main([
+                "--package-annotated",
+                "--episodes", str(claimed_dir),
+                "--out", str(claimed_out),
+            ])
+            claimed_report = json.loads((claimed_out / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(claimed_code, 0, claimed_report)
+            self.assertIsNone(claimed_report["accuracy"])
+
+
 if __name__ == "__main__":
     unittest.main()

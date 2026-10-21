@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
-"""对照 HOT3D 真值，报告手腕误差。不把这些数写进导出报告的 accuracy。
+"""对照 HOT3D 真值，报告手腕误差和轨迹误差。
 
 相机系误差：预测手腕（相机系 episode）相对 ``inv(T) @ gt_world``。
 世界系误差：预测手腕（已经乘过位姿的 episode）相对 gt_world。
 ``T`` 用的是这次导出的位姿来源。来源是头戴真值时，两个误差应接近。
-来源是 ORB-SLAM3 时，世界系误差还包含这条短轨迹和真值的差。
+来源是 ORB-SLAM3 时，世界系误差还包含这条轨迹和真值的差。
 
-ATE 只在同时给出 SLAM 轨迹和真值轨迹时计算，尺度固定，并写明比的是哪两条轨迹。
+``trajectory_accuracy`` 在 SLAM 轨迹和另一份真值轨迹都在、并且对上至少 3 个
+不同时间戳时，给出 Umeyama SE3 / Sim3 的 ATE 和相对位姿误差。调用方可以把
+这份结构放进 ``slam_status.accuracy``。对不上、来源是头戴真值、或只是一个
+手写数字时，accuracy 保持 null。
 """
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -292,6 +296,180 @@ def trajectory_rpe(estimate_tum, gt_tum, estimate_scale=1.0, gt_scale=1.0, delta
         "duplicate_rows_ignored": prepared["duplicate_rows_ignored"],
         "note": "相对位姿误差，没有先做全局 SE3/Sim3 对齐。平移是相对运动的差，旋转是那个差的角度。",
     }
+
+
+def _finite_number(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(number)
+
+
+def _vector(value, length):
+    if not isinstance(value, (list, tuple)) or len(value) != length:
+        return False
+    return all(_finite_number(item) for item in value)
+
+
+def _ate_block(block, alignment, scale):
+    if not isinstance(block, dict):
+        return False
+    if block.get("alignment") != alignment or block.get("scale") != scale:
+        return False
+    return all(_finite_number(block.get(key)) for key in ("n", "rmse_m", "median_m", "max_m")) and int(block["n"]) >= 3
+
+
+def trajectory_accuracy(
+    estimate_tum, gt_tum, estimate_scale=1.0, gt_scale=1.0, max_dt_s=0.05,
+    rpe_deltas=(1.0, 5.0), max_delta_error_s=0.05,
+    estimate_pose_source=None, reference_pose_source=None,
+):
+    """SLAM 轨迹相对另一份真值的 ATE 和 RPE。对不上 3 帧时返回 None。
+
+    SE3 的旋转和平移是 Umeyama、尺度固定为 1：``p_ref ~= R @ p_est + t``。
+    只保存这次对齐，不把真值轨迹抄进结果。
+    """
+    if not isinstance(estimate_pose_source, str) or not estimate_pose_source:
+        return None
+    if estimate_pose_source.startswith("hot3d_gt"):
+        return None
+    if not isinstance(reference_pose_source, str) or not reference_pose_source:
+        return None
+    if reference_pose_source == estimate_pose_source:
+        return None
+    se3 = trajectory_ate(
+        estimate_tum, gt_tum, estimate_scale=estimate_scale, gt_scale=gt_scale,
+        alignment="se3", max_dt_s=max_dt_s,
+    )
+    sim3 = trajectory_ate(
+        estimate_tum, gt_tum, estimate_scale=estimate_scale, gt_scale=gt_scale,
+        alignment="sim3", max_dt_s=max_dt_s,
+    )
+    if "rmse_m" not in se3 or "rmse_m" not in sim3:
+        return None
+    prepared = _prepare_pair(estimate_tum, gt_tum, estimate_scale, gt_scale, max_dt_s)
+    fitted = _umeyama(
+        [pose[:3, 3] for pose in prepared["paired_est"]],
+        [pose[:3, 3] for pose in prepared["paired_gt"]],
+        with_scale=False,
+    )
+    if fitted is None:
+        return None
+    _scale, rotation, translation = fitted
+    se3_block = {
+        "n": se3["n"],
+        "rmse_m": se3["rmse_m"],
+        "median_m": se3["median_m"],
+        "max_m": se3["max_m"],
+        "alignment": "umeyama_se3",
+        "scale": "fixed_1",
+        "rotation_row_major": [float(value) for value in np.asarray(rotation, dtype=float).reshape(-1)],
+        "translation": [float(value) for value in np.asarray(translation, dtype=float).reshape(-1)],
+        "applied_as": "p_ref = R @ p_est + t，尺度固定为 1。R 按行展开。",
+    }
+    sim3_block = {
+        "n": sim3["n"],
+        "rmse_m": sim3["rmse_m"],
+        "median_m": sim3["median_m"],
+        "max_m": sim3["max_m"],
+        "alignment": "umeyama_sim3",
+        "scale": "free",
+        "similarity_scale": sim3["similarity_scale"],
+    }
+    rpe_rows = []
+    for delta in rpe_deltas:
+        row = trajectory_rpe(
+            estimate_tum, gt_tum, estimate_scale=estimate_scale, gt_scale=gt_scale,
+            delta_s=float(delta), max_dt_s=max_dt_s, max_delta_error_s=max_delta_error_s,
+        )
+        compact = {
+            "delta_s": float(delta),
+            "max_delta_error_s": float(max_delta_error_s),
+            "alignment": "none_relative",
+            "n_poses": row.get("n_poses"),
+            "n_pairs": row.get("n_pairs", 0),
+        }
+        for key in ("trans_rmse_m", "trans_median_m", "rot_rmse_deg", "rot_median_deg"):
+            if key in row:
+                compact[key] = row[key]
+        rpe_rows.append(compact)
+    return {
+        "kind": "trajectory_error_v1",
+        "method": "umeyama",
+        "estimate_pose_source": estimate_pose_source,
+        "reference_pose_source": reference_pose_source,
+        "max_dt_s": float(max_dt_s),
+        "ate": {"se3": se3_block, "sim3": sim3_block},
+        "rpe": rpe_rows,
+        "note": (
+            "相机中心，最近邻，超过 max_dt_s 不配。重复时间戳只留第一行。"
+            "SE3 尺度固定为 1。Sim3 尺度自由，similarity_scale 乘在估计轨迹上。"
+            "RPE 不做这次全局对齐。"
+        ),
+    }
+
+
+def is_measured_accuracy(value, pose_source=None):
+    """只有 ``trajectory_accuracy`` 这种结构算测过。手写数字和头戴真值来源都不算。"""
+    if not isinstance(value, dict):
+        return False
+    if value.get("kind") != "trajectory_error_v1" or value.get("method") != "umeyama":
+        return False
+    estimate = value.get("estimate_pose_source")
+    reference = value.get("reference_pose_source")
+    if not isinstance(estimate, str) or not estimate or estimate.startswith("hot3d_gt"):
+        return False
+    if isinstance(pose_source, str) and (pose_source.startswith("hot3d_gt") or pose_source != estimate):
+        return False
+    if not isinstance(reference, str) or not reference or reference == estimate:
+        return False
+    if not _finite_number(value.get("max_dt_s")) or float(value["max_dt_s"]) <= 0:
+        return False
+    ate = value.get("ate")
+    if not isinstance(ate, dict):
+        return False
+    se3 = ate.get("se3")
+    sim3 = ate.get("sim3")
+    if not _ate_block(se3, "umeyama_se3", "fixed_1") or not _ate_block(sim3, "umeyama_sim3", "free"):
+        return False
+    if not _finite_number(sim3.get("similarity_scale")) or float(sim3["similarity_scale"]) <= 0:
+        return False
+    if not _vector(se3.get("rotation_row_major"), 9) or not _vector(se3.get("translation"), 3):
+        return False
+    rpe = value.get("rpe")
+    if not isinstance(rpe, list) or not rpe:
+        return False
+    for row in rpe:
+        if not isinstance(row, dict) or row.get("alignment") != "none_relative":
+            return False
+        if not _finite_number(row.get("delta_s")):
+            return False
+        if "trans_rmse_m" in row and not _finite_number(row["trans_rmse_m"]):
+            return False
+    return True
+
+
+def shared_measured_accuracy(episodes):
+    """每份 episode 都有同一份测过的 accuracy 才返回它。缺一份、或来源是头戴真值，返回 None。"""
+    chosen = None
+    kept = None
+    if not episodes:
+        return None
+    for episode in episodes:
+        slam = (episode.get("hand_pose") or {}).get("slam") if isinstance(episode, dict) else None
+        if not isinstance(slam, dict):
+            return None
+        value = slam.get("accuracy")
+        if not is_measured_accuracy(value, slam.get("pose_source")):
+            return None
+        blob = json.dumps(value, sort_keys=True)
+        if chosen is None:
+            chosen = blob
+            kept = value
+        elif blob != chosen:
+            return None
+    return kept
 
 
 def main(argv=None):

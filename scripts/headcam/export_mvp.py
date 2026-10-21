@@ -20,6 +20,7 @@ if str(_SCRIPTS) not in sys.path:
 
 from egodata.qc import write_yield_reports, yield_report
 from egodata.stereo_qc import qc_stereo_episode
+from headcam.hot3d_check import shared_measured_accuracy
 from headcam.slam_frames import apply_ok_frame_world
 from headcam.slam_vio import run_slam, world_hands_gate, write_slam_tum
 from headcam.sync_calib import refresh_calib_json
@@ -83,6 +84,17 @@ def prepare_hand_session(session, dest, slam):
     return {"session": str(dest), "slam_tum": None if tum_path is None else str(tum_path)}
 
 
+def _published_accuracy(slam):
+    """只公布测过的 Umeyama 结构。手写数字、缺字段、头戴真值来源都是 null。"""
+    from headcam.hot3d_check import is_measured_accuracy
+    if not isinstance(slam, dict):
+        return None
+    value = slam.get("accuracy")
+    if is_measured_accuracy(value, slam.get("pose_source")):
+        return value
+    return None
+
+
 def slam_public_summary(slam):
     """给报告用的摘要。逐帧矩阵留在 slam_status.json，不放进这段摘要。"""
     return {
@@ -99,7 +111,7 @@ def slam_public_summary(slam):
         "tum_time_unit": slam.get("tum_time_unit"),
         "tum_time_scale": slam.get("tum_time_scale"),
         "time_unit_mismatch": bool(slam.get("time_unit_mismatch")),
-        "accuracy": None,
+        "accuracy": _published_accuracy(slam),
         "pose_source": slam.get("pose_source"),
         "imu_used_for_pose": False,
         "notes": slam.get("notes"),
@@ -302,7 +314,8 @@ def prepare_unmeasured_episode(session, slam, calib_document, episode_dir):
 
 def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None, run_hands=True,
                episodes=None, export=True, hand_pipeline=None, repo_id="local/headcam_mvp",
-               run_orbslam3=None, allow_partial=False, tum_time_scale=None, pose_source=None, log=print):
+               run_orbslam3=None, allow_partial=False, tum_time_scale=None, pose_source=None,
+               gt_tum_path=None, gt_time_scale=None, log=print):
     """跑 MVP 前半段并接上现有 QC / LeRobot。返回报告字典，同时写 ``out/report.json``。"""
     session = Path(session)
     out = Path(out)
@@ -314,7 +327,7 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
     slam = run_slam(
         session, backend=slam_backend, tum_path=tum_path, max_gap_s=max_gap_s,
         out_dir=out, run_orbslam3=run_orbslam3, tum_time_scale=tum_time_scale,
-        pose_source=pose_source,
+        pose_source=pose_source, gt_tum_path=gt_tum_path, gt_time_scale=gt_time_scale,
     )
     gate = world_hands_gate(slam, allow_partial=allow_partial)
     hand_session = prepare_hand_session(session, out / "hand_session", slam)
@@ -426,12 +439,12 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
         "qc": qc_report,
         "lerobot": lerobot,
         "pose_source": slam.get("pose_source"),
-        "accuracy": None,
+        "accuracy": _published_accuracy(slam),
         "limits": [
             "没有完整 SLAM 轨迹时 world_pose=false，不写单位阵 slam.tum。",
             "覆盖不全的轨迹不会交给手部管线，避免最近邻把 tracking_lost 填成世界位姿。",
             "已有相机系 episode 上，只有 status=ok 的帧写 p_world = T_world_cam @ p_cam。覆盖不全时这些点在 hand_pose.slam.world_hands，丢失帧为 null，手腕主数组仍在相机系。",
-            "accuracy 始终是 null：本入口不测量 SLAM 误差。",
+            "accuracy 只在给了另一份真值轨迹、并且来源不是头戴真值时写入 Umeyama ATE/RPE。否则是 null。",
             "没跑手部时，通过 QC 的片段仍可导出。手部列不写，也不用 0 填充。",
             "轨迹时间单位和会话不一致时不自动换算，也不把跨单位的最近邻写成 T_world_cam。",
         ],
@@ -512,7 +525,8 @@ def package_annotated_episodes(episodes_dir, out, repo_id="local/headcam_mvp", l
 
     不读取某一个会话的轨迹，也不调用 ``annotate_episode``。
     每一份的 ``hand_pose.slam.T_world_cam`` 原样进入 ``observation.pose``。
-    ``pose_source`` 必须相同。``accuracy`` 写成 null，不从 episode 里抄数字。
+    ``pose_source`` 必须相同。``accuracy`` 只在每一份被接受的 episode 上都有
+    同一份测过的 Umeyama 结构、并且来源不是头戴真值时写入。手写数字不抄。
     QC 拒绝的片段留在报告里，不写进包。
     """
     root = Path(episodes_dir)
@@ -522,11 +536,13 @@ def package_annotated_episodes(episodes_dir, out, repo_id="local/headcam_mvp", l
     if not paths:
         raise ValueError("没有可打包的 episode：%s" % root)
     sources = []
+    loaded = []
     for path in paths:
         episode = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(episode, dict):
             raise ValueError("episode 必须是对象：%s" % path)
         sources.append(_require_annotated_source(episode))
+        loaded.append(episode)
     unique = sorted(set(sources))
     if len(unique) != 1:
         raise ValueError("同一次导出里的 pose_source 不一致：%s" % unique)
@@ -544,6 +560,10 @@ def package_annotated_episodes(episodes_dir, out, repo_id="local/headcam_mvp", l
         else:
             rejected.append(brief)
     accepted = int(qc_report.get("accepted_episodes") or 0)
+    accepted_ids = {item["episode_id"] for item in packaged}
+    accuracy = shared_measured_accuracy([
+        episode for episode in loaded if episode.get("episode_id") in accepted_ids
+    ])
     if accepted and csv_path is not None:
         lerobot = export_lerobot_dir(root, csv_path, out / "lerobot", repo_id)
     else:
@@ -552,7 +572,7 @@ def package_annotated_episodes(episodes_dir, out, repo_id="local/headcam_mvp", l
         "package": "annotated_episodes",
         "episodes_dir": str(root),
         "pose_source": pose_source,
-        "accuracy": None,
+        "accuracy": accuracy,
         "episodes": len(paths),
         "packaged_episodes": packaged,
         "rejected_episodes": rejected,
@@ -568,16 +588,16 @@ def package_annotated_episodes(episodes_dir, out, repo_id="local/headcam_mvp", l
         "lerobot": lerobot,
         "limits": [
             "每一份 episode 用自己的 hand_pose.slam.T_world_cam。没有用某一个会话的轨迹覆盖其他片段。",
-            "pose_source=%s。这个字段只标明轨迹从哪来，不是 SLAM 精度。" % pose_source,
-            "accuracy 是 null。episode 里如果写了数字，也不抄进导出说明。",
+            "pose_source=%s。这个字段只标明轨迹从哪来。" % pose_source,
+            "accuracy 只接受测过的 Umeyama 结构。手写数字、头戴真值来源、各段不一致时都是 null。",
             "QC 拒绝的片段留在 rejected_episodes，不写进 LeRobot 包。",
         ],
     }
     _dump(out / "report.json", _jsonable(report))
     if log:
         log(
-            "package=annotated episodes=%d accepted=%d rejected=%d pose_source=%s accuracy=null"
-            % (len(paths), accepted, len(rejected), pose_source)
+            "package=annotated episodes=%d accepted=%d rejected=%d pose_source=%s accuracy=%s"
+            % (len(paths), accepted, len(rejected), pose_source, "null" if accuracy is None else "measured")
         )
     return report
 
@@ -604,6 +624,8 @@ def main(argv=None):
     parser.add_argument("--repo-id", default="local/headcam_mvp")
     parser.add_argument("--pose-source", default=None,
                         help="轨迹来源。HOT3D 头戴真值用 hot3d_gt_mocap，不要把它叫成 SLAM")
+    parser.add_argument("--gt-tum", default=None, help="另一份真值轨迹，只用来算 ATE/RPE")
+    parser.add_argument("--gt-tum-time-scale", type=float, default=None)
     args = parser.parse_args(argv)
     if args.package_annotated:
         if not args.episodes:
@@ -638,7 +660,8 @@ def main(argv=None):
             export=not args.no_export, repo_id=args.repo_id,
             run_orbslam3=True if args.run_orbslam3 else None,
             allow_partial=args.allow_partial, tum_time_scale=args.tum_time_scale,
-            pose_source=args.pose_source,
+            pose_source=args.pose_source, gt_tum_path=args.gt_tum,
+            gt_time_scale=args.gt_tum_time_scale,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc), file=sys.stderr)

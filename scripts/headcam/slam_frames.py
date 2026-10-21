@@ -195,8 +195,11 @@ def apply_ok_frame_world(episode, slam):
     num_frames = int(episode.get("num_frames") or 0)
     aligned = isinstance(frames, list) and num_frames > 0 and len(frames) == num_frames
     summary["pose_status_aligned"] = bool(aligned)
-    summary["accuracy"] = None
-    summary["pose_source"] = slam.get("pose_source") if isinstance(slam, dict) else None
+    from headcam.hot3d_check import is_measured_accuracy
+    source = slam.get("pose_source") if isinstance(slam, dict) else None
+    candidate = slam.get("accuracy") if isinstance(slam, dict) else None
+    summary["accuracy"] = candidate if is_measured_accuracy(candidate, source) else None
+    summary["pose_source"] = source
     track_status, depth_status = _per_frame_lists(episode, num_frames) if num_frames else (None, None)
     summary["track_status"] = track_status
     summary["depth_status"] = depth_status
@@ -384,8 +387,12 @@ def check_camera_episode(episode, slam):
         "world_hands_missing=%d" % missing,
         "sanity_ok=%s" % str(bool(sanity.get("ok"))).lower(),
         "timestamp_alignment=%s" % block.get("timestamp_alignment"),
-        "accuracy=unmeasured",
     ]
+    accuracy = block.get("accuracy")
+    if isinstance(accuracy, dict) and isinstance((accuracy.get("ate") or {}).get("se3"), dict):
+        lines.append("accuracy=measured ate_se3_rmse_m=%.6f" % accuracy["ate"]["se3"]["rmse_m"])
+    else:
+        lines.append("accuracy=unmeasured")
     flags = sanity.get("flags") or []
     if flags:
         lines.append("sanity_flags=%s" % "; ".join(str(flag) for flag in flags))

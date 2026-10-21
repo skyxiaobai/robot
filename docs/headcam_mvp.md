@@ -1,6 +1,6 @@
 # 头戴 MVP：短录像到 QC 过滤的 LeRobot 包
 
-English: this is the front half of the headcam pipeline. A session directory can record sync error, carry per-frame camera pose when a trajectory exists, and otherwise say `pose_missing` or `tracking_lost`. It does not invent a world pose, and it does not report a SLAM accuracy number. Hands, QC, and LeRobot export stay in the existing stereo modules.
+English: this is the front half of the headcam pipeline. A session directory can record sync error, carry per-frame camera pose when a trajectory exists, and otherwise say `pose_missing` or `tracking_lost`. It does not invent a world pose. `accuracy` is a measured Umeyama ATE/RPE only when a separate reference trajectory is supplied and the estimate is not itself headset ground truth; otherwise it stays null. Hands, QC, and LeRobot export stay in the existing stereo modules.
 
 中文：把一节短录像收成「同步有没有测到、世界位姿有没有测到、然后走现有 QC 和 LeRobot」。没有 SLAM 结果时明确写 `pose_missing`，不把单位阵写进 `slam.tum` 冒充世界系。
 
@@ -24,11 +24,11 @@ export_mvp      →  现有双目手部管线 → egodata QC → LeRobot
 - [ ] `sync_calib` 写出的 `calib.json` 能用 `load_calibration` 的同一套外参读回来（`p_right = R @ p_left + T`）。`sync_error_ms.left_right_max` 与 `validate_session` 的左右时间差同一算法。没有 `stereo/timestamps_lr.csv` 时该字段是 null，不是 0。
 - [ ] 没有 `slam.tum`、也没执行 ORB-SLAM3 时，`slam_status.json` 里每一帧都是 `pose_missing`，`T_world_cam` 为 null，输出目录里没有 `slam.tum`。
 - [ ] 轨迹盖不住的帧是 `tracking_lost`，不拿相邻位姿填上。这种残缺轨迹不会交给手部管线。
-- [ ] 每一帧都有位姿时，`coordinate_frame` 为 `slam_world`，`slam.tum` 只含这些测量。报告里的 `accuracy` 仍是 null。
+- [ ] 每一帧都有位姿时，`coordinate_frame` 为 `slam_world`，`slam.tum` 只含这些测量。另给一份真值轨迹、并且估计来源不是头戴真值时，`accuracy` 是测到的 Umeyama ATE/RPE。否则是 null。
 - [ ] `export_mvp --skip-hands` 能在没有 WiLoR 的机器上跑完同步和位姿状态。有双目标定、并且帧间隔能落成整数 fps 时，会写一条手部未测量的 episode，QC 走 `qc_stereo_episode`，通过才进入现有 LeRobot 导出。手部列不写，也不填 0。
 - [ ] 10 分钟量级的会话只是同一套按帧文件，不另写一条短片段专用路径。本仓库还没有拿 10 分钟实拍测过耗时。
 
-还不算做成：板上同时录双目和 IMU、Kalibr 求解、ORB-SLAM3 的轨迹误差、自采画面上的认手效果。这些仍见 `docs/PIPELINE_ARCHITECTURE.md` 第 4 节和 `docs/hardware_day1_checklist.md`。
+还不算做成：板上同时录双目和 IMU、Kalibr 求解、自采画面上的轨迹和认手效果。这些仍见 `docs/PIPELINE_ARCHITECTURE.md` 第 4 节和 `docs/hardware_day1_checklist.md`。离线 HOT3D 上的轨迹误差见文末。
 
 ## 命令
 
@@ -206,7 +206,7 @@ OpenVINS、Basalt 只要最后给出同一份 TUM（`timestamp tx ty tz qx qy qz
 | `pose_missing>0` 且 `ok=0` | 没有可用轨迹（没给文件、文件是空的，或求解器没写出轨迹） | `world_hands=refused` |
 | `time_unit_mismatch=true` | 用于关联的轨迹时间和会话帧时间一个是秒、一个是纳秒 | `world_hands=refused`。不自动换算，跨单位的最近邻也不写成位姿。确认后加 `--tum-time-scale 1e-9`，不要放宽门限 |
 
-`accuracy=unmeasured` 一直印着。不要把它换成别的数字。
+没有另给真值轨迹时，打印是 `accuracy=unmeasured`。给了真值、并且估计来源不是头戴真值、对上至少 3 个不同时间戳时，打印 `accuracy=measured ate_se3_rmse_m=...`。手写数字不会被抄进去。`slam.tum` 的文件头仍写 `accuracy=unmeasured`，测到的结构在 `slam_status.json`。
 
 ```bash
 # 0. 还没有轨迹时，计数应是 pose_missing，退出码 1。
@@ -280,7 +280,7 @@ python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01
 ## 已知限制
 
 - 没有 SLAM 轨迹时就是 `pose_missing`。episode 可以仍在相机系里被 QC 和导出，那不是世界系标签。
-- `accuracy` 永远是 null。不要把 HOT3D 手腕误差或别人的 SLAM 论文数字写到这次运行上。
+- `accuracy` 只接受这次对上的 Umeyama ATE/RPE（`trajectory_error_v1`）。没有真值、来源是头戴真值、对上的不同时间戳少于 3，或只是一个手写数字时，它是 null。不要把 HOT3D 手腕误差或别人的 SLAM 论文数字写到这次运行上。
 - 残缺轨迹的世界点只出现在 `hand_pose.slam.world_hands`。丢失帧是 null，不用最近邻，也不把整段标成 `world` 或 `world_yup`。
 - `record_session capture` 不是硬件同步采集。IMU 驱动、曝光寄存器、左右时间戳都还要在板上接。
 - 手部仍要 WiLoR / HaMeR / MediaPipe 那套环境和 `scripts/run_stereo_pipeline.py` 的参数。轨迹不完整时，不带 `--allow-partial` 的 `export_mvp` 拒绝跑手部。`--skip-hands` 不跑手部；有标定且 QC 通过时仍可导出，手部列不写。
@@ -623,9 +623,57 @@ run_slam(..., backend="external_tum", pose_source="orbslam3_stereo_euroc")
 
 系统解释器 `python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc`：55 项，跳过 2 项（两个官方加载器测试，没装 lerobot 或 torch），其余通过。numpy 1.26.4，pyarrow 18.1.0，pandas 2.2.3。
 
+## P0010 的 ORB-SLAM3 位姿进了 LeRobot 包
+
+上一节结束时，1800 行轨迹走过了 `external_tum`，`accuracy` 仍是 null，四段那个包仍是 `pose_source=hot3d_gt_mocap`。这一节没有重编 ORB-SLAM3，用的是同一份已经写成秒的轨迹和同一份头戴定位。二进制仍不入库。
+
+`export_mvp --skip-hands --slam-backend external_tum --pose-source orbslam3_stereo_euroc --gt-tum gt_headset_tum.txt` 写出一份缺测手的 LeRobot v3.0 包。一条 episode，1800 帧，fps 30，`hands=absent`。`meta/info.json` 和 `meta/egodata_export.json` 的 `pose_source` 都是 `orbslam3_stereo_euroc`。`accuracy` 不进 `info.json`。四段那个包没有改写。
+
+`--gt-tum` 是另一份轨迹，只用来算误差，不会变成输出位姿。估计文件头和 `--pose-source` 不一致仍是 `ValueError`。估计来源以 `hot3d_gt` 开头、真值文件头没有 `pose_source`、两条来源相同、对上的不同时间戳少于 3，或 `accuracy` 只是一个浮点数时，写出的 `accuracy` 是 null。能写进去的结构是 `kind=trajectory_error_v1`、`method=umeyama`，里面有 SE3、Sim3 和 RPE。
+
+配对和上一节相同：相机中心，最近邻，超过 0.05 秒不配，重复时间戳只留第一行。两条轨迹都已经是秒，时间尺度是 1。SE3 尺度固定为 1，`p_ref = R @ p_est + t`。Sim3 尺度自由。RPE 不做这次全局对齐，间隔 1.0 秒和 5.0 秒，时间差超过 0.05 秒丢掉。写进 `slam_status.json`、`report.json` 和 `egodata_export.json` 的是同一组数：
+
+| 对齐 | n | RMSE | 中位 | 最大 | 尺度 |
+| --- | --- | --- | --- | --- | --- |
+| SE3 | 1800 | 0.005394100893517117 m | 0.001589850253842316 m | 0.047951287650436665 m | 固定 1 |
+| Sim3 | 1800 | 0.005274693901563593 m | 0.0012502277971635127 m | 0.04786236045267196 m | 1.0069400671166455 |
+
+| RPE 间隔 | 配对数 | 平移 RMSE | 平移中位 | 旋转 RMSE | 旋转中位 |
+| --- | --- | --- | --- | --- | --- |
+| 1.0 s | 1771 | 0.007297399548963262 m | 0.002146327107200282 m | 0.5419324552605177° | 0.340242530578304° |
+| 5.0 s | 1651 | 0.010076111886557456 m | 0.005947393886367191 m | 0.8477993870097495° | 0.7647483733644982° |
+
+存下来的 SE3 就是算出这个 RMSE 的对齐。`rotation_row_major` 按行展开：
+
+```text
+-0.46141285561926304  -0.5303466731495318   0.7112176762064495
+-0.02894455831918674  -0.7922304597534583  -0.6095351599231434
+ 0.8867132508387278   -0.3018332402470758   0.3501946685330411
+```
+
+`translation` 是 `[0.15137217017848723, 1.498233537960144, -0.07064499311260304]`。把这个 `R`、`t` 乘回 1800 个 SLAM 相机中心，RMSE 与上表相同，差是 0。
+
+图像是这段去畸变左目 png（1024×1280），按会话时间戳顺序编成 `left.mp4`，导出时缩到 224。`image_source=source_mp4`。不是占位色块。
+
+官方 `lerobot==0.6.1` 的 `LeRobotDataset`（默认 torchcodec）读完 1800 帧：`codebase_version v3.0`，1 段，fps 30，任务 `unknown`。`slam_status` 全是 `ok`。`timestamp` 相对 `frame_index/30` 的差小于 `1e-4` 秒。`observation.capture_time_ns` 从 `44432966666666` 到 `44492933333333`，和轨迹时间一致。`observation.pose` 对回 `slam.tum` 的平移，最大差 `5.00e-10`。图像 `(3, 224, 224)` float32，抽查的帧落在 `[0, 1]`，相邻帧最大差 0.525。`DatasetInfo` 会警告不认识 `info.json` 里的 `pose_source`，文件里的值还在。加载器版本：lerobot 0.6.1，torch 2.11.0+cpu，torchvision 0.26.0+cpu，numpy 2.2.6，pyarrow 26.0.0，pandas 2.3.3，av 15.1.0，torchcodec 0.11.1+cpu，datasets 4.8.5。系统 numpy 仍是 1.26.4。
+
+### 手腕没有测
+
+要的是 WiLoR 在这条 SLAM 世界系里的手腕，再和 UmeTrack 的 `T_world_from_wrist` 比。比之前先用上面这个 SE3 把 SLAM 世界系对齐到头戴定位。这一步没有做。
+
+这台机器上没有 `MANO_RIGHT.pkl`，也没有 `wilor_final.ckpt` 或 `detector.pt`。`MANO_MODEL_DIR` 和 `WILOR_CHECKPOINT` 是空的。MANO 的许可还要 Justin 确认，没有下载。没有用 MediaPipe 代替 WiLoR。clip 706–717 也没有现成的相机系 WiLoR episode。以前测过手腕的是 clip 0、300、700、1100；clip-000700 和 706 之间空了 32.167 秒，不能拿来填这段。所以没有 SLAM 世界系的手腕厘米数。四段那个包的手腕数仍是头戴真值下的数，没有和这次的 ATE 加在一起。
+
+### 回归
+
+`SlamAccuracyPackagingTest`：已知刚体上 SE3 的 RMSE 小于 `1e-8`，存下来的 `R`、`t` 乘回估计中心，最大差小于 `1e-8`。估计来源写成 `hot3d_gt_mocap` 时 `trajectory_accuracy` 返回 None。浮点 `0.01` 不是测量。两行轨迹不写 accuracy。不给 `--gt-tum` 时 `run_slam` 的 accuracy 是 null；给了就写入 SE3。头戴真值文件配 `--gt-tum` 仍是 null。同一份头戴真值文件请求 `pose_source=orbslam3_stereo_euroc` 会 `ValueError`。
+
+缺测手的导出把 `pose_source` 和测到的 accuracy 写进报告和 `egodata_export.json`，不写进 `info.json`。`--package-annotated` 在每一份被接受的 episode 上都有同一份测量时才抄进包；把 `pose_source` 改成 `hot3d_gt_mocap` 但仍带着那份测量，或把 accuracy 写成 `0.02`，包里的 accuracy 是 null。
+
+系统解释器 `python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc`：58 项，跳过 2 项（两个官方加载器测试，没装 lerobot 或 torch），其余通过。numpy 1.26.4，pyarrow 18.1.0，pandas 2.2.3。没有开 Kaggle。
+
 ## 还缺什么
 
-四段合成的 LeRobot 包仍是 `pose_source=hot3d_gt_mocap`。上面的 ORB-SLAM3 轨迹没有乘进那份包。手腕对照缺 `MANO_RIGHT.pkl` 和 WiLoR 权重，MANO 还要许可确认。
+四段合成的 LeRobot 包仍是 `pose_source=hot3d_gt_mocap`，没有改。新的这一份是 P0010 clip 706–717 的缺测手包，位姿来自 ORB-SLAM3，`accuracy` 是上面的 ATE/RPE。没有 WiLoR 手，也没有和 UmeTrack 比过手腕。MANO 许可还要 Justin 确认，权重没有下。
 
-Quest3 发布的 clip 里没有 IMU，没有 stereo-inertial，没有自采头戴。test split 里 3150 帧和 2100 帧的连续段没有下。`accuracy` 仍是 null；测到的 ATE 和它的算法写在上一节。没有开 Kaggle。
+Quest3 发布的 clip 里没有 IMU，没有 stereo-inertial，没有自采头戴。test split 里 3150 帧和 2100 帧的连续段没有下。图像是去畸变左目缩到 224，没有右目视频。没有开 Kaggle。
 
