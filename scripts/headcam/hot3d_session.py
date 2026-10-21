@@ -26,6 +26,7 @@ from headcam.euroc_session import _write_video, ns_to_second_text
 from headcam.hand_pose import write_calibration_yaml
 from headcam.hot3d_adapter import STREAM_LEFT, STREAM_RIGHT, relative_extrinsics, rotmat_to_quat_xyzw
 from headcam.record_session import init_session
+from headcam.stereo_geometry import T_c1_c2_for_orbslam3
 from headcam.sync_calib import refresh_calib_json
 
 POSE_SOURCE_GT = "hot3d_gt_mocap"
@@ -101,12 +102,16 @@ def write_headset_tum(path, timestamps_text, poses):
 
 
 def write_orbslam3_yaml(path, calib, fps):
-    """给这份去畸变针孔写 ORB-SLAM3 stereo yaml。畸变四项是 0，因为图已经是针孔。"""
+    """给这份去畸变针孔写 ORB-SLAM3 stereo yaml。畸变四项是 0，因为图已经是针孔。
+
+    ``calib["R"]``、``calib["T"]`` 仍是 OpenCV 约定 ``p_right = R @ p_left + T``。
+    写进 ``Stereo.T_c1_c2`` 的是它的逆。ORB-SLAM3 会再取逆才做 ``stereoRectify``。
+    图本身还没校正；校正发生在 ORB-SLAM3 里面。已经校好的图用
+    ``stereo_geometry.write_rectified_orbslam3_yaml``，不要再走这条。
+    """
     left = np.asarray(calib["K_left"], dtype=float)
     right = np.asarray(calib["K_right"], dtype=float)
-    pose = np.eye(4)
-    pose[:3, :3] = np.asarray(calib["R"], dtype=float)
-    pose[:3, 3] = np.asarray(calib["T"], dtype=float).reshape(3)
+    pose = T_c1_c2_for_orbslam3(calib["R"], calib["T"])
     flat = ", ".join("%.10g" % float(value) for value in pose.reshape(-1))
     text = "\n".join([
         "%YAML:1.0",
@@ -139,6 +144,8 @@ def write_orbslam3_yaml(path, calib, fps):
         "Camera.RGB: 0",
         "",
         "Stereo.ThDepth: 40.0",
+        "# T_c1_c2 是 cam2 在 cam1 里的位姿（右光心在左相机系，基线沿 +X 时 x 为正）。",
+        "# 不是 OpenCV 的 p_right = R p_left + t。ORB-SLAM3 会再取逆后做 stereoRectify。",
         "Stereo.T_c1_c2: !!opencv-matrix",
         "  rows: 4",
         "  cols: 4",

@@ -1802,5 +1802,248 @@ class DuplicateTimestampAteTest(unittest.TestCase):
         self.assertEqual(report["unique_timestamps"], 2)
 
 
+def _tum_line(stamp, pose):
+    from headcam.hot3d_adapter import rotmat_to_quat_xyzw
+
+    quat = rotmat_to_quat_xyzw(pose[:3, :3])
+    values = list(pose[:3, 3]) + list(quat)
+    return "%s %s" % (stamp, " ".join("%.9f" % float(value) for value in values))
+
+
+def _write_pose_tum(path, stamps, poses):
+    path.write_text("".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(stamps, poses)), encoding="utf-8")
+
+
+class SyntheticTrajectoryErrorTest(unittest.TestCase):
+    """ATE / RPE 用已知刚体答案。不读图像，也不把真值叫做 SLAM。"""
+
+    def _square(self):
+        return [
+            np.array([0.0, 0.0, 0.0]),
+            np.array([1.0, 0.0, 0.0]),
+            np.array([1.0, 1.0, 0.0]),
+            np.array([0.0, 1.0, 0.0]),
+        ]
+
+    def _poses_from_points(self, points, rotation=None):
+        rotation = np.eye(3) if rotation is None else rotation
+        poses = []
+        for point in points:
+            pose = np.eye(4)
+            pose[:3, :3] = rotation
+            pose[:3, 3] = point
+            poses.append(pose)
+        return poses
+
+    def test_se3_and_sim3_on_a_known_similarity(self):
+        import tempfile
+
+        from headcam.hot3d_check import trajectory_ate
+
+        points = self._square()
+        rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        shift = np.array([5.0, -2.0, 1.0])
+        scaled = [2.0 * (rotation @ point) + shift for point in points]
+        rigid = [(rotation @ point) + shift for point in points]
+        stamps = ["0.0", "1.0", "2.0", "3.0"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            truth = root / "gt.txt"
+            doubled = root / "x2.txt"
+            rigid_path = root / "rigid.txt"
+            _write_pose_tum(truth, stamps, self._poses_from_points(points))
+            _write_pose_tum(doubled, stamps, self._poses_from_points(scaled))
+            _write_pose_tum(rigid_path, stamps, self._poses_from_points(rigid))
+            se3 = trajectory_ate(rigid_path, truth, alignment="se3")
+            sim3 = trajectory_ate(doubled, truth, alignment="sim3")
+            se3_on_scaled = trajectory_ate(doubled, truth, alignment="se3")
+        self.assertEqual(se3["alignment"], "umeyama_se3")
+        self.assertEqual(se3["scale"], "fixed_1")
+        self.assertLess(se3["rmse_m"], 1e-8)
+        self.assertEqual(se3["n"], 4)
+        self.assertEqual(sim3["alignment"], "umeyama_sim3")
+        self.assertAlmostEqual(sim3["similarity_scale"], 0.5, places=8)
+        self.assertLess(sim3["rmse_m"], 1e-8)
+        self.assertGreater(se3_on_scaled["rmse_m"], 0.5)
+
+    def test_rpe_is_the_relative_step_and_ignores_a_fixed_offset(self):
+        import tempfile
+
+        from headcam.hot3d_check import trajectory_rpe
+
+        gt_points = self._square()
+        stepped = [np.array([0.0, 0.0, 0.0])]
+        for previous, current in zip(gt_points, gt_points[1:]):
+            stepped.append(stepped[-1] + 1.1 * (current - previous))
+        offset = np.eye(4)
+        offset[:3, :3] = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        offset[:3, 3] = [4.0, 5.0, 6.0]
+        gt_poses = self._poses_from_points(gt_points)
+        shifted = [offset @ pose for pose in gt_poses]
+        stamps = ["0.0", "1.0", "2.0", "3.0"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            truth = root / "gt.txt"
+            fast = root / "fast.txt"
+            moved = root / "moved.txt"
+            _write_pose_tum(truth, stamps, gt_poses)
+            _write_pose_tum(fast, stamps, self._poses_from_points(stepped))
+            _write_pose_tum(moved, stamps, shifted)
+            drifted = trajectory_rpe(fast, truth, delta_s=1.0)
+            rigid = trajectory_rpe(moved, truth, delta_s=1.0)
+            short = trajectory_rpe(truth, truth, delta_s=10.0)
+        self.assertEqual(drifted["n_pairs"], 3)
+        self.assertAlmostEqual(drifted["trans_rmse_m"], 0.1, places=8)
+        self.assertAlmostEqual(drifted["rot_rmse_deg"], 0.0, places=6)
+        self.assertEqual(rigid["alignment"], "none_relative")
+        self.assertLess(rigid["trans_rmse_m"], 1e-8)
+        self.assertNotIn("trans_rmse_m", short)
+
+    def test_two_poses_do_not_report_rpe(self):
+        import tempfile
+
+        from headcam.hot3d_check import trajectory_rpe
+
+        pose = np.eye(4)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "short.txt"
+            _write_pose_tum(path, ["0.0", "1.0"], [pose, pose])
+            report = trajectory_rpe(path, path, delta_s=1.0)
+        self.assertLess(report["n_poses"], 3)
+        self.assertNotIn("trans_rmse_m", report)
+
+
+class Hot3dSequenceContinuityTest(unittest.TestCase):
+    """同一条录制、帧间隔接得上才拼接。不下载 clip。"""
+
+    def _clip(self, clip_id, sequence_id, start_ns, count=4, step=33333333):
+        return {
+            "clip_id": clip_id,
+            "sequence_id": sequence_id,
+            "device": "Quest3",
+            "timestamps_ns": [start_ns + index * step for index in range(count)],
+        }
+
+    def test_abutting_clips_become_one_increasing_clock(self):
+        from headcam.hot3d_sequence import concat_clip_records, contiguous_runs
+
+        step = 33333333
+        first = self._clip(10, "seq-a", 0)
+        second = self._clip(11, "seq-a", 4 * step)
+        gapped = self._clip(12, "seq-a", 4 * step + 2_000_000_000)
+        other = self._clip(13, "seq-b", 8 * step)
+        runs = contiguous_runs([other, gapped, second, first])
+        by_ids = {tuple(run["clip_ids"]): run for run in runs}
+        joined = by_ids[(10, 11)]
+        self.assertEqual(joined["n_frames"], 8)
+        self.assertEqual(joined["gaps_ns"], [step])
+        self.assertEqual(joined["timestamps_ns"], list(range(0, 8 * step, step)))
+        self.assertIn((12,), by_ids)
+        self.assertIn((13,), by_ids)
+        again = concat_clip_records([second, first])
+        self.assertEqual(again["timestamps_ns"], joined["timestamps_ns"])
+        with self.assertRaises(ValueError):
+            concat_clip_records([first, gapped])
+
+    def test_orbslam3_log_counts_are_literal(self):
+        from headcam.hot3d_sequence import parse_orbslam3_stdout
+
+        text = "\n".join([
+            "Fail to track local map!",
+            "Fail to track local map!",
+            "New Map created with 20 points",
+            "There are 2 maps in the atlas",
+            "  Map 0 has 1 KFs",
+            "  Map 1 has 40 KFs",
+            "TRACK_REF_KF: Less than 15 matches!!",
+        ])
+        report = parse_orbslam3_stdout(text)
+        self.assertEqual(report["fail_to_track_local_map"], 2)
+        self.assertEqual(report["new_maps"], 1)
+        self.assertEqual(report["atlas_maps"], 2)
+        self.assertEqual(report["few_reference_matches"], 1)
+        self.assertEqual(report["map_keyframes"], [
+            {"map": 0, "keyframes": 1},
+            {"map": 1, "keyframes": 40},
+        ])
+
+
+class Orbslam3ExtrinsicConventionTest(unittest.TestCase):
+    """OpenCV 的 p_right = R p_left + t 不能原样写进 ORB-SLAM3 的 T_c1_c2。"""
+
+    def test_yaml_stores_the_inverse_baseline(self):
+        import tempfile
+
+        from headcam.hot3d_session import write_orbslam3_yaml
+
+        calib = {
+            "K_left": np.array([[400.0, 0.0, 320.0], [0.0, 400.0, 240.0], [0.0, 0.0, 1.0]]),
+            "K_right": np.array([[400.0, 0.0, 330.0], [0.0, 400.0, 240.0], [0.0, 0.0, 1.0]]),
+            "R": np.eye(3),
+            "T": np.array([-0.1, 0.0, 0.0]),
+            "image_width": 640,
+            "image_height": 480,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_orbslam3_yaml(Path(tmp) / "cam.yaml", calib, 30)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("再取逆", text)
+        data = text.split("data: [", 1)[1].split("]", 1)[0]
+        values = [float(item) for item in data.split(",")]
+        self.assertEqual(len(values), 16)
+        self.assertAlmostEqual(values[3], 0.1, places=8)
+        self.assertAlmostEqual(values[7], 0.0, places=8)
+
+    def test_rectified_pair_has_no_vertical_error(self):
+        try:
+            import cv2  # noqa: F401
+        except ImportError:
+            self.skipTest("没有 cv2，跳过立体校正")
+        from headcam.stereo_geometry import rectify_pinhole_pair, vertical_epipolar_pixels
+
+        left = np.array([[500.0, 0.0, 320.0], [0.0, 500.0, 240.0], [0.0, 0.0, 1.0]])
+        right = np.array([[500.0, 0.0, 325.0], [0.0, 500.0, 242.0], [0.0, 0.0, 1.0]])
+        angle = np.radians(2.0)
+        rotation = np.array([
+            [np.cos(angle), 0.0, np.sin(angle)],
+            [0.0, 1.0, 0.0],
+            [-np.sin(angle), 0.0, np.cos(angle)],
+        ])
+        translation = np.array([-0.10, 0.004, 0.001])
+        raw = vertical_epipolar_pixels(left, right, rotation, translation, (640, 480))
+        self.assertGreater(raw["median_px"], 1.0)
+        rectified = rectify_pinhole_pair(left, right, rotation, translation, (640, 480))
+        errors = []
+        width, height = 640, 480
+        r1 = np.asarray(rectified["R1"], dtype=float)
+        r2 = np.asarray(rectified["R2"], dtype=float)
+        p1 = np.asarray(rectified["P1"], dtype=float)
+        p2 = np.asarray(rectified["P2"], dtype=float)
+        for depth in (0.5, 1.5):
+            for u in (120.0, 320.0, 500.0):
+                for v in (80.0, 240.0, 400.0):
+                    point_left = np.array([
+                        (u - left[0, 2]) / left[0, 0] * depth,
+                        (v - left[1, 2]) / left[1, 1] * depth,
+                        depth,
+                    ])
+                    point_right = rotation @ point_left + translation
+                    left_r = r1 @ point_left
+                    right_r = r2 @ point_right
+                    if left_r[2] <= 0.05 or right_r[2] <= 0.05:
+                        continue
+                    v_left = p1[1, 1] * left_r[1] / left_r[2] + p1[1, 2]
+                    v_right = p2[1, 1] * right_r[1] / right_r[2] + p2[1, 2]
+                    u_left = p1[0, 0] * left_r[0] / left_r[2] + p1[0, 2]
+                    u_right = p2[0, 0] * right_r[0] / right_r[2] + p2[0, 2]
+                    if min(u_left, u_right, v_left, v_right) < 0 or max(u_left, u_right) >= width or max(v_left, v_right) >= height:
+                        continue
+                    errors.append(abs(v_left - v_right))
+        self.assertGreaterEqual(len(errors), 3)
+        self.assertLess(max(errors), 1e-6)
+        self.assertAlmostEqual(rectified["baseline_m"], 0.10, places=3)
+
+
 if __name__ == "__main__":
     unittest.main()

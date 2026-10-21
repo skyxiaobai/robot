@@ -539,7 +539,93 @@ clip-001100 覆盖只有 0.440，是四段里差得明显的一段，没有把�
 
 系统解释器 `python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc`：48 项，跳过 2 项（两个官方加载器测试），其余通过。
 
+## ORB-SLAM3 立体轨迹，相对头戴定位
+
+上一节写文档时这台机器没有 ORB-SLAM3。这一节在本机编译了上游 `4452a3c`（`4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4`）的 `Examples/Stereo/stereo_euroc`，并在 HOT3D Quest3 上去畸变针孔上跑完。二进制、词汇、Pangolin、图像和轨迹都没有入库。OpenCV 4.6.0，Eigen 3.4.0，Pangolin 0.6。示例里的查看器参数在本机改成了 `false`，仓库里的代码没有这个补丁。
+
+`origin/main` 仍是 `98a0abc`，已经在 `5398af9` 合进这条分支，没有新提交要再合并。
+
+### 上次 2/150 的原因
+
+150 帧、5 秒不够初始化，这个猜测对不上这次的对照。同一批 `clip-000000` 去畸变图，只改 yaml 里的 `Stereo.T_c1_c2`：
+
+| 外参 | 轨迹行数 | 不同时间戳 | 保存的地图 | `Fail to track local map!` | `New Map created with` |
+| --- | --- | --- | --- | --- | --- |
+| OpenCV 的 `(R, t)` 原样写入 | 53 | 2 | 地图 0 有 1 个关键帧 | 146 | 4 |
+| OpenCV 外参的逆 | 150 | 150 | 地图 0 有 17 个关键帧 | 0 | 1（启动时那张图） |
+
+第一行就是上次文档里的失败：53 行、2 个纳秒时间戳、1 个关键帧、146 次局部地图跟踪失败。第二行同一段 150 帧全部留下，没有 `Frames set to lost`。
+
+OpenCV 的约定是 `p_right = R @ p_left + t`，基线沿 +X 时平移的 x 是负的。ORB-SLAM3 的 `Stereo.T_c1_c2` 存的是 cam2 在 cam1 里的位姿，它在 `precomputeRectificationMaps` 里再取逆，然后才做 `stereoRectify`。把 OpenCV 的矩阵直接写进去，等于校正用了反的外参。`write_orbslam3_yaml` 现在写逆矩阵。`clip-000000` 上 OpenCV 平移是 `[-0.06365264, -0.00196321, -0.00059352]`，yaml 里对应的 x 是 `+0.06367663941`。
+
+图只做了 FISHEYE624 去畸变和与外参一起的 -90°，没有预先做行对齐。ORB-SLAM3 自己校正。`Camera.type` 用的是 `PinHole`。去畸变之后、校正之前，网格上的竖向视差：`clip-000000` 中位 7.78 px、p90 19.11 px、最大 27.74 px（n=192）；下面那条 1800 帧中位 2.75 px、p90 6.25 px、最大 10.28 px（n=192）。双目匹配在第 0 层只看大约 2 个像素的行带，所以这一步要靠 SLAM 内部的校正，不能靠把未对齐的针孔当成已经校正。
+
+### 哪些 clip 能接上，IMU
+
+`clip_definitions.json` 里相邻编号经常是同一个 `sequence_id`，中间仍可能空几秒。接上的条件写在 `hot3d_sequence.contiguous_runs`：同一设备、同一 `sequence_id`，下一段第一帧减上一段最后一帧等于这一段的帧间隔（33333333 或 33333334 ns，允许 2 ns 或 2%）。`concat_clip_records` 对不上就抛 `ValueError`，不返回半截。
+
+训练集 Quest3（`clip_splits.json` 的 train，编号 0–1287）里最长的连续段是 1800 帧、59.967 秒、12 个 clip，三条并列：`P0003_b153ade2`（480–491）、`P0010_3224a967`（706–717）、`P0010_5edabbe9`（747–758）。全部 Quest3 里更长的在 test：`P0006_f065ced6` 1757–1777 共 3150 帧，`P0005_88557ee9` 1486–1499 共 2100 帧。这两个编号向 `train_quest3` 要 tar 是 404，没有下。
+
+已经打进多 episode 包的四段是四条序列，不能拼。`clip-000700` 和 706–717 都是 `P0010_3224a967`，但 700 的末帧到 706 的首帧空了 32.167 秒，没有放进这次的 1800 帧。`clip-000000` 的邻居 1–5 是同一条 `P0002_210fc0da`，clip 1 比 clip 0 的末帧晚 17.467 秒。
+
+`clip-000706.tar` 有 1051 个成员：每帧左右图 `image_1201-1.jpg`、`image_1201-2.jpg`，加上 cameras、hands、hand_crops、objects、info 的 json。没有文件名里带 imu、gyro、accel 的成员。没有 IMU 样本，没有跑 stereo-inertial。
+
+### 跑过的两条轨迹
+
+图像是去畸变针孔，1024×1280，30 fps。yaml 的畸变是 0，因为图已经是针孔。真值轨迹是去畸变并转过 -90° 的左目头戴定位，文件头 `pose_source=hot3d_gt_mocap`。SLAM 保存的 `SaveTrajectoryEuRoC` 把第一帧放在原点，时间戳是纳秒。
+
+`P0010_3224a967`，clip 706–717，1800 帧，基线 0.06361126942862305 m。日志：`Fail to track local map!` 0 次，`Frames set to lost` 0 次，`*Loop detected` 1 次，图集 1 张地图、88 个关键帧。轨迹 1800 行、1800 个不同时间戳。头戴定位路程 7.874 m，平移范围 `[0.154, 0.227, 0.561]` m，时间 44432.967–44492.933 秒。
+
+`clip-000000`，`P0002_210fc0da`，150 帧，基线 0.06368567581770954 m。日志：局部地图失败 0 次，丢帧 0 次，回环 0 次，1 张地图、17 个关键帧。150 行、150 个不同时间戳。头戴定位路程 1.101 m，时长 4.967 秒。
+
+### ATE 和 RPE
+
+`hot3d_check.trajectory_ate` / `trajectory_rpe`。估计轨迹的时间乘 `1e-9`。重复时间戳只留第一行；这两次重复行都是 0。配对是最近邻，超过 0.05 秒不配。对上的不同时间戳少于 3 时不写 rmse。
+
+ATE 比的是相机中心。`alignment=se3` 用 Umeyama，尺度固定为 1。`alignment=sim3` 尺度自由，`similarity_scale` 乘在估计轨迹上再贴近头戴定位；小于 1 表示估计的位移比头戴定位大。RPE 不做这次全局对齐。间隔取 1.0 秒和 5.0 秒，配对应的时间差超过 0.05 秒就丢掉。误差是 `inv(gt_i^{-1} gt_j) @ (est_i^{-1} est_j)` 的平移长度和旋转角。
+
+| 序列 | 对齐 | n | RMSE | 中位 | 最大 | 尺度 |
+| --- | --- | --- | --- | --- | --- | --- |
+| clip-000000 | SE3 | 150 | 0.006408 m | 0.004792 m | 0.025158 m | 固定 1 |
+| clip-000000 | Sim3 | 150 | 0.005039 m | 0.002606 m | 0.024180 m | 1.03103 |
+| P0010 706–717 | SE3 | 1800 | 0.005394 m | 0.001590 m | 0.047951 m | 固定 1 |
+| P0010 706–717 | Sim3 | 1800 | 0.005275 m | 0.001250 m | 0.047862 m | 1.00694 |
+
+| 序列 | RPE 间隔 | 配对数 | 平移 RMSE | 平移中位 | 旋转 RMSE | 旋转中位 |
+| --- | --- | --- | --- | --- | --- | --- |
+| clip-000000 | 1.0 s | 121 | 0.010552 m | 0.007837 m | 0.427° | 0.374° |
+| P0010 706–717 | 1.0 s | 1771 | 0.007297 m | 0.002146 m | 0.542° | 0.340° |
+| P0010 706–717 | 5.0 s | 1651 | 0.010076 m | 0.005947 m | 0.848° | 0.765° |
+
+clip-000000 只有大约 5 秒，5 秒 RPE 只配上 1 对，上表没有把它当成一段误差。主数是尺度固定的 SE3。P0010 的 Sim3 尺度 1.00694，和 6.36 cm 的双目基线放在一起，尺度没有明显漂开。这些数没有写进 `slam_status.accuracy`，也没有抄进四段那个 LeRobot 包。
+
+### `external_tum`
+
+1800 行写成秒，文件头 `pose_source=orbslam3_stereo_euroc`。会话时间戳和它对得上。
+
+```text
+run_slam(..., backend="external_tum", pose_source="orbslam3_stereo_euroc")
+```
+
+`frame_count=1800 ok_frames=1800 tracking_lost_frames=0 pose_missing_frames=0 pose_coverage=complete world_pose=true imu_present=false imu_used_for_pose=false accuracy=null`。同一文件配 `pose_source=hot3d_gt_mocap` 会 `ValueError`，来源不会被改掉。
+
+### 没有做的手腕对比
+
+这台机器没有 `/tmp/wilor`，也没有 `MANO_RIGHT.pkl` 或 `wilor_final.ckpt`。MANO 要 MPI 的许可确认，没有从别处下载权重。所以没有用这条 SLAM 轨迹重导一个带手的 episode，也没有和同一段头戴定位下的 UmeTrack 手腕误差对照。四段那个包仍是 `pose_source=hot3d_gt_mocap`。没有开 Kaggle。
+
+### 回归
+
+`SyntheticTrajectoryErrorTest`：已知刚体上 SE3 的 RMSE 接近 0；两倍相似变换上 Sim3 找回 `similarity_scale≈0.5`，SE3 的 RMSE 大于 0.5。1.0 秒 RPE 在每步 1.1 倍的平移上是 0.1 m、旋转 0；固定的 SE3 偏置不进 RPE。两行轨迹不写 RPE。
+
+`Hot3dSequenceContinuityTest`：帧间隔正好接上的 clip 拼成严格递增的时间戳；差 2 秒或 `sequence_id` 不同就分成两段；对不上的一组交给 `concat_clip_records` 会抛错。日志夹具只数文本里真的出现的失败和关键帧。
+
+`Orbslam3ExtrinsicConventionTest`：OpenCV 平移 x 为 -0.1 时，yaml 的 `T_c1_c2` 平移 x 是 +0.1。有 cv2 时，校正后的竖向误差小于 `1e-6` px，基线约 0.10 m。
+
+系统解释器 `python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc`：55 项，跳过 2 项（两个官方加载器测试，没装 lerobot 或 torch），其余通过。numpy 1.26.4，pyarrow 18.1.0，pandas 2.2.3。
+
 ## 还缺什么
 
-这四段的位姿仍是标明过的头戴真值，不是 SLAM。这台机器没有 ORB-SLAM3，没有新的跟踪帧数，也没有 ATE。没有 `MANO_LEFT.pkl`，手腕真值不是 MANO 关节。没有 IMU，没有 stereo-inertial，没有自采头戴。没有开 Kaggle。
+四段合成的 LeRobot 包仍是 `pose_source=hot3d_gt_mocap`。上面的 ORB-SLAM3 轨迹没有乘进那份包。手腕对照缺 `MANO_RIGHT.pkl` 和 WiLoR 权重，MANO 还要许可确认。
+
+Quest3 发布的 clip 里没有 IMU，没有 stereo-inertial，没有自采头戴。test split 里 3150 帧和 2100 帧的连续段没有下。`accuracy` 仍是 null；测到的 ATE 和它的算法写在上一节。没有开 Kaggle。
 

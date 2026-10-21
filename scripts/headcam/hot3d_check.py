@@ -45,19 +45,40 @@ def _stats_cm(errors_m):
     }
 
 
-def _umeyama_fixed_scale(source, target):
-    """source 对齐到 target。尺度固定为 1。返回 R, t。"""
+def _umeyama(source, target, with_scale):
+    """把 source 对齐到 target。返回 scale, R, t，使 ``scale * R @ p + t`` 贴近 target。
+
+    ``with_scale=False`` 时尺度固定为 1（SE3）。为 True 时尺度自由（Sim3）。
+    点几乎重合、方差为 0 时尺度没有定义，返回 None。
+    """
     src = np.asarray(source, dtype=float)
     dst = np.asarray(target, dtype=float)
+    count = src.shape[0]
     src_mean = src.mean(axis=0)
     dst_mean = dst.mean(axis=0)
-    matrix = (src - src_mean).T @ (dst - dst_mean) / src.shape[0]
-    u, _s, vt = np.linalg.svd(matrix)
-    rotation = vt.T @ u.T
-    if np.linalg.det(rotation) < 0:
-        vt[-1, :] *= -1
-        rotation = vt.T @ u.T
-    translation = dst_mean - rotation @ src_mean
+    src_c = src - src_mean
+    dst_c = dst - dst_mean
+    # cov 的 SVD：dst 在左，source 在右，R 把 source 转到 target。
+    covariance = (dst_c.T @ src_c) / count
+    u, singular, vt = np.linalg.svd(covariance)
+    sign = np.eye(3)
+    if np.linalg.det(u) * np.linalg.det(vt) < 0:
+        sign[2, 2] = -1.0
+    rotation = u @ sign @ vt
+    if with_scale:
+        variance = float(np.mean(np.sum(src_c ** 2, axis=1)))
+        if variance <= 1e-18:
+            return None
+        scale = float(np.trace(np.diag(singular) @ sign) / variance)
+    else:
+        scale = 1.0
+    translation = dst_mean - scale * rotation @ src_mean
+    return scale, rotation, translation
+
+
+def _umeyama_fixed_scale(source, target):
+    """source 对齐到 target。尺度固定为 1。返回 R, t。"""
+    _scale, rotation, translation = _umeyama(source, target, with_scale=False)
     return rotation, translation
 
 
@@ -103,55 +124,173 @@ def wrist_errors(camera_episode, world_episode, hands_gt, poses):
     }
 
 
-def trajectory_ate(estimate_tum, gt_tum, estimate_scale=1.0, gt_scale=1.0):
-    """两条轨迹的相机位置，SE3 对齐、尺度固定。时间用最近邻，门限 0.05 秒。"""
-    est_t, est_p = load_tum_trajectory(estimate_tum)
-    gt_t, gt_p = load_tum_trajectory(gt_tum)
-    est_t = np.asarray(est_t, dtype=float) * float(estimate_scale)
-    gt_t = np.asarray(gt_t, dtype=float) * float(gt_scale)
-    # 同一时间戳重复写出时只留第一次。否则几十行拷贝会被最近邻配成“很多帧”，ATE 会看起来很小。
-    unique_est = []
+def _load_scaled_tum(path, scale):
+    times, poses = load_tum_trajectory(path)
+    times = np.asarray(times, dtype=float) * float(scale)
+    return times, poses
+
+
+def _unique_trajectory(times, poses):
+    """同一时间戳只留第一行。返回时间、位姿、丢掉的重复行数。"""
+    unique_t = []
     unique_p = []
     seen = set()
-    for index, stamp in enumerate(est_t):
+    for index, stamp in enumerate(times):
         key = round(float(stamp), 9)
         if key in seen:
             continue
         seen.add(key)
-        unique_est.append(est_t[index])
-        unique_p.append(est_p[index])
-    duplicate_rows = int(len(est_t) - len(unique_est))
-    est_t = np.asarray(unique_est, dtype=float)
-    est_p = unique_p
+        unique_t.append(times[index])
+        unique_p.append(poses[index])
+    duplicate_rows = int(len(times) - len(unique_t))
+    return np.asarray(unique_t, dtype=float), unique_p, duplicate_rows
+
+
+def _pair_by_time(est_t, est_poses, gt_t, gt_poses, max_dt_s):
+    """估计轨迹的每一行找最近的真值。超过 max_dt_s 的不配。"""
     paired_est = []
     paired_gt = []
+    paired_t = []
     for index, stamp in enumerate(est_t):
         nearest = int(np.argmin(np.abs(gt_t - stamp)))
-        if abs(float(gt_t[nearest] - stamp)) > 0.05:
+        if abs(float(gt_t[nearest] - stamp)) > float(max_dt_s):
             continue
-        paired_est.append(est_p[index][:3, 3])
-        paired_gt.append(gt_p[nearest][:3, 3])
+        paired_est.append(est_poses[index])
+        paired_gt.append(gt_poses[nearest])
+        paired_t.append(float(stamp))
+    return paired_t, paired_est, paired_gt
+
+
+def _prepare_pair(estimate_tum, gt_tum, estimate_scale, gt_scale, max_dt_s):
+    est_t, est_poses = _load_scaled_tum(estimate_tum, estimate_scale)
+    gt_t, gt_poses = _load_scaled_tum(gt_tum, gt_scale)
+    est_t, est_poses, duplicate_rows = _unique_trajectory(est_t, est_poses)
+    paired_t, paired_est, paired_gt = _pair_by_time(est_t, est_poses, gt_t, gt_poses, max_dt_s)
+    return {
+        "estimate_rows": int(duplicate_rows + len(est_t)),
+        "unique_timestamps": int(len(est_t)),
+        "duplicate_rows_ignored": duplicate_rows,
+        "gt_frames": int(len(gt_t)),
+        "paired_t": paired_t,
+        "paired_est": paired_est,
+        "paired_gt": paired_gt,
+    }
+
+
+def _rotation_angle_deg(rotation):
+    cosine = (float(np.trace(rotation)) - 1.0) / 2.0
+    cosine = max(-1.0, min(1.0, cosine))
+    return float(np.degrees(np.arccos(cosine)))
+
+
+def trajectory_ate(estimate_tum, gt_tum, estimate_scale=1.0, gt_scale=1.0, alignment="se3", max_dt_s=0.05):
+    """两条轨迹的相机中心。时间用最近邻。
+
+    ``alignment="se3"`` 尺度固定为 1。``alignment="sim3"`` 尺度自由。
+    估计轨迹里的重复时间戳只留第一行，不用重复行凑数量。
+    对上的不同时间戳少于 3 时不写 rmse。
+    """
+    if alignment not in ("se3", "sim3"):
+        raise ValueError("alignment 只能是 se3 或 sim3，收到 %s" % alignment)
+    prepared = _prepare_pair(estimate_tum, gt_tum, estimate_scale, gt_scale, max_dt_s)
+    paired_est = [pose[:3, 3] for pose in prepared["paired_est"]]
+    paired_gt = [pose[:3, 3] for pose in prepared["paired_gt"]]
     if len(paired_est) < 3:
         return {
             "n": len(paired_est),
-            "estimate_rows": int(duplicate_rows + len(est_t)),
-            "unique_timestamps": int(len(est_t)),
-            "duplicate_rows_ignored": duplicate_rows,
+            "estimate_rows": prepared["estimate_rows"],
+            "unique_timestamps": prepared["unique_timestamps"],
+            "duplicate_rows_ignored": prepared["duplicate_rows_ignored"],
             "note": "不同时间戳对上的帧少于 3，不算 ATE。重复行没有拿来凑数。",
         }
-    rotation, translation = _umeyama_fixed_scale(paired_est, paired_gt)
-    aligned = (rotation @ np.asarray(paired_est).T).T + translation
+    with_scale = alignment == "sim3"
+    fitted = _umeyama(paired_est, paired_gt, with_scale=with_scale)
+    if fitted is None:
+        return {
+            "n": len(paired_est),
+            "estimate_rows": prepared["estimate_rows"],
+            "unique_timestamps": prepared["unique_timestamps"],
+            "duplicate_rows_ignored": prepared["duplicate_rows_ignored"],
+            "note": "估计轨迹的位置没有展开，尺度没有定义，不算 ATE。",
+        }
+    scale, rotation, translation = fitted
+    aligned = (scale * (rotation @ np.asarray(paired_est).T)).T + translation
     errors = np.linalg.norm(aligned - np.asarray(paired_gt), axis=1)
-    return {
+    report = {
         "n": int(errors.size),
-        "estimate_frames": int(len(est_t)),
-        "gt_frames": int(len(gt_t)),
+        "estimate_frames": prepared["unique_timestamps"],
+        "gt_frames": prepared["gt_frames"],
         "rmse_m": float(np.sqrt(np.mean(errors ** 2))),
         "median_m": float(np.median(errors)),
         "max_m": float(np.max(errors)),
-        "scale": "fixed_1",
-        "alignment": "umeyama_se3",
-        "measured_against": "HOT3D 左目虚拟针孔位姿。短片段管线检查，不是头戴精度。",
+        "alignment": "umeyama_sim3" if with_scale else "umeyama_se3",
+        "measured_against": "相机中心，最近邻配对。短片段或长序列都只是这次轨迹和头戴定位的差，不是另一次实验的精度。",
+    }
+    if with_scale:
+        report["scale"] = "free"
+        report["similarity_scale"] = float(scale)
+        report["scale_meaning"] = "similarity_scale 乘在估计轨迹上，使它贴近真值。小于 1 表示估计的位移比真值大。"
+    else:
+        report["scale"] = "fixed_1"
+    return report
+
+
+def trajectory_rpe(estimate_tum, gt_tum, estimate_scale=1.0, gt_scale=1.0, delta_s=1.0, max_dt_s=0.05, max_delta_error_s=0.05):
+    """相对位姿误差。不做全局对齐。
+
+    先按时间把估计和真值配上。再在配上的估计时间里，为每一帧找大约晚 ``delta_s`` 的另一帧。
+    误差是两段相对运动的差：``inv(gt_i^{-1} gt_j) @ (est_i^{-1} est_j)``。
+    对上的不同时间戳少于 3，或者凑不出间隔接近 delta 的配对时，不写 rmse。
+    """
+    prepared = _prepare_pair(estimate_tum, gt_tum, estimate_scale, gt_scale, max_dt_s)
+    times = prepared["paired_t"]
+    if len(times) < 3:
+        return {
+            "n_poses": len(times),
+            "duplicate_rows_ignored": prepared["duplicate_rows_ignored"],
+            "note": "不同时间戳对上的帧少于 3，不算 RPE。",
+        }
+    trans_errors = []
+    rot_errors = []
+    stamps = np.asarray(times, dtype=float)
+    for index, stamp in enumerate(stamps):
+        later = np.where(stamps > stamp)[0]
+        if later.size == 0:
+            continue
+        gaps = np.abs(stamps[later] - (stamp + float(delta_s)))
+        choice = int(later[int(np.argmin(gaps))])
+        if abs(float(stamps[choice] - stamp) - float(delta_s)) > float(max_delta_error_s):
+            continue
+        est_i = prepared["paired_est"][index]
+        est_j = prepared["paired_est"][choice]
+        gt_i = prepared["paired_gt"][index]
+        gt_j = prepared["paired_gt"][choice]
+        est_rel = np.linalg.inv(est_i) @ est_j
+        gt_rel = np.linalg.inv(gt_i) @ gt_j
+        error = np.linalg.inv(gt_rel) @ est_rel
+        trans_errors.append(float(np.linalg.norm(error[:3, 3])))
+        rot_errors.append(_rotation_angle_deg(error[:3, :3]))
+    if not trans_errors:
+        return {
+            "n_poses": len(times),
+            "n_pairs": 0,
+            "delta_s": float(delta_s),
+            "duplicate_rows_ignored": prepared["duplicate_rows_ignored"],
+            "note": "没有间隔接近 delta 的配对，不算 RPE。",
+        }
+    trans = np.asarray(trans_errors, dtype=float)
+    rot = np.asarray(rot_errors, dtype=float)
+    return {
+        "n_poses": len(times),
+        "n_pairs": int(trans.size),
+        "delta_s": float(delta_s),
+        "trans_rmse_m": float(np.sqrt(np.mean(trans ** 2))),
+        "trans_median_m": float(np.median(trans)),
+        "rot_rmse_deg": float(np.sqrt(np.mean(rot ** 2))),
+        "rot_median_deg": float(np.median(rot)),
+        "alignment": "none_relative",
+        "duplicate_rows_ignored": prepared["duplicate_rows_ignored"],
+        "note": "相对位姿误差，没有先做全局 SE3/Sim3 对齐。平移是相对运动的差，旋转是那个差的角度。",
     }
 
 
