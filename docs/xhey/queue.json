@@ -326,6 +326,141 @@
         "note": "EgoVerse (camera frame, native 10 Hz, segment QC) beat zero on moving (-0.129 cm) but did not beat the same-run no-EgoVerse control C16ctl (moving -0.137, overall 9.759) and is slightly worse than zero overall (+0.003). Ingested 2026-10-19 21:42; charts in experiments/report/C16."
       },
       "ingested": "2026-10-19 21:42"
+    },
+    {
+      "id": "C17",
+      "name": "hand-label method comparison on XHEY (WiLoR baseline vs Dyn-HaMR vs EgoXperience)",
+      "dir": "kaggle/c17_labels",
+      "slug": "justinz2010/xhey-c17-labels",
+      "status": "done_blocked_dynhamr_wilor_only",
+      "mix": "n/a (label-quality study)",
+      "protocol": "20 s windows (3 per iPhone LiDAR clip + 3 xhey_rgb); wrist_noise.py (C15 defs) + wrist z vs LiDAR depth; training per label set only if full-clip labels feasible",
+      "qc": "n/a",
+      "datasets": [
+        "justinz2010/xhey-iphone-sessions (private, contains MANO pkls)",
+        "justinz2010/xhey-c15-wrist-data"
+      ],
+      "license": "WiLoR CC BY-NC-ND 4.0; Dyn-HaMR MIT code but README non-commercial research; MANO non-commercial (private dataset only); EgoXperience unreleased",
+      "note": "Analysis study; not an auto-iter training candidate. Do not launch.",
+      "doc": "docs/xhey/c17_label_methods.md",
+      "result": {
+        "noise_current_iphone_depth": {
+          "jump_cm": 1.3,
+          "jitter_cm": 1.951,
+          "static_drift_cm": 1.164,
+          "hand_series": 12
+        },
+        "noise_wilor_mono_depth_raw": {
+          "jump_cm": 1.065,
+          "jitter_cm": 1.077,
+          "static_drift_cm": 0.883,
+          "hand_series": 18
+        },
+        "noise_wilor_mono_depth_lidar_scaled": {
+          "jump_cm": 2.462,
+          "jitter_cm": 2.552,
+          "static_drift_cm": 1.265,
+          "hand_series": 18
+        },
+        "noise_wilor_mono_nodepth": {
+          "jump_cm": 0.545,
+          "jitter_cm": 0.687,
+          "static_drift_cm": 0.451,
+          "hand_series": 6
+        },
+        "depth_vs_lidar_current_iphone_circular": {
+          "abs_dz_med_cm": 1.37,
+          "abs_dz_p90_cm": 3.77,
+          "signed_dz_med_cm": 1.0,
+          "within_2cm": 0.671,
+          "n": 3600
+        },
+        "depth_vs_lidar_wilor_mono_raw": {
+          "abs_dz_med_cm": 68.82,
+          "abs_dz_p90_cm": 82.82,
+          "signed_dz_med_cm": -68.82,
+          "within_2cm": 0.0,
+          "n": 5394
+        },
+        "depth_vs_lidar_wilor_mono_scaled": {
+          "abs_dz_med_cm": 3.24,
+          "abs_dz_p90_cm": 12.4,
+          "signed_dz_med_cm": -0.0,
+          "within_2cm": 0.339,
+          "n": 5394
+        },
+        "wilor_mono_scale_median": 2.371,
+        "wilor_mono_scale_range": [
+          2.015,
+          2.571
+        ],
+        "wilor_mono_t4_s_per_300f_window": [
+          227.6,
+          256.2
+        ],
+        "training_per_label_set": "skipped (see doc)",
+        "egoxperience": "skipped: code+weights unreleased",
+        "dyn_hamr": "blocked at dh_run (v6): HaMeR preprocessing subprocess launched with bare python (system py3.13, not the py3.10 venv) -> No module named pyrender -> HaMeR pkl missing; all install steps OK (~12.5 min on T4); no per-window runtime measured",
+        "charts": "experiments/report/C17/"
+      }
+    },
+    {
+      "id": "C18",
+      "name": "NVIDIA Flora-TempSeg clip selection vs motion-threshold+QC on Open-AoE nano + xPhi-Ego-100",
+      "dir": "kaggle/c18_flora",
+      "slug": "justinz2010/xhey-c18-flora",
+      "status": "done_blocked_hw",
+      "mix": "n/a (selection study)",
+      "protocol": "Flora-segmenter-9B (human profile, 16 s windows @4 Hz) on 100 s chunks, 2x T4 device_map split; compare with current selection (xPhi QC spans / AoE move-median>=3 cm/s)",
+      "qc": "QC pass rate + jitter of selected segments (see doc)",
+      "datasets": [
+        "justinz2010/xhey-xphi-raw",
+        "HF inclusionAI/OpenAoE-2000h rev nano (fetched in kernel)"
+      ],
+      "license": "Flora weights: NVIDIA OneWay Noncommercial License (research only; not usable for XHEY production)",
+      "note": "Analysis study; not an auto-iter training candidate. Do not launch.",
+      "doc": "docs/xhey/c18_flora.md",
+      "result": {
+        "current_selection": {
+          "xphi": {
+            "clips": 102,
+            "labelled_h": 5.028,
+            "current_h": 0.315,
+            "current_segments": 196,
+            "current_qc_pass": 1.0,
+            "current_jitter_med_cm": 2.4,
+            "all_jitter_med_cm": 9.42
+          },
+          "aoe": {
+            "clips": 111,
+            "labelled_h": 2.939,
+            "current_h": 2.542,
+            "current_segments": 129,
+            "current_qc_pass": 1.0,
+            "current_jitter_med_cm": 0.71,
+            "all_jitter_med_cm": 0.66
+          }
+        },
+        "flora_t4x2": {
+          "load_s": [
+            822,
+            938
+          ],
+          "one_window_prefill_s": [
+            651,
+            823
+          ],
+          "generated_tokens": 1,
+          "complete": false,
+          "extrapolated_gpu_h": [
+            432,
+            546
+          ],
+          "windows_needed": 2390
+        },
+        "blocked": "Flora-9B on Kaggle 2xT4 cannot finish one 16 s window within its own 300 s generate limit (v4 torch GDN fallback 651 s, v5 +flash-linear-attention 823 s); needs Ampere+ 80 GB",
+        "charts": "experiments/report/C18/"
+      }
     }
   ]
 }
