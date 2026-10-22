@@ -12,6 +12,7 @@ IMU、曝光、任务句子没有来源时不编造。原始鱼眼参数原样�
 不改写成径向切向畸变。
 """
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -377,6 +378,167 @@ def hot3d_clip_to_session(clip, out, episode_id=None, max_frames=None, euroc_out
         "image_height": int(left_pin.height),
         "pose_source": POSE_SOURCE_GT,
         "slam_tum_written": False,
+    }
+
+
+def _warp_maps(src_camera, dst_camera):
+    """和 hand_tracking_toolkit.dataset.warp_image 相同的采样表。
+
+    dataset.py 在 import 时会拉 torch。采样表只依赖这一路的鱼眼内参和 -90° 针孔，
+    不依赖头戴在世界里的位置。内参不变就复用这一张表。
+    """
+    import cv2
+
+    width, height = int(dst_camera.width), int(dst_camera.height)
+    px, py = np.meshgrid(np.arange(width), np.arange(height))
+    dst_win = np.column_stack((px.reshape(-1), py.reshape(-1)))
+    dst_eye = dst_camera.window_to_eye(dst_win)
+    world = dst_camera.eye_to_world(dst_eye)
+    src_eye = src_camera.world_to_eye(world)
+    src_win = src_camera.eye_to_window(src_eye)
+    src_win = np.array(src_win, dtype=np.float32, copy=True)
+    behind = np.asarray(src_eye)[:, 2] < 0
+    src_win[behind] = -1
+    return (
+        src_win[:, 0].reshape((height, width)),
+        src_win[:, 1].reshape((height, width)),
+        cv2.INTER_LINEAR,
+    )
+
+
+def _intrinsics_key(camera_json):
+    calibration = camera_json.get("calibration") if isinstance(camera_json, dict) else None
+    if not isinstance(calibration, dict):
+        return None
+    params = calibration.get("projection_params") or []
+    return (
+        calibration.get("projection_model_type"),
+        calibration.get("image_width"),
+        calibration.get("image_height"),
+        tuple(float(value) for value in params),
+    )
+
+
+def write_quest3_euroc(clip_dirs, euroc_out, gt_tum, orb_yaml):
+    """把同一条连续 Quest3 录制写成 stereo_euroc 目录、头戴真值和 yaml。
+
+    左右 png 都用左目时间戳命名，因为 stereo_euroc 用 times.txt 的同一列去找两路图。
+    不写 slam.tum，也不把头戴定位交出去当 SLAM 轨迹。
+    """
+    import cv2
+    from eval_hot3d_stereo import K_of, load_frame_cameras, pinhole_of
+    from headcam.hot3d_adapter import clip_keys
+    from headcam.hot3d_sequence import concat_clip_records
+
+    prepared = []
+    for clip in clip_dirs:
+        clip = Path(clip)
+        match = re.fullmatch(r"clip-(\d+)", clip.name)
+        if match is None:
+            raise ValueError("目录名要是 clip-000123 这样：%s" % clip.name)
+        keys = clip_keys(str(clip))
+        if not keys:
+            raise ValueError("HOT3D clip 里没有帧：%s" % clip)
+        stamps = []
+        for key in keys:
+            info = _load_json(clip / ("%s.info.json" % key))
+            stamps.append(_timestamp_ns(info, STREAM_LEFT))
+        first = _load_json(clip / ("%s.info.json" % keys[0]))
+        prepared.append({
+            "clip": clip,
+            "keys": keys,
+            "clip_id": int(match.group(1)),
+            "sequence_id": first.get("sequence_id"),
+            "device": first.get("device"),
+            "participant_id": first.get("participant_id"),
+            "timestamps_ns": stamps,
+        })
+    run = concat_clip_records(prepared)
+    by_id = {item["clip_id"]: item for item in prepared}
+    ordered = [by_id[clip_id] for clip_id in run["clip_ids"]]
+    if any(item["device"] != "Quest3" for item in ordered):
+        raise ValueError("只拼接 Quest3。设备是：%s" % sorted({item["device"] for item in ordered}))
+
+    euroc_root = Path(euroc_out)
+    (euroc_root / "mav0" / "cam0" / "data").mkdir(parents=True, exist_ok=True)
+    (euroc_root / "mav0" / "cam1" / "data").mkdir(parents=True, exist_ok=True)
+    stamps_ns = []
+    stamps_right = []
+    poses = []
+    relatives = []
+    pin0 = None
+    maps = {}
+    intrinsic_keys = {}
+    rebuilt = {STREAM_LEFT: 0, STREAM_RIGHT: 0}
+    for item in ordered:
+        clip = item["clip"]
+        for key in item["keys"]:
+            cams = load_frame_cameras(str(clip), key)
+            raw = _load_json(clip / ("%s.cameras.json" % key))
+            pins = {stream: pinhole_of(cams[stream], 1.0, -90) for stream in (STREAM_LEFT, STREAM_RIGHT)}
+            if pin0 is None:
+                pin0 = pins
+            info = _load_json(clip / ("%s.info.json" % key))
+            left_ns = _timestamp_ns(info, STREAM_LEFT)
+            right_ns = _timestamp_ns(info, STREAM_RIGHT)
+            stamps_ns.append(left_ns)
+            stamps_right.append(right_ns)
+            poses.append(np.asarray(pins[STREAM_LEFT].T_world_from_eye, dtype=float))
+            relatives.append(relative_extrinsics(
+                pins[STREAM_LEFT].T_world_from_eye, pins[STREAM_RIGHT].T_world_from_eye,
+            ))
+            for stream, folder in ((STREAM_LEFT, "cam0"), (STREAM_RIGHT, "cam1")):
+                key_now = _intrinsics_key(raw.get(stream))
+                if stream not in maps or intrinsic_keys.get(stream) != key_now:
+                    maps[stream] = _warp_maps(cams[stream], pins[stream])
+                    intrinsic_keys[stream] = key_now
+                    rebuilt[stream] += 1
+                image = cv2.imread(str(clip / ("%s.image_%s.jpg" % (key, stream))), cv2.IMREAD_COLOR)
+                if image is None:
+                    raise RuntimeError("读 jpg 失败：%s %s" % (clip, key))
+                map_x, map_y, interpolation = maps[stream]
+                warped = cv2.remap(image, map_x, map_y, interpolation)
+                png = euroc_root / "mav0" / folder / "data" / ("%d.png" % left_ns)
+                if not cv2.imwrite(str(png), warped):
+                    raise RuntimeError("写 png 失败：%s" % png)
+    if stamps_ns != run["timestamps_ns"]:
+        raise RuntimeError("写进 euroc 的时间戳和连续段不一致")
+    fps = integer_fps_ns(stamps_ns)
+    if fps is None:
+        raise ValueError("图像时间间隔不是整数 fps，没有四舍五入")
+    rotation, translation = relatives[0]
+    drift = max(float(np.linalg.norm(item[1] - translation)) for item in relatives)
+    sync_ms = max(abs(int(left) - int(right)) for left, right in zip(stamps_ns, stamps_right)) / 1e6
+    left_pin, right_pin = pin0[STREAM_LEFT], pin0[STREAM_RIGHT]
+    calib = {
+        "image_width": int(left_pin.width),
+        "image_height": int(left_pin.height),
+        "K_left": K_of(left_pin),
+        "K_right": K_of(right_pin),
+        "dist_left": np.zeros(5),
+        "dist_right": np.zeros(5),
+        "R": rotation,
+        "T": translation,
+    }
+    (euroc_root / "times.txt").write_text("".join("%d\n" % value for value in stamps_ns), encoding="utf-8")
+    stamp_text = [ns_to_second_text(value) for value in stamps_ns]
+    write_headset_tum(gt_tum, stamp_text, poses)
+    write_orbslam3_yaml(orb_yaml, calib, fps)
+    return {
+        "sequence_id": ordered[0]["sequence_id"],
+        "participant_id": ordered[0]["participant_id"],
+        "device": "Quest3",
+        "clip_ids": run["clip_ids"],
+        "frames": len(stamps_ns),
+        "fps": fps,
+        "baseline_m": float(np.linalg.norm(translation)),
+        "extrinsic_drift_m": drift,
+        "sync_error_ms_max": float(sync_ms),
+        "image_width": int(left_pin.width),
+        "image_height": int(left_pin.height),
+        "pose_source": POSE_SOURCE_GT,
+        "slam_tum_written": False,
+        "intrinsic_maps_rebuilt": rebuilt,
     }
 
 

@@ -2271,5 +2271,258 @@ class SlamAccuracyPackagingTest(unittest.TestCase):
             self.assertIsNone(claimed_report["accuracy"])
 
 
+class SlamBatchSummaryTest(unittest.TestCase):
+    """多段 ORB-SLAM3 结果的表。失败段 accuracy 是 null，仍要计数。不读 HOT3D 图像。"""
+
+    def _square(self):
+        return [
+            np.array([0.0, 0.0, 0.0]),
+            np.array([1.0, 0.0, 0.0]),
+            np.array([1.0, 1.0, 0.0]),
+            np.array([0.0, 1.0, 0.0]),
+        ]
+
+    def _poses(self, points):
+        poses = []
+        for point in points:
+            pose = np.eye(4)
+            pose[:3, 3] = point
+            poses.append(pose)
+        return poses
+
+    def _measured(self, root):
+        from headcam.slam_batch import score_sequence
+
+        points = self._square()
+        rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        shift = np.array([0.2, -0.4, 0.1])
+        estimate_points = [rotation.T @ (point - shift) for point in points]
+        gt_path = root / "gt.txt"
+        est_path = root / "CameraTrajectory.txt"
+        gt_path.write_text(
+            "# pose_source=hot3d_gt_mocap\n"
+            + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(
+                ["0.0", "1.0", "2.0", "3.0"], self._poses(points),
+            )),
+            encoding="utf-8",
+        )
+        _write_pose_tum(
+            est_path,
+            ["0", "1000000000", "2000000000", "3000000000"],
+            self._poses(estimate_points),
+        )
+        log = "\n".join([
+            "Creation of new map with id: 0",
+            "New Map created with 20 points",
+            "*Loop detected",
+            "Fail to track local map!",
+            "There are 1 maps in the atlas",
+            "  Map 0 has 12 KFs",
+        ])
+        return score_sequence(
+            name="P0003_b153ade2",
+            sequence_id="P0003_b153ade2",
+            participant_id="P0003",
+            clip_ids=[480, 491],
+            input_frames=6,
+            trajectory_path=est_path,
+            gt_path=gt_path,
+            log_text=log,
+            estimate_scale=1e-9,
+            gt_scale=1.0,
+        )
+
+    def test_failed_sequence_is_counted_with_null_accuracy(self):
+        import tempfile
+
+        from headcam.slam_batch import render_markdown, score_sequence, summarize_sequences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            measured = self._measured(Path(tmp))
+        failed = score_sequence(
+            name="P0099_missing",
+            sequence_id="P0099_missing",
+            participant_id="P0099",
+            clip_ids=[1, 2],
+            input_frames=300,
+            failure="train_quest3/clip-000001.tar 404",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gt_path = root / "gt.txt"
+            est_path = root / "short.txt"
+            pose = np.eye(4)
+            gt_path.write_text(
+                "# pose_source=hot3d_gt_mocap\n"
+                + _tum_line("0.0", pose) + "\n"
+                + _tum_line("1.0", pose) + "\n",
+                encoding="utf-8",
+            )
+            _write_pose_tum(est_path, ["0", "1000000000"], [pose, pose])
+            short = score_sequence(
+                name="P0002_short",
+                sequence_id="P0002_short",
+                participant_id="P0002",
+                clip_ids=[6],
+                input_frames=2,
+                trajectory_path=est_path,
+                gt_path=gt_path,
+            )
+            summary = summarize_sequences([measured, failed, short])
+            text = render_markdown(summary)
+        self.assertEqual(measured["status"], "ok")
+        self.assertEqual(measured["tracked_frames"], 4)
+        self.assertEqual(measured["lost_frames"], 2)
+        self.assertEqual(measured["reinits"], 0)
+        self.assertEqual(measured["maps"], 1)
+        self.assertLess(measured["accuracy"]["ate"]["se3"]["rmse_m"], 1e-8)
+        self.assertIsNone(failed["accuracy"])
+        self.assertEqual(failed["status"], "failed")
+        self.assertIsNone(short["accuracy"])
+        self.assertEqual(summary["n_sequences"], 3)
+        self.assertEqual(summary["n_failed"], 1)
+        self.assertEqual(summary["n_unmeasured"], 1)
+        self.assertEqual(summary["n_measured"], 1)
+        self.assertEqual(len(summary["sequences"]), 3)
+        self.assertIsNone(summary["sequences"][1]["accuracy"])
+        self.assertEqual(summary["sequences"][1]["name"], "P0099_missing")
+        self.assertEqual(summary["ate_se3_rmse_m"]["n"], 1)
+        self.assertLess(summary["ate_se3_rmse_m"]["median"], 1e-8)
+        self.assertEqual(summary["rpe_5s"]["n"], 0)
+        self.assertNotIn("median", summary["rpe_5s"])
+        self.assertIn("不进 RMSE 汇总", summary["aggregate_note"])
+        self.assertIn("P0099_missing", text)
+        self.assertIn("404", text)
+        self.assertIn("不进 RMSE 汇总", text)
+        self.assertIn("left out of the RMSE aggregate", text)
+
+    def test_failed_status_drops_a_stuffed_accuracy_from_the_aggregate(self):
+        import tempfile
+
+        from headcam.slam_batch import summarize_sequences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            measured = self._measured(Path(tmp))
+        stuffed = dict(measured)
+        stuffed["name"] = "stuffed"
+        stuffed["status"] = "failed"
+        stuffed["failure"] = "stereo_euroc 退出码 139"
+        summary = summarize_sequences([stuffed])
+        self.assertEqual(summary["n_sequences"], 1)
+        self.assertEqual(summary["n_failed"], 1)
+        self.assertEqual(summary["n_measured"], 0)
+        self.assertIsNone(summary["sequences"][0]["accuracy"])
+        self.assertIsNone(summary["ate_se3_rmse_m"])
+
+    def test_headset_header_on_the_estimate_is_not_a_slam_result(self):
+        import tempfile
+
+        from headcam.slam_batch import score_sequence
+
+        pose = np.eye(4)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gt_path = root / "gt.txt"
+            est_path = root / "est.txt"
+            body = "".join(_tum_line(stamp, pose) + "\n" for stamp in ("0.0", "1.0", "2.0", "3.0"))
+            gt_path.write_text("# pose_source=hot3d_gt_mocap\n" + body, encoding="utf-8")
+            est_path.write_text("# pose_source=hot3d_gt_mocap\n" + body, encoding="utf-8")
+            labeled = score_sequence(
+                name="copied-gt",
+                sequence_id="copied-gt",
+                participant_id="P0001",
+                clip_ids=[0],
+                input_frames=4,
+                trajectory_path=est_path,
+                gt_path=gt_path,
+                estimate_scale=1.0,
+            )
+            bare = root / "bare.txt"
+            bare.write_text(body, encoding="utf-8")
+            (root / "no_header_gt.txt").write_text(body, encoding="utf-8")
+            missing_header = score_sequence(
+                name="no-header",
+                sequence_id="no-header",
+                participant_id="P0001",
+                clip_ids=[0],
+                input_frames=4,
+                trajectory_path=bare,
+                gt_path=root / "no_header_gt.txt",
+                estimate_scale=1.0,
+            )
+        self.assertEqual(labeled["status"], "failed")
+        self.assertIsNone(labeled["accuracy"])
+        self.assertIn("头戴真值", labeled["failure"])
+        self.assertIsNone(missing_header["accuracy"])
+        self.assertIn("pose_source", missing_header["failure"])
+
+    def test_summarize_cli_writes_json_and_markdown(self):
+        import tempfile
+
+        from headcam.slam_batch import main, score_sequence
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            measured = self._measured(root)
+            failed = score_sequence(
+                name="P0099_missing",
+                sequence_id="P0099_missing",
+                participant_id="P0099",
+                clip_ids=[3],
+                input_frames=10,
+                failure="下载失败",
+            )
+            (root / "ok.json").write_text(json.dumps(measured), encoding="utf-8")
+            (root / "bad.json").write_text(json.dumps(failed), encoding="utf-8")
+            code = main([
+                "summarize",
+                "--records", str(root / "bad.json"), str(root / "ok.json"),
+                "--json", str(root / "batch.json"),
+                "--md", str(root / "batch.md"),
+            ])
+            report = json.loads((root / "batch.json").read_text(encoding="utf-8"))
+            text = (root / "batch.md").read_text(encoding="utf-8")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["n_sequences"], 2)
+        self.assertEqual(report["sequences"][0]["name"], "P0099_missing")
+        self.assertIsNone(report["sequences"][0]["accuracy"])
+        self.assertEqual(report["n_measured"], 1)
+        self.assertIn("P0003_b153ade2", text)
+        self.assertIn("下载失败", text)
+
+    def test_train_index_uses_contiguous_runs(self):
+        from headcam.slam_batch import quest3_split_runs
+
+        step = 33333333
+        definitions = {
+            "0": {
+                "sequence_id": "P0002_a",
+                "device": "Quest3",
+                "per_frame_timestamps_ns": [{"1201-1": i * step, "1201-2": i * step} for i in range(4)],
+            },
+            "1": {
+                "sequence_id": "P0002_a",
+                "device": "Quest3",
+                "per_frame_timestamps_ns": [{"1201-1": (4 + i) * step, "1201-2": (4 + i) * step} for i in range(4)],
+            },
+            "2": {
+                "sequence_id": "P0002_a",
+                "device": "Quest3",
+                "per_frame_timestamps_ns": [{"1201-1": (4 + i) * step + 2_000_000_000, "1201-2": 0} for i in range(4)],
+            },
+            "9": {
+                "sequence_id": "Aria_x",
+                "device": "Aria",
+                "per_frame_timestamps_ns": [{"1201-1": i * step, "1201-2": i * step} for i in range(4)],
+            },
+        }
+        splits = {"train": {"Quest3": [2, 0, 1], "Aria": [9]}}
+        runs = quest3_split_runs(definitions, splits)
+        by_ids = {tuple(run["clip_ids"]): run for run in runs}
+        self.assertEqual(by_ids[(0, 1)]["n_frames"], 8)
+        self.assertIn((2,), by_ids)
+        self.assertNotIn((9,), by_ids)
+
+
 if __name__ == "__main__":
     unittest.main()
