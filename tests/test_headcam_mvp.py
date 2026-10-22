@@ -2524,5 +2524,202 @@ class SlamBatchSummaryTest(unittest.TestCase):
         self.assertNotIn((9,), by_ids)
 
 
+class TrajectoryTimelineTest(unittest.TestCase):
+    """逐帧误差和接缝、速度的对照。合成轨迹，不读 HOT3D，也不把真值叫做 SLAM。"""
+
+    def _line_poses(self, steps):
+        poses = []
+        x = 0.0
+        for step in steps:
+            x += step
+            pose = np.eye(4)
+            pose[0, 3] = x
+            poses.append(pose)
+        return poses
+
+    def test_constant_speed_has_no_pearson_and_a_seam_spike_stays_at_the_seam(self):
+        from headcam.trajectory_qc import (
+            motion_series,
+            near_seam_mask,
+            pearson,
+            sse_share_worst_fraction,
+            summarize_timeline,
+        )
+
+        times = [float(i) for i in range(8)]
+        # 1 米的步长在二进制里是精确的。用 0.1 累加会留下一点点起伏，Pearson 就不该是 null。
+        poses = self._line_poses([0.0] + [1.0] * 7)
+        linear, angular = motion_series(times, poses)
+        self.assertTrue(np.isnan(linear[0]))
+        self.assertTrue(np.allclose(linear[1:], 1.0))
+        self.assertTrue(np.allclose(angular[1:], 0.0))
+        self.assertIsNone(pearson(linear, linear))
+        errors = np.zeros(8)
+        errors[3] = 0.5
+        mask = near_seam_mask(8, [4, 4], 0)
+        self.assertEqual(mask.tolist(), [False, False, False, True, True, False, False, False])
+        report = summarize_timeline(
+            times, errors, poses, clip_lengths=[4, 4], clip_ids=[6, 7], seam_radius=0,
+            keyframe_times=[0.0, 3.0],
+        )
+        self.assertEqual(report["max_error"]["index"], 3)
+        self.assertEqual(report["max_error"]["clip_id"], 6)
+        self.assertEqual(report["max_error"]["offset_in_clip"], 3)
+        self.assertGreater(report["seams"]["near"]["rmse_m"], report["seams"]["away"]["rmse_m"])
+        self.assertIsNone(report["headset_motion"]["error_vs_linear"]["pearson"])
+        self.assertIsNone(report["tracked_features"])
+        self.assertEqual(report["tail_runs"][0]["n"], 1)
+        self.assertEqual(report["tail_runs"][0]["t0_s"], 3.0)
+        share = sse_share_worst_fraction(errors, 0.1)
+        self.assertEqual(share["n_worst"], 1)
+        self.assertAlmostEqual(share["share"], 1.0)
+        self.assertIn("不是原因", report["note"])
+        self.assertIn("不是 SLAM", report["note"])
+
+    def test_error_tracks_speed_when_the_spike_is_not_a_seam(self):
+        from headcam.trajectory_qc import motion_series, summarize_timeline
+
+        times = [float(i) for i in range(9)]
+        steps = [0.0, 0.01, 0.02, 0.04, 0.08, 0.12, 0.16, 0.20, 0.24]
+        poses = self._line_poses(steps)
+        linear, _angular = motion_series(times, poses)
+        report = summarize_timeline(
+            times, linear, poses, clip_lengths=[9], seam_radius=2, bin_s=3.0,
+        )
+        self.assertGreater(report["headset_motion"]["error_vs_linear"]["pearson"], 0.99)
+        high = report["headset_motion"]["error_vs_linear"]["tercile"]["high"]["rmse_m"]
+        low = report["headset_motion"]["error_vs_linear"]["tercile"]["low"]["rmse_m"]
+        self.assertGreater(high, low)
+        self.assertIsNone(report["seams"]["near"])
+        self.assertEqual(len(report["bins_s"]), 3)
+
+    def test_blur_and_keyframe_gap_are_measured_on_synthetic_inputs(self):
+        from headcam.trajectory_qc import brightness_and_blur, seconds_since_keyframe, summarize_timeline
+
+        flat = np.full((8, 8), 40, dtype=np.uint8)
+        sharp = np.zeros((8, 8), dtype=np.uint8)
+        sharp[::2, ::2] = 255
+        flat_stats = brightness_and_blur(flat)
+        sharp_stats = brightness_and_blur(sharp)
+        self.assertAlmostEqual(flat_stats["brightness"], 40.0)
+        self.assertAlmostEqual(flat_stats["laplacian_var"], 0.0)
+        self.assertGreater(sharp_stats["laplacian_var"], flat_stats["laplacian_var"])
+        gaps = seconds_since_keyframe([0.0, 1.0, 2.0, 3.0, 4.0], [0.0, 3.0])
+        self.assertTrue(np.allclose(gaps, [0.0, 1.0, 2.0, 0.0, 1.0]))
+        poses = self._line_poses([0.0, 0.1, 0.1, 0.1, 0.1])
+        report = summarize_timeline(
+            [0.0, 1.0, 2.0, 3.0, 4.0],
+            gaps,
+            poses,
+            clip_lengths=[5],
+            keyframe_times=[0.0, 3.0],
+            brightness=np.array([10.0, 10.0, 80.0, 10.0, 10.0]),
+            blur=np.array([5.0, 4.0, 1.0, 4.0, 5.0]),
+        )
+        self.assertGreater(report["keyframes"]["error_vs_seconds_since_keyframe"]["pearson"], 0.99)
+        self.assertLess(report["images"]["error_vs_laplacian_var"]["pearson"], -0.5)
+
+    def test_headset_header_on_the_estimate_is_not_a_timeline(self):
+        import tempfile
+
+        from headcam.trajectory_qc import diagnose_files, main
+
+        pose = np.eye(4)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            body = "".join(_tum_line(stamp, pose) + "\n" for stamp in ("0.0", "1.0", "2.0", "3.0"))
+            gt = root / "gt.txt"
+            est = root / "est.txt"
+            gt.write_text("# pose_source=hot3d_gt_mocap\n" + body, encoding="utf-8")
+            est.write_text("# pose_source=hot3d_gt_mocap\n" + body, encoding="utf-8")
+            refused = diagnose_files(est, gt, estimate_scale=1.0, gt_scale=1.0)
+            shifted = []
+            for index, stamp in enumerate(("0.0", "1.0", "2.0", "3.0", "4.0")):
+                item = np.eye(4)
+                item[0, 3] = 0.2 * index
+                shifted.append(item)
+            spike = [item.copy() for item in shifted]
+            spike[3] = spike[3].copy()
+            spike[3][2, 3] = 0.3
+            gt_path = root / "line_gt.txt"
+            est_path = root / "line_est.txt"
+            gt_path.write_text(
+                "# pose_source=hot3d_gt_mocap\n"
+                + "".join(_tum_line(stamp, item) + "\n" for stamp, item in zip(
+                    ("0.0", "1.0", "2.0", "3.0", "4.0"), shifted,
+                )),
+                encoding="utf-8",
+            )
+            est_path.write_text(
+                "# pose_source=orbslam3_stereo_euroc\n"
+                + "".join(_tum_line("%d" % int(float(stamp) * 1e9), item) + "\n" for stamp, item in zip(
+                    ("0.0", "1.0", "2.0", "3.0", "4.0"), spike,
+                )),
+                encoding="utf-8",
+            )
+            out = root / "timeline.json"
+            code = main([
+                "--estimate", str(est_path),
+                "--gt", str(gt_path),
+                "--estimate-scale", "1e-9",
+                "--clip-lengths", "5",
+                "--seam-radius", "0",
+                "--out", str(out),
+            ])
+            report = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(refused["status"], "failed")
+        self.assertIsNone(refused["rmse_m"])
+        self.assertIn("头戴真值", refused["failure"])
+        self.assertEqual(code, 0)
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["max_error"]["index"], 3)
+        self.assertGreater(report["rmse_m"], 0.0)
+        self.assertLess(report["median_m"], report["max_m"])
+
+    def test_aligned_rmse_matches_trajectory_ate(self):
+        import tempfile
+
+        from headcam.hot3d_check import trajectory_ate
+        from headcam.trajectory_qc import diagnose_files
+
+        points = [
+            np.array([0.0, 0.0, 0.0]),
+            np.array([1.0, 0.0, 0.0]),
+            np.array([1.0, 1.0, 0.0]),
+            np.array([0.0, 1.0, 0.0]),
+        ]
+        rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        shift = np.array([0.2, -0.4, 0.1])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gt_poses = []
+            est_poses = []
+            for point in points:
+                gt_pose = np.eye(4)
+                gt_pose[:3, 3] = point
+                est_pose = np.eye(4)
+                est_pose[:3, 3] = rotation.T @ (point - shift)
+                gt_poses.append(gt_pose)
+                est_poses.append(est_pose)
+            gt_path = root / "gt.txt"
+            est_path = root / "est.txt"
+            gt_path.write_text(
+                "# pose_source=hot3d_gt_mocap\n"
+                + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(
+                    ("0.0", "1.0", "2.0", "3.0"), gt_poses,
+                )),
+                encoding="utf-8",
+            )
+            _write_pose_tum(
+                est_path,
+                ["0", "1000000000", "2000000000", "3000000000"],
+                est_poses,
+            )
+            ate = trajectory_ate(est_path, gt_path, estimate_scale=1e-9, gt_scale=1.0, alignment="se3")
+            report = diagnose_files(est_path, gt_path, estimate_scale=1e-9, gt_scale=1.0, clip_lengths=[4])
+        self.assertAlmostEqual(report["rmse_m"], ate["rmse_m"])
+        self.assertLess(report["rmse_m"], 1e-8)
+
+
 if __name__ == "__main__":
     unittest.main()
