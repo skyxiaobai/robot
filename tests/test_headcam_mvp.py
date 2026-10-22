@@ -2720,6 +2720,62 @@ class TrajectoryTimelineTest(unittest.TestCase):
         self.assertAlmostEqual(report["rmse_m"], ate["rmse_m"])
         self.assertLess(report["rmse_m"], 1e-8)
 
+    def test_a_constant_shift_keeps_stepwise_motion_and_a_tight_offset(self):
+        import tempfile
+
+        from headcam.trajectory_qc import diagnose_files, error_vector_offset, stepwise_relative_error
+
+        tight = error_vector_offset(np.tile(np.array([0.06, 0.0, 0.0]), (6, 1)))
+        self.assertAlmostEqual(tight["mean_norm_m"], 0.06)
+        self.assertLess(tight["rms_component_std_m"], 1e-12)
+        poses = self._line_poses([0.0] + [1.0] * 7)
+        same = stepwise_relative_error(poses, poses)
+        self.assertLess(same["trans_rmse_m"], 1e-12)
+        self.assertLess(same["rot_rmse_deg"], 1e-8)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gt_poses = self._line_poses([0.0] + [1.0] * 29)
+            est_poses = [pose.copy() for pose in gt_poses]
+            for pose in est_poses[:4]:
+                pose[2, 3] += 0.5
+            stamps = ["%.1f" % float(i) for i in range(30)]
+            ns = ["%d" % int(i * 1e9) for i in range(30)]
+            gt_path = root / "gt.txt"
+            est_path = root / "est.txt"
+            gt_path.write_text(
+                "# pose_source=hot3d_gt_mocap\n"
+                + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(stamps, gt_poses)),
+                encoding="utf-8",
+            )
+            est_path.write_text(
+                "# pose_source=orbslam3_stereo_euroc\n"
+                + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(ns, est_poses)),
+                encoding="utf-8",
+            )
+            report = diagnose_files(
+                est_path, gt_path, estimate_scale=1e-9, gt_scale=1.0, clip_lengths=[30],
+            )
+        self.assertEqual(report["status"], "ok")
+        self.assertGreater(report["rmse_m"], 0.01)
+        self.assertTrue(report["tail_runs"])
+        self.assertLess(report["tail_runs"][0]["t0_s"], 1e-9)
+        opening = report["tail_geometry"][0]
+        self.assertGreater(opening["offset"]["mean_norm_m"], 0.2)
+        self.assertLess(opening["offset"]["rms_component_std_m"], 0.02)
+        self.assertLess(opening["step"]["trans_rmse_m"], 1e-8)
+        self.assertLess(report["outside_tail_step"]["trans_rmse_m"], 1e-8)
+        self.assertEqual(
+            report["outside_tail"]["n"] + sum(run["n"] for run in report["tail_runs"]),
+            report["n"],
+        )
+        self.assertLess(report["outside_tail"]["rmse_m"], report["tail_runs"][0]["rmse_m"])
+        self.assertAlmostEqual(report["motion_in_tail"]["linear_speed_m_s"]["median"], 1.0, places=6)
+        self.assertAlmostEqual(report["motion_outside_tail"]["linear_speed_m_s"]["median"], 1.0, places=6)
+        self.assertGreater(
+            report["motion_outside_tail"]["linear_speed_m_s"]["max"],
+            report["motion_in_tail"]["linear_speed_m_s"]["max"] - 1e-9,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

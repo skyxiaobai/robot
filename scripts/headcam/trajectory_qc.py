@@ -238,6 +238,73 @@ def _tail_runs(times, errors, threshold):
     return out
 
 
+def error_vector_offset(vectors):
+    """一组对齐后的误差向量。均值的长度是这段的整体平移，分量标准差是它散开了多少。"""
+    values = np.asarray(vectors, dtype=float)
+    if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
+        raise ValueError("误差向量要是 N×3")
+    mean = values.mean(axis=0)
+    std = values.std(axis=0)
+    return {
+        "n": int(values.shape[0]),
+        "mean_norm_m": float(np.linalg.norm(mean)),
+        "rms_component_std_m": float(np.sqrt(np.mean(std ** 2))),
+    }
+
+
+def stepwise_relative_error(est_poses, gt_poses, mask=None):
+    """相邻帧相对运动的差。mask 给出时，只保留两端都落在 mask 里的步，不跨出这段。
+
+    平移 RMSE 小而位置误差大，说明这段的形状贴着头戴真值，差的是整段相对后面的位置。
+    """
+    if len(est_poses) != len(gt_poses):
+        raise ValueError("估计和头戴真值的帧数不一致")
+    flags = None if mask is None else np.asarray(mask, dtype=bool)
+    if flags is not None and flags.shape != (len(est_poses),):
+        raise ValueError("mask 长度要和帧数一样")
+    trans = []
+    rot = []
+    for index in range(1, len(est_poses)):
+        if flags is not None and not (flags[index] and flags[index - 1]):
+            continue
+        est_rel = np.linalg.inv(est_poses[index - 1]) @ est_poses[index]
+        gt_rel = np.linalg.inv(gt_poses[index - 1]) @ gt_poses[index]
+        error = np.linalg.inv(gt_rel) @ est_rel
+        trans.append(float(np.linalg.norm(error[:3, 3])))
+        rot.append(_rotation_angle_deg(error[:3, :3]))
+    if not trans:
+        return None
+    trans = np.asarray(trans, dtype=float)
+    rot = np.asarray(rot, dtype=float)
+    return {
+        "n_steps": int(trans.size),
+        "trans_rmse_m": float(np.sqrt(np.mean(trans ** 2))),
+        "trans_median_m": float(np.median(trans)),
+        "rot_rmse_deg": float(np.sqrt(np.mean(rot ** 2))),
+    }
+
+
+def _speed_summary(linear, angular, mask):
+    """一段帧上头戴真值的线速度和角速度。第 0 帧是 nan，不进统计。"""
+    flags = np.asarray(mask, dtype=bool)
+
+    def pack(series):
+        values = np.asarray(series, dtype=float)[flags]
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            return None
+        return {
+            "n": int(values.size),
+            "median": float(np.median(values)),
+            "max": float(np.max(values)),
+        }
+
+    return {
+        "linear_speed_m_s": pack(linear),
+        "angular_speed_deg_s": pack(angular),
+    }
+
+
 def _clip_at(index, clip_lengths, clip_ids):
     if not clip_lengths:
         return None, None
@@ -368,6 +435,8 @@ def _aligned_errors(estimate_tum, gt_tum, estimate_scale, gt_scale, max_dt_s):
     return {
         "times": prepared["paired_t"],
         "errors": errors,
+        "error_vectors": aligned - gt,
+        "est_poses": prepared["paired_est"],
         "gt_poses": prepared["paired_gt"],
     }, None
 
@@ -430,6 +499,29 @@ def diagnose_files(
         clip_lengths=clip_lengths, clip_ids=clip_ids, seam_radius=seam_radius,
         bin_s=bin_s, keyframe_times=keyframe_times, brightness=brightness, blur=blur,
     )
+    stamps = np.asarray(paired["times"], dtype=float)
+    t0 = stamps - float(stamps[0])
+    tail_mask = np.zeros(stamps.shape, dtype=bool)
+    for run in report["tail_runs"]:
+        tail_mask |= (t0 >= float(run["t0_s"]) - 1e-9) & (t0 <= float(run["t1_s"]) + 1e-9)
+    geometry = []
+    for run in report["tail_runs"]:
+        mask = (t0 >= float(run["t0_s"]) - 1e-9) & (t0 <= float(run["t1_s"]) + 1e-9)
+        geometry.append({
+            "t0_s": run["t0_s"],
+            "t1_s": run["t1_s"],
+            "offset": error_vector_offset(paired["error_vectors"][mask]),
+            "step": stepwise_relative_error(paired["est_poses"], paired["gt_poses"], mask),
+        })
+    report["tail_geometry"] = geometry
+    outside = ~tail_mask if tail_mask.any() else np.ones(stamps.shape, dtype=bool)
+    report["outside_tail"] = _error_stats(paired["errors"][outside])
+    report["outside_tail_step"] = stepwise_relative_error(
+        paired["est_poses"], paired["gt_poses"], outside,
+    )
+    linear, angular = motion_series(stamps, paired["gt_poses"])
+    report["motion_in_tail"] = _speed_summary(linear, angular, tail_mask) if tail_mask.any() else None
+    report["motion_outside_tail"] = _speed_summary(linear, angular, outside)
     report["status"] = "ok"
     report["failure"] = None
     return report
