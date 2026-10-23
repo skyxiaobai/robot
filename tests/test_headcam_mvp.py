@@ -2804,5 +2804,377 @@ class TrajectoryTimelineTest(unittest.TestCase):
         )
 
 
+class BatchAccuracyExportTest(unittest.TestCase):
+    """batch 行里的实测 ATE 可以进包。单位阵、真值冒充、手写数字、对不上的 clip 都不进。"""
+
+    BATCH = ROOT / "docs" / "headcam" / "orbslam3_quest3_batch.json"
+
+    def _square(self):
+        return [
+            np.array([0.0, 0.0, 0.0]),
+            np.array([1.0, 0.0, 0.0]),
+            np.array([1.0, 1.0, 0.0]),
+            np.array([0.0, 1.0, 0.0]),
+        ]
+
+    def _pair(self, root, points=None):
+        points = self._square() if points is None else points
+        stamps = [index / 30.0 for index in range(len(points))]
+        shift = np.array([0.4, -0.2, 0.1])
+        rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        gt_poses = []
+        est_poses = []
+        for point in points:
+            gt = np.eye(4)
+            gt[:3, 3] = point
+            est = np.eye(4)
+            est[:3, :3] = rotation
+            est[:3, 3] = rotation @ point + shift
+            gt_poses.append(gt)
+            est_poses.append(est)
+        gt_path = root / "gt.txt"
+        est_path = root / "slam.txt"
+        gt_path.write_text(
+            "# pose_source=hot3d_gt_mocap\n"
+            + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(stamps, gt_poses)),
+            encoding="utf-8",
+        )
+        est_path.write_text(
+            "# pose_source=orbslam3_stereo_euroc\n"
+            + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(stamps, est_poses)),
+            encoding="utf-8",
+        )
+        return stamps, est_path, gt_path, est_poses
+
+    def _record(self, accuracy, frames, name="synth_seq", status="ok", failure=None):
+        return {
+            "name": name,
+            "sequence_id": name,
+            "pose_source": "orbslam3_stereo_euroc",
+            "reference_pose_source": "hot3d_gt_mocap",
+            "clip_ids": [1],
+            "input_frames": frames,
+            "tracked_frames": frames,
+            "trajectory_rows": frames,
+            "estimate_time_scale": 1.0,
+            "gt_time_scale": 1.0,
+            "status": status,
+            "failure": failure,
+            "accuracy": accuracy,
+        }
+
+    def _write_batch(self, path, record, median=123.0):
+        path.write_text(json.dumps({
+            "ate_se3_rmse_m": {"n": 1, "min": 0.0, "median": median, "max": median},
+            "sequences": [record],
+        }), encoding="utf-8")
+
+    def test_real_batch_clip_span_must_match_before_accuracy_is_used(self):
+        from headcam.batch_export import load_batch, match_sequence, measured_accuracy_from_record
+
+        batch = load_batch(self.BATCH)
+        packaged = [
+            ("P0002_210fc0da", [0]),
+            ("P0003_5e1a34f8", [300]),
+            ("P0010_3224a967", [700]),
+            ("P0017_d2495f49", [1100]),
+        ]
+        for sequence_id, clips in packaged:
+            self.assertIsNone(match_sequence(batch, sequence_id, clips))
+        row = match_sequence(batch, "P0010_3224a967", list(range(706, 718)))
+        accuracy, note = measured_accuracy_from_record(row)
+        self.assertEqual(accuracy["ate"]["se3"]["rmse_m"], row["accuracy"]["ate"]["se3"]["rmse_m"])
+        self.assertEqual(accuracy["ate"]["se3"]["rmse_m"], 0.008205109394453782)
+        self.assertNotEqual(accuracy["ate"]["se3"]["rmse_m"], batch["ate_se3_rmse_m"]["median"])
+        self.assertNotEqual(accuracy["ate"]["se3"]["rmse_m"], batch["ate_se3_rmse_m"]["min"])
+        self.assertIn("P0010_3224a967", note)
+        short = match_sequence(batch, "P0017_1a07e9e7", [1036, 1037, 1038, 1039])
+        short_accuracy, _short_note = measured_accuracy_from_record(short)
+        self.assertEqual(short_accuracy["ate"]["se3"]["rmse_m"], 0.0008185619223686899)
+
+    def test_identity_and_ground_truth_copies_are_refused(self):
+        import tempfile
+
+        from headcam.batch_export import export_from_batch, poses_all_identity
+        from headcam.export_mvp import main as export_main
+        from headcam.hot3d_check import trajectory_accuracy
+
+        eye = np.eye(4)
+        moved = np.eye(4)
+        moved[0, 3] = 1.0
+        self.assertFalse(poses_all_identity([eye, moved]))
+        self.assertTrue(poses_all_identity([eye, eye]))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stamps, est_path, gt_path, _est_poses = self._pair(root)
+            measured = trajectory_accuracy(
+                est_path, gt_path,
+                estimate_pose_source="orbslam3_stereo_euroc",
+                reference_pose_source="hot3d_gt_mocap",
+            )
+            batch_path = root / "batch.json"
+            self._write_batch(batch_path, self._record(measured, len(stamps)))
+            session = _write_session(root / "sess", stamps)
+            identity = root / "identity.txt"
+            identity.write_text(
+                "# pose_source=orbslam3_stereo_euroc\n"
+                + "".join(_tum_line(stamp, np.eye(4)) + "\n" for stamp in stamps),
+                encoding="utf-8",
+            )
+            out = root / "out-identity"
+            with self.assertRaises(ValueError) as raised:
+                export_from_batch(batch_path, "synth_seq", session, identity, out)
+            self.assertIn("单位阵", str(raised.exception))
+            self.assertFalse(out.exists())
+            code = export_main([
+                "--batch", str(batch_path),
+                "--sequence", "synth_seq",
+                "--session", str(session),
+                "--tum", str(identity),
+                "--out", str(out),
+                "--skip-hands",
+            ])
+            self.assertEqual(code, 1)
+            self.assertFalse((out / "lerobot").exists())
+            self.assertFalse((out / "report.json").exists())
+
+            copied = root / "copied.txt"
+            body = "\n".join(
+                line for line in gt_path.read_text(encoding="utf-8").splitlines() if not line.startswith("#")
+            )
+            copied.write_text("# pose_source=orbslam3_stereo_euroc\n" + body + "\n", encoding="utf-8")
+            with self.assertRaises(ValueError) as copied_raised:
+                export_from_batch(
+                    batch_path, "synth_seq", session, copied, root / "out-copied", gt_tum_path=gt_path,
+                )
+            self.assertIn("头戴真值", str(copied_raised.exception))
+            self.assertFalse((root / "out-copied").exists())
+
+            labeled = root / "labeled.txt"
+            labeled.write_text(
+                "# pose_source=hot3d_gt_mocap\n"
+                + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(stamps, [moved, moved, moved, moved])),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError) as labeled_raised:
+                export_from_batch(batch_path, "synth_seq", session, labeled, root / "out-labeled")
+            self.assertIn("pose_source", str(labeled_raised.exception))
+
+            hands = export_main([
+                "--batch", str(batch_path),
+                "--sequence", "synth_seq",
+                "--session", str(session),
+                "--tum", str(est_path),
+                "--out", str(root / "out-hands"),
+            ])
+            self.assertEqual(hands, 1)
+            self.assertFalse((root / "out-hands").exists())
+
+    def test_package_takes_batch_measurement_not_the_aggregate_or_a_float(self):
+        import shutil
+        import tempfile
+
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:
+            self.skipTest("未安装 pyarrow，跳过 batch accuracy 的 LeRobot 包")
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("没有 ffmpeg，跳过 batch accuracy 的 LeRobot 包")
+
+        from headcam.batch_export import export_from_batch
+        from headcam.export_mvp import main as export_main
+        from headcam.hot3d_check import trajectory_accuracy
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stamps, est_path, gt_path, est_poses = self._pair(root)
+            measured = trajectory_accuracy(
+                est_path, gt_path,
+                estimate_pose_source="orbslam3_stereo_euroc",
+                reference_pose_source="hot3d_gt_mocap",
+            )
+            self.assertLess(measured["ate"]["se3"]["rmse_m"], 1e-8)
+            batch_path = root / "batch.json"
+            self._write_batch(batch_path, self._record(measured, len(stamps)), median=123.0)
+            session = _write_session(root / "sess", stamps)
+            out = root / "out"
+            code = export_main([
+                "--batch", str(batch_path),
+                "--sequence", "synth_seq",
+                "--session", str(session),
+                "--tum", str(est_path),
+                "--gt-tum", str(gt_path),
+                "--out", str(out),
+                "--skip-hands",
+            ])
+            report = json.loads((out / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(code, 0, report)
+            self.assertEqual(report["pose_source"], "orbslam3_stereo_euroc")
+            self.assertEqual(report["accuracy_source"], "batch")
+            self.assertEqual(report["accuracy"]["ate"]["se3"]["rmse_m"], measured["ate"]["se3"]["rmse_m"])
+            self.assertNotEqual(report["accuracy"]["ate"]["se3"]["rmse_m"], 123.0)
+            self.assertEqual(
+                report["accuracy"]["ate"]["se3"]["rotation_row_major"],
+                measured["ate"]["se3"]["rotation_row_major"],
+            )
+            note = json.loads((out / "lerobot" / "meta" / "egodata_export.json").read_text(encoding="utf-8"))
+            self.assertEqual(note["pose_source"], "orbslam3_stereo_euroc")
+            self.assertEqual(note["hands"], "absent")
+            self.assertEqual(note["accuracy"]["ate"]["se3"]["rmse_m"], measured["ate"]["se3"]["rmse_m"])
+            info = json.loads((out / "lerobot" / "meta" / "info.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["pose_source"], "orbslam3_stereo_euroc")
+            self.assertNotIn("accuracy", info)
+            table = pq.read_table(out / "lerobot" / "data" / "chunk-000" / "file-000.parquet")
+            pose = table.column("observation.pose")[0].as_py()
+            self.assertAlmostEqual(pose[0], float(est_poses[0][0, 3]), places=6)
+            self.assertAlmostEqual(pose[1], float(est_poses[0][1, 3]), places=6)
+            self.assertAlmostEqual(pose[2], float(est_poses[0][2, 3]), places=6)
+            self.assertFalse(np.allclose(pose[:3], 0.0))
+
+            stuffed = json.loads(json.dumps(measured))
+            stuffed["ate"]["se3"]["rmse_m"] = 0.5
+            disagree_path = root / "disagree.json"
+            self._write_batch(disagree_path, self._record(stuffed, len(stamps)))
+            disagree_out = root / "disagree"
+            disagree = export_from_batch(
+                disagree_path, "synth_seq", session, est_path, disagree_out, gt_tum_path=gt_path,
+            )
+            self.assertEqual(disagree["pose_source"], "orbslam3_stereo_euroc")
+            self.assertIsNone(disagree["accuracy"])
+            self.assertEqual(disagree["accuracy_source"], "unmeasured")
+            self.assertIn("不一致", disagree["accuracy_note"])
+            saved = json.loads((disagree_out / "report.json").read_text(encoding="utf-8"))
+            self.assertIsNone(saved["accuracy"])
+            self.assertNotIn("0.5", json.dumps(saved["accuracy"]))
+
+            bare = json.loads(json.dumps(self._record(0.02, len(stamps))))
+            bare_path = root / "bare.json"
+            self._write_batch(bare_path, bare)
+            bare_out = root / "bare"
+            bare_report = export_from_batch(bare_path, "synth_seq", session, est_path, bare_out)
+            self.assertEqual(bare_report["pose_source"], "orbslam3_stereo_euroc")
+            self.assertIsNone(bare_report["accuracy"])
+            self.assertIn("手写数字", bare_report["accuracy_note"])
+
+            missing = self._record(None, len(stamps), status="unmeasured", failure="对上的不同时间戳少于 3，不算 ATE。")
+            missing_path = root / "missing.json"
+            self._write_batch(missing_path, missing)
+            missing_out = root / "missing"
+            missing_report = export_from_batch(
+                missing_path, "synth_seq", session, est_path, missing_out, gt_tum_path=gt_path,
+            )
+            self.assertEqual(missing_report["accuracy_source"], "measured_this_run")
+            self.assertLess(missing_report["accuracy"]["ate"]["se3"]["rmse_m"], 1e-8)
+            self.assertIn("这次用真值测到了", missing_report["accuracy_note"])
+
+            null_only = export_from_batch(missing_path, "synth_seq", session, est_path, root / "null-only")
+            self.assertIsNone(null_only["accuracy"])
+            self.assertEqual(null_only["accuracy_source"], "unmeasured")
+            self.assertIn("没有测到 ATE", null_only["accuracy_note"])
+
+            wrong_frames = self._record(measured, 4)
+            wrong_frames["input_frames"] = 1800
+            wrong_path = root / "wrong.json"
+            self._write_batch(wrong_path, wrong_frames)
+            with self.assertRaises(ValueError) as wrong:
+                export_from_batch(wrong_path, "synth_seq", session, est_path, root / "wrong")
+            self.assertIn("input_frames", str(wrong.exception))
+            self.assertFalse((root / "wrong").exists())
+
+    def test_origin_first_frame_is_kept_and_a_lost_frame_stays_null(self):
+        import shutil
+        import tempfile
+
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:
+            self.skipTest("未安装 pyarrow，跳过丢失帧的 LeRobot 包")
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("没有 ffmpeg，跳过丢失帧的 LeRobot 包")
+
+        from headcam.batch_export import export_from_batch
+        from headcam.hot3d_check import trajectory_accuracy
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            points = self._square()
+            stamps = [index / 30.0 for index in range(4)]
+            shift = np.array([0.2, 0.0, 0.0])
+            est_poses = []
+            gt_poses = []
+            for point in points:
+                est = np.eye(4)
+                est[:3, 3] = point
+                gt = np.eye(4)
+                gt[:3, 3] = point + shift
+                est_poses.append(est)
+                gt_poses.append(gt)
+            self.assertTrue(np.allclose(est_poses[0], np.eye(4)))
+            est_path = root / "slam.txt"
+            gt_path = root / "gt.txt"
+            est_path.write_text(
+                "# pose_source=orbslam3_stereo_euroc\n"
+                + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(stamps, est_poses)),
+                encoding="utf-8",
+            )
+            gt_path.write_text(
+                "# pose_source=hot3d_gt_mocap\n"
+                + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(stamps, gt_poses)),
+                encoding="utf-8",
+            )
+            measured = trajectory_accuracy(
+                est_path, gt_path,
+                estimate_pose_source="orbslam3_stereo_euroc",
+                reference_pose_source="hot3d_gt_mocap",
+            )
+            batch_path = root / "batch.json"
+            self._write_batch(batch_path, self._record(measured, 4))
+            session = _write_session(root / "sess", stamps)
+            report = export_from_batch(
+                batch_path, "synth_seq", session, est_path, root / "origin", gt_tum_path=gt_path,
+            )
+            self.assertEqual(report["pose_source"], "orbslam3_stereo_euroc")
+            self.assertLess(report["accuracy"]["ate"]["se3"]["rmse_m"], 1e-8)
+
+            short_stamps = stamps[:3]
+            short_path = root / "short.txt"
+            short_path.write_text(
+                "# pose_source=orbslam3_stereo_euroc\n"
+                + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(short_stamps, est_poses[:3])),
+                encoding="utf-8",
+            )
+            short_gt = root / "short_gt.txt"
+            short_gt.write_text(
+                "# pose_source=hot3d_gt_mocap\n"
+                + "".join(_tum_line(stamp, pose) + "\n" for stamp, pose in zip(short_stamps, gt_poses[:3])),
+                encoding="utf-8",
+            )
+            short_measured = trajectory_accuracy(
+                short_path, short_gt,
+                estimate_pose_source="orbslam3_stereo_euroc",
+                reference_pose_source="hot3d_gt_mocap",
+            )
+            session_stamps = short_stamps + [short_stamps[-1] + 10.0]
+            record = self._record(short_measured, 3)
+            record["input_frames"] = 4
+            record["tracked_frames"] = 3
+            record["trajectory_rows"] = 3
+            lost_batch = root / "lost.json"
+            self._write_batch(lost_batch, record)
+            lost_session = _write_session(root / "lost-sess", session_stamps)
+            lost = export_from_batch(lost_batch, "synth_seq", lost_session, short_path, root / "lost")
+            self.assertEqual(lost["pose_source"], "orbslam3_stereo_euroc")
+            self.assertEqual(lost["accuracy"]["ate"]["se3"]["rmse_m"], short_measured["ate"]["se3"]["rmse_m"])
+            self.assertIn("丢失帧不补单位阵", lost["accuracy_note"])
+            episode = json.loads((root / "lost" / "episodes" / "session.json").read_text(encoding="utf-8"))
+            slam = episode["hand_pose"]["slam"]
+            self.assertEqual(slam["pose_status"][-1], "tracking_lost")
+            self.assertIsNone(slam["T_world_cam"][-1])
+            self.assertIsNotNone(slam["T_world_cam"][0])
+            table = pq.read_table(root / "lost" / "lerobot" / "data" / "chunk-000" / "file-000.parquet")
+            self.assertIsNone(table.column("observation.pose")[-1].as_py())
+
+
 if __name__ == "__main__":
     unittest.main()

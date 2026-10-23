@@ -310,7 +310,7 @@ def apply_ok_frame_world(episode, slam):
     summary["camera_pose_meaning"] = "T_world_cam"
     summary["world_points_note"] = (
         "每一帧都是 ok，手腕和关节已用 p_world = T_world_cam @ p_cam 写入。"
-        "frame_convention 是 world：上轴未核实，不是 world_yup。accuracy 仍是 null。"
+        "frame_convention 是 world：上轴未核实，不是 world_yup。"
     )
     _tag_world(episode)
     return summary

@@ -22,7 +22,7 @@ from egodata.qc import write_yield_reports, yield_report
 from egodata.stereo_qc import qc_stereo_episode
 from headcam.hot3d_check import shared_measured_accuracy
 from headcam.slam_frames import apply_ok_frame_world
-from headcam.slam_vio import run_slam, world_hands_gate, write_slam_tum
+from headcam.slam_vio import run_slam, world_hands_gate, write_slam_status, write_slam_tum
 from headcam.sync_calib import refresh_calib_json
 from headcam.time_units import median_positive_step
 
@@ -312,10 +312,45 @@ def prepare_unmeasured_episode(session, slam, calib_document, episode_dir):
     return path, None
 
 
+def _append_note(text, extra):
+    extra = (extra or "").strip()
+    text = (text or "").strip()
+    if extra and text:
+        return text + " " + extra
+    return text or extra
+
+
+def _apply_accuracy_publication(slam, publication):
+    """用调用方已经核定的测量替换 accuracy。手写数字在这里拒绝。"""
+    from headcam.hot3d_check import is_measured_accuracy
+
+    value = publication.get("value")
+    source = slam.get("pose_source")
+    if value is None:
+        slam["accuracy"] = None
+    elif is_measured_accuracy(value, source):
+        slam["accuracy"] = value
+        notes = slam.get("notes")
+        if isinstance(notes, str):
+            slam["notes"] = notes.replace(
+                "没有另给真值轨迹时 accuracy 仍是 null。",
+                "accuracy 用的是这次给出的测量。",
+            )
+    else:
+        raise ValueError("要写入的 accuracy 不是测过的 Umeyama，已拒绝。")
+    note = publication.get("note")
+    if note:
+        slam["notes"] = _append_note(slam.get("notes"), note)
+    status_path = slam.get("slam_status")
+    if status_path:
+        write_slam_status(status_path, slam)
+    return slam
+
+
 def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None, run_hands=True,
                episodes=None, export=True, hand_pipeline=None, repo_id="local/headcam_mvp",
                run_orbslam3=None, allow_partial=False, tum_time_scale=None, pose_source=None,
-               gt_tum_path=None, gt_time_scale=None, log=print):
+               gt_tum_path=None, gt_time_scale=None, accuracy_publication=None, log=print):
     """跑 MVP 前半段并接上现有 QC / LeRobot。返回报告字典，同时写 ``out/report.json``。"""
     session = Path(session)
     out = Path(out)
@@ -329,6 +364,8 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
         out_dir=out, run_orbslam3=run_orbslam3, tum_time_scale=tum_time_scale,
         pose_source=pose_source, gt_tum_path=gt_tum_path, gt_time_scale=gt_time_scale,
     )
+    if accuracy_publication is not None:
+        slam = _apply_accuracy_publication(slam, accuracy_publication)
     gate = world_hands_gate(slam, allow_partial=allow_partial)
     hand_session = prepare_hand_session(session, out / "hand_session", slam)
     use_existing = episodes is not None
@@ -449,6 +486,20 @@ def export_mvp(session, out, slam_backend="auto", tum_path=None, max_gap_s=None,
             "轨迹时间单位和会话不一致时不自动换算，也不把跨单位的最近邻写成 T_world_cam。",
         ],
     }
+    if accuracy_publication is not None:
+        report["accuracy_source"] = accuracy_publication.get("source")
+        report["accuracy_note"] = accuracy_publication.get("note")
+        report["batch_sequence"] = accuracy_publication.get("sequence")
+        report["limits"] = [
+            (
+                "accuracy 只接受 batch 行里的 trajectory_error_v1，或这次对真值测到的同一类结构。"
+                "汇总的 min/median/max、手写数字、对不上的两份误差都不写。"
+            )
+            if "accuracy 只在给了另一份真值轨迹" in item else item
+            for item in report["limits"]
+        ]
+        if accuracy_publication.get("note"):
+            report["limits"].append(accuracy_publication["note"])
     if slam.get("pose_source") and str(slam.get("pose_source")).startswith("hot3d_gt"):
         report["limits"].append(
             "pose_source=%s。轨迹是 HOT3D 头戴地面真值，不是 SLAM 输出。accuracy 仍是 null。"
@@ -626,7 +677,47 @@ def main(argv=None):
                         help="轨迹来源。HOT3D 头戴真值用 hot3d_gt_mocap，不要把它叫成 SLAM")
     parser.add_argument("--gt-tum", default=None, help="另一份真值轨迹，只用来算 ATE/RPE")
     parser.add_argument("--gt-tum-time-scale", type=float, default=None)
+    parser.add_argument("--batch", default=None, help="orbslam3 batch json。和 --sequence 一起用")
+    parser.add_argument("--sequence", default=None, help="batch 里的序列名。accuracy 只取这一行")
     args = parser.parse_args(argv)
+    if args.batch or args.sequence:
+        if not args.batch or not args.sequence:
+            print("需要同时给出 --batch 和 --sequence", file=sys.stderr)
+            return 1
+        if args.package_annotated:
+            print("--batch 不和 --package-annotated 一起用。", file=sys.stderr)
+            return 1
+        if not args.skip_hands:
+            print("这条导出不跑手。手进 SLAM 世界系还停在 MANO 许可上。请加 --skip-hands。", file=sys.stderr)
+            return 1
+        if not args.session or not args.tum:
+            print("需要 --session 和 --tum", file=sys.stderr)
+            return 1
+        from headcam.batch_export import ESTIMATE_POSE_SOURCE, export_from_batch
+        if args.pose_source and args.pose_source != ESTIMATE_POSE_SOURCE:
+            print(
+                "--pose-source 必须是 %s，不能改成别的来源。" % ESTIMATE_POSE_SOURCE,
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            report = export_from_batch(
+                args.batch, args.sequence, args.session, args.tum, args.out,
+                gt_tum_path=args.gt_tum, tum_time_scale=args.tum_time_scale,
+                gt_time_scale=args.gt_tum_time_scale, repo_id=args.repo_id,
+                run_hands=False,
+            )
+        except (FileNotFoundError, ValueError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        lerobot = report.get("lerobot") or {}
+        if lerobot.get("error") and not lerobot.get("dependency_missing"):
+            print(lerobot["error"], file=sys.stderr)
+            return 1
+        if not lerobot.get("dir") and not lerobot.get("dependency_missing"):
+            print(lerobot.get("result") or "未导出", file=sys.stderr)
+            return 1
+        return 0
     if args.package_annotated:
         if not args.episodes:
             print("需要 --episodes", file=sys.stderr)
