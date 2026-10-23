@@ -367,6 +367,45 @@ def quest3_split_runs(definitions, splits, split="train", device="Quest3"):
     return contiguous_runs(records)
 
 
+def participant_id_of(sequence_id):
+    """HOT3D 的 sequence_id 以参与者编号开头，例如 P0003_b153ade2。"""
+    return str(sequence_id).split("_", 1)[0]
+
+
+def run_span(run):
+    """一条连续段的身份：(sequence_id, 第一段 clip, 最后一段 clip)。"""
+    return (str(run["sequence_id"]), int(run["clip_ids"][0]), int(run["clip_ids"][-1]))
+
+
+def next_unused_runs(runs, used_spans, per_participant=1):
+    """每位参与者还没进表的最长连续段。
+
+    used_spans 是已经入表的 run_span。同一 sequence_id 里更短的另一段不算已用。
+    参与者按编号排序。同一人按帧数从长到短，帧数相同则按第一段 clip。
+    """
+    if per_participant < 1:
+        raise ValueError("per_participant 至少是 1")
+    used = {tuple(span) for span in used_spans}
+    grouped = {}
+    for run in runs:
+        grouped.setdefault(participant_id_of(run["sequence_id"]), []).append(run)
+    chosen = []
+    for participant in sorted(grouped):
+        ordered = sorted(
+            grouped[participant],
+            key=lambda run: (-int(run["n_frames"]), int(run["clip_ids"][0]), str(run["sequence_id"])),
+        )
+        kept = 0
+        for run in ordered:
+            if run_span(run) in used:
+                continue
+            chosen.append(run)
+            kept += 1
+            if kept >= per_participant:
+                break
+    return chosen
+
+
 def _load_record(path):
     record = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(record, dict):

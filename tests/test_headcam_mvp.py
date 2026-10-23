@@ -2523,6 +2523,33 @@ class SlamBatchSummaryTest(unittest.TestCase):
         self.assertIn((2,), by_ids)
         self.assertNotIn((9,), by_ids)
 
+    def test_next_unused_run_is_the_second_longest_per_participant(self):
+        from headcam.slam_batch import next_unused_runs, run_span
+
+        def run(sequence_id, clips, frames):
+            return {
+                "sequence_id": sequence_id,
+                "clip_ids": clips,
+                "n_frames": frames,
+            }
+
+        runs = [
+            run("P0002_long", [6, 7], 1050),
+            run("P0002_next", [68, 69], 900),
+            run("P0002_short", [13], 150),
+            run("P0018_same", [1125, 1126], 750),
+            run("P0018_same", [1121, 1122], 600),
+            run("P0003_only", [1], 300),
+        ]
+        used = [run_span(runs[0]), run_span(runs[3])]
+        chosen = next_unused_runs(runs, used, per_participant=1)
+        spans = [run_span(item) for item in chosen]
+        self.assertEqual(spans, [
+            ("P0002_next", 68, 69),
+            ("P0003_only", 1, 1),
+            ("P0018_same", 1121, 1122),
+        ])
+
 
 class TrajectoryTimelineTest(unittest.TestCase):
     """逐帧误差和接缝、速度的对照。合成轨迹，不读 HOT3D，也不把真值叫做 SLAM。"""
