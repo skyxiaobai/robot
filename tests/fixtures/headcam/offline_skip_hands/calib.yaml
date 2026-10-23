@@ -1,0 +1,13 @@
+image_width: 320
+image_height: 240
+left:
+  intrinsics: [200, 210, 160, 120]
+  dist_coeffs: [0.01, -0.02, 0, 0, 0]
+right:
+  intrinsics: [201, 211, 159, 121]
+  dist_coeffs: [0, 0, 0, 0, 0]
+T_right_left:
+  - [1, 0, 0, -0.08]
+  - [0, 1, 0, 0]
+  - [0, 0, 1, 0.001]
+  - [0, 0, 0, 1]

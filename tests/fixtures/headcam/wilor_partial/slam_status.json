@@ -1,0 +1,88 @@
+{
+  "schema": "headcam_slam_status_v1",
+  "backend": "external_tum",
+  "accuracy": null,
+  "note": "合成状态，对齐 gap_tum 的 ok/lost/lost/ok。不是测量轨迹。",
+  "frames": [
+    {
+      "timestamp_s": 0.0,
+      "status": "ok",
+      "gap_s": 0.0,
+      "T_world_cam": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.1
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "timestamp_s": 0.033,
+      "status": "tracking_lost",
+      "gap_s": 0.033,
+      "T_world_cam": null
+    },
+    {
+      "timestamp_s": 0.066,
+      "status": "tracking_lost",
+      "gap_s": 0.033,
+      "T_world_cam": null
+    },
+    {
+      "timestamp_s": 0.1,
+      "status": "ok",
+      "gap_s": 0.0,
+      "T_world_cam": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.2
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  ],
+  "frame_count": 4,
+  "ok_frames": 2,
+  "tracking_lost_frames": 2,
+  "pose_missing_frames": 0,
+  "world_pose": false,
+  "coordinate_frame": "camera"
+}
