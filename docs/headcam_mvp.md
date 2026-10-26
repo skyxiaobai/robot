@@ -1026,3 +1026,34 @@ python3 scripts/headcam/export_mvp.py \
 ### 还缺的
 
 四段那个包仍是 `pose_source=hot3d_gt_mocap`，因为没有和它们的 clip 对应的实测轨迹。15 条里有实测 ATE 的，要等外部 TUM 和会话还在时才能按上面的命令导出。P0003 这次整段几厘米残差、P0002 开头那段固定平移，这次没有再查。手进 SLAM 世界系仍等 Justin 的 MANO 许可。
+
+## P0017 的缺测手包
+
+下了 Hugging Face `bop-benchmark/hot3d` 的 `train_quest3` clip-001036 到 clip-001039，每段 150 帧，序列 `P0017_1a07e9e7`。`write_quest3_euroc`：600 帧，30 fps，基线 0.06368154174105198 m，外参漂移 1.1450259460238877e-07 m，左右同步 0 ms，内参表各重建 1 次。和 batch 行的基线一致。图像、tar、去畸变 png 和轨迹没有入库。
+
+ORB-SLAM3 是上游 `4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4` 的 `stereo_euroc`。OpenCV 4.6.0，Eigen 3，Pangolin v0.6。查看器关掉，帧间 sleep 去掉，只在本机 `/tmp`。没有 IMU。日志：局部地图失败 0，回环 0，地图 1，关键帧 9，`New Map created with 639 points`。`CameraTrajectory.txt` 600 行、600 个时间戳、丢失 0。第一帧在原点。
+
+这次相对头戴真值的 SE3 RMSE 是 0.0008689981649285166 m（n=600）。batch 行是 0.0008185619223686899 m。差的绝对值是 5.0436242559826774e-05 m，大于 1e-6 m。没有把 batch 那一行的 RMSE 写进这份新轨迹。
+
+导出：
+
+```text
+PYTHONPATH=scripts python3 scripts/headcam/export_mvp.py \
+  --batch docs/headcam/orbslam3_quest3_batch.json \
+  --sequence P0017_1a07e9e7 \
+  --session /tmp/slam/P0017_1a07e9e7/session \
+  --tum /tmp/slam/P0017_1a07e9e7/CameraTrajectory_labeled.txt \
+  --gt-tum /tmp/slam/P0017_1a07e9e7/gt_headset_tum.txt \
+  --out /tmp/slam/P0017_1a07e9e7/export \
+  --skip-hands
+```
+
+`CameraTrajectory_labeled.txt` 只是在原始轨迹前加了 `# pose_source=orbslam3_stereo_euroc`。位姿没有改。退出码 0。包在 `/tmp/slam/P0017_1a07e9e7/export/lerobot`：1 段，600 帧，`ok=600`，`hands=absent`。`info.json` 和 `egodata_export.json` 的 `pose_source` 是 `orbslam3_stereo_euroc`。`info.json` 没有 accuracy。`report.json`、`slam_status.json`、`egodata_export.json` 的 accuracy 都是 null。`accuracy_source=unmeasured`。报告写的是：batch 的 SE3 RMSE 是 0.0008185619223686899，这次测到 0.0008689981649285166，两份不一致。parquet 里 600 行 `observation.pose` 都不是 null。第 0 帧平移是 0，最后一帧平移是 `[0.01006262, 0.047735944, -0.014272315]`，和 `CameraTrajectory.txt` 最后一行一致。这台机器没有 lerobot venv，没有用官方加载器逐帧读。
+
+数在 `docs/headcam/orbslam3_quest3/P0017_1a07e9e7_export_rerun.json`。batch 那 15 行没有改。
+
+`python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc`：74 项，跳过 2 项（两个官方加载器，没装 lerobot 或 torch），其余通过。numpy 1.26.4，pyarrow 18.1.0，pandas 2.2.3，cv2 4.6.0。没有 Kaggle。没有下 MANO。没有把人手放进 SLAM 世界系。
+
+### 还缺的
+
+这份包的 accuracy 是 null，因为重跑的 RMSE 和 batch 行对不上 1e-6 m。四段那个包仍是 `pose_source=hot3d_gt_mocap`。P0003 整段残差和 P0002 开头固定平移没有再查。手进 SLAM 世界系仍等 Justin 的 MANO 许可。
