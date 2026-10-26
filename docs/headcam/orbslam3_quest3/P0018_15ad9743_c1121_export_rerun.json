@@ -1,0 +1,112 @@
+{
+  "name": "P0018_15ad9743_c1121",
+  "sequence_id": "P0018_15ad9743",
+  "clip_ids": [
+    1121,
+    1122,
+    1123,
+    1124
+  ],
+  "note": "这台机器用上游 ORB-SLAM3 4452a3c stereo_euroc 重跑 clips 1121-1124。查看器关掉，帧间 sleep 去掉，只在本机 /tmp。二进制、词汇、图像和轨迹不入库。没有替换 docs/headcam/orbslam3_quest3_batch.json 里的那一行。LeRobot 包的 pose_source 是 orbslam3_stereo_euroc。这次 SE3 RMSE 和 batch 行相差超过 1e-6 m，所以包里的 accuracy 保持 null，没有把旧的 RMSE 套到这份新轨迹上。",
+  "orbslam3_commit": "4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4",
+  "opencv": "4.6.0",
+  "pangolin": "v0.6",
+  "viewer": false,
+  "inter_frame_sleep": false,
+  "input_frames": 600,
+  "tracked_frames": 600,
+  "trajectory_rows": 600,
+  "lost_frames": 0,
+  "duplicate_trajectory_rows": 0,
+  "map_keyframes": [
+    {
+      "map": 0,
+      "keyframes": 110
+    }
+  ],
+  "fail_to_track_local_map": 0,
+  "loop_closures": 0,
+  "maps": 1,
+  "baseline_m": 0.0639632910011052,
+  "extrinsic_drift_m": 2.1169715027180658e-07,
+  "batch_se3_rmse_m": 0.003080392875958846,
+  "this_run_se3_rmse_m": 0.0027235435865570787,
+  "abs_diff_m": 0.00035684928940176754,
+  "within_1e-6_m": false,
+  "package_pose_source": "orbslam3_stereo_euroc",
+  "package_accuracy": null,
+  "package_frames": 600,
+  "package_ok_frames": 600,
+  "package_path": "/tmp/slam/P0018_15ad9743_c1121/export/lerobot",
+  "session_path": "/tmp/slam/P0018_15ad9743_c1121/session",
+  "trajectory_path": "/tmp/slam/P0018_15ad9743_c1121/CameraTrajectory.txt",
+  "gt_path": "/tmp/slam/P0018_15ad9743_c1121/gt_headset_tum.txt",
+  "accuracy": {
+    "kind": "trajectory_error_v1",
+    "method": "umeyama",
+    "estimate_pose_source": "orbslam3_stereo_euroc",
+    "reference_pose_source": "hot3d_gt_mocap",
+    "max_dt_s": 0.05,
+    "ate": {
+      "se3": {
+        "n": 600,
+        "rmse_m": 0.0027235435865570787,
+        "median_m": 0.002246254571217467,
+        "max_m": 0.008812988185761003,
+        "alignment": "umeyama_se3",
+        "scale": "fixed_1",
+        "rotation_row_major": [
+          -0.08326274096944035,
+          -0.8803352854758376,
+          0.46698726011790875,
+          0.022651453408772268,
+          -0.4701653107438674,
+          -0.882287647103592,
+          0.9962701579515097,
+          -0.06288374765627233,
+          0.05908812618433736
+        ],
+        "translation": [
+          -0.2134572359819136,
+          1.108189728490795,
+          0.09927241438801551
+        ],
+        "applied_as": "p_ref = R @ p_est + t，尺度固定为 1。R 按行展开。"
+      },
+      "sim3": {
+        "n": 600,
+        "rmse_m": 0.0020056904218865978,
+        "median_m": 0.0015035333670238007,
+        "max_m": 0.010069465131766665,
+        "alignment": "umeyama_sim3",
+        "scale": "free",
+        "similarity_scale": 1.0204944836544005
+      }
+    },
+    "rpe": [
+      {
+        "delta_s": 1.0,
+        "max_delta_error_s": 0.05,
+        "alignment": "none_relative",
+        "n_poses": 600,
+        "n_pairs": 571,
+        "trans_rmse_m": 0.0038966062898870175,
+        "trans_median_m": 0.003085429466555024,
+        "rot_rmse_deg": 0.224309820211055,
+        "rot_median_deg": 0.19658263927447153
+      },
+      {
+        "delta_s": 5.0,
+        "max_delta_error_s": 0.05,
+        "alignment": "none_relative",
+        "n_poses": 600,
+        "n_pairs": 451,
+        "trans_rmse_m": 0.003790148562609139,
+        "trans_median_m": 0.0032757526899719214,
+        "rot_rmse_deg": 0.2594200789838052,
+        "rot_median_deg": 0.2329936573311502
+      }
+    ],
+    "note": "相机中心，最近邻，超过 max_dt_s 不配。重复时间戳只留第一行。SE3 尺度固定为 1。Sim3 尺度自由，similarity_scale 乘在估计轨迹上。RPE 不做这次全局对齐。"
+  }
+}
