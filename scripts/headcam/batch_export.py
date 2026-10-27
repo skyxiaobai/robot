@@ -44,18 +44,29 @@ def load_batch(path):
 
 
 def find_sequence(batch, name):
-    """按 ``name`` 或 ``sequence_id`` 找唯一的一行。没有就返回 None。"""
-    matches = []
+    """按名字找一行。名字唯一时用那一行，即使别的行共用 ``sequence_id``。
+
+    没有这个名字、只靠 ``sequence_id`` 对上多行时不猜测，返回前抛 ``ValueError``。
+    一行都没有则返回 None。
+    """
+    named = []
+    identified = []
     for record in batch.get("sequences") or []:
         if not isinstance(record, dict):
             continue
+        if record.get("name") == name:
+            named.append(record)
         if record.get("sequence_id") == name or record.get("name") == name:
-            matches.append(record)
-    if not matches:
+            identified.append(record)
+    if len(named) > 1:
+        raise ValueError("batch 里名字 %s 有 %d 条，不猜测用哪一条。" % (name, len(named)))
+    if len(named) == 1:
+        return named[0]
+    if not identified:
         return None
-    if len(matches) > 1:
-        raise ValueError("batch 里 %s 有 %d 条，不猜测用哪一条。" % (name, len(matches)))
-    return matches[0]
+    if len(identified) > 1:
+        raise ValueError("batch 里 %s 有 %d 条，不猜测用哪一条。" % (name, len(identified)))
+    return identified[0]
 
 
 def match_sequence(batch, sequence_id, clip_ids):

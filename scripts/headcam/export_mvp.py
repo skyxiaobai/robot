@@ -653,6 +653,186 @@ def package_annotated_episodes(episodes_dir, out, repo_id="local/headcam_mvp", l
     return report
 
 
+def _finite_pose_matrix(matrix):
+    import numpy as np
+
+    pose = np.asarray(matrix, dtype=float)
+    return pose.shape == (4, 4) and bool(np.isfinite(pose).all())
+
+
+def _pose_is_identity(matrix, atol=1e-8):
+    import numpy as np
+
+    if not _finite_pose_matrix(matrix):
+        return False
+    return bool(np.allclose(np.asarray(matrix, dtype=float), np.eye(4), atol=atol))
+
+
+def _unmeasured_pose_counts(episode):
+    slam = (episode.get("hand_pose") or {}).get("slam") or {}
+    statuses = slam.get("pose_status") or []
+    return {
+        "ok_frames": sum(1 for status in statuses if status == "ok"),
+        "tracking_lost_frames": sum(1 for status in statuses if status == "tracking_lost"),
+        "pose_missing_frames": sum(1 for status in statuses if status == "pose_missing"),
+    }
+
+
+def _validate_unmeasured_pose_episode(episode):
+    """缺测手的外部轨迹。丢失帧必须是 null，不能是单位阵。"""
+    if not isinstance(episode, dict):
+        raise ValueError("episode 必须是对象")
+    episode_id = episode.get("episode_id")
+    if episode.get("hands_measured") is not False:
+        raise ValueError("%s 不是缺测手。这条打包不把手放进世界系。" % episode_id)
+    slam = (episode.get("hand_pose") or {}).get("slam") if isinstance(episode.get("hand_pose"), dict) else None
+    if not isinstance(slam, dict):
+        raise ValueError("%s 没有 hand_pose.slam" % episode_id)
+    if slam.get("timestamp_alignment") == "refused":
+        raise ValueError("%s 的时间对齐被拒绝，不打包" % episode_id)
+    scope = slam.get("world_points_scope")
+    if scope not in ("all_frames", "ok_frames_only", "already_world"):
+        raise ValueError(
+            "%s 的 world_points_scope=%s。没有逐帧外部位姿，不打包。"
+            % (episode_id, scope)
+        )
+    source = slam.get("pose_source")
+    if not isinstance(source, str) or not source:
+        raise ValueError("%s 没有 pose_source" % episode_id)
+    if source.startswith("hot3d_gt"):
+        raise ValueError("%s 的 pose_source=%s。这是头戴真值，不是测过的外部轨迹。" % (episode_id, source))
+    num_frames = int(episode.get("num_frames") or 0)
+    statuses = slam.get("pose_status")
+    matrices = slam.get("T_world_cam")
+    if not isinstance(statuses, list) or not isinstance(matrices, list):
+        raise ValueError("%s 的逐帧位姿不完整" % episode_id)
+    if len(statuses) != num_frames or len(matrices) != num_frames:
+        raise ValueError("%s 的逐帧位姿长度和帧数不一致" % episode_id)
+    ok_poses = []
+    for index, (status, matrix) in enumerate(zip(statuses, matrices)):
+        if status not in ("ok", "tracking_lost", "pose_missing"):
+            raise ValueError("%s 第 %d 帧的 slam_status 无法识别：%s" % (episode_id, index, status))
+        if status == "ok":
+            if not _finite_pose_matrix(matrix):
+                raise ValueError("%s 第 %d 帧是 ok，但没有有限的 T_world_cam" % (episode_id, index))
+            ok_poses.append(matrix)
+        elif matrix is not None:
+            raise ValueError("%s 第 %d 帧是 %s，位姿必须是 null，不能写成单位阵。" % (episode_id, index, status))
+    if not ok_poses or all(_pose_is_identity(matrix) for matrix in ok_poses):
+        raise ValueError("%s 的 ok 位姿全是单位阵，或者没有 ok 帧。不把单位阵当成世界轨迹，也不写出包。" % episode_id)
+    return source
+
+
+def package_unmeasured_pose_episodes(episodes_dir, out, repo_id="local/headcam_mvp", log=print):
+    """把各自已经写好外部轨迹的缺测手 episode 打成一个 LeRobot 包。
+
+    不读取某一个会话的轨迹，也不跑手。``pose_source`` 必须相同，而且不能是头戴真值。
+    丢失帧的 ``T_world_cam`` 必须是 null。ok 位姿全是单位阵时不写 ``out``。
+    各段测到的 accuracy 不一致时，包级 accuracy 保持 null，不取中位数。
+    """
+    from headcam.hot3d_check import is_measured_accuracy
+
+    root = Path(episodes_dir)
+    if not root.is_dir():
+        raise FileNotFoundError("没有 episode 目录：%s" % root)
+    paths = sorted(path for path in root.glob("*.json") if path.is_file())
+    if not paths:
+        raise ValueError("没有可打包的 episode：%s" % root)
+    loaded = []
+    sources = []
+    for path in paths:
+        episode = json.loads(path.read_text(encoding="utf-8"))
+        sources.append(_validate_unmeasured_pose_episode(episode))
+        loaded.append(episode)
+    ids = [episode.get("episode_id") for episode in loaded]
+    if len(ids) != len(set(ids)):
+        raise ValueError("episode_id 重复，不能打进同一个包：%s" % ids)
+    unique = sorted(set(sources))
+    if len(unique) != 1:
+        raise ValueError("同一次导出里的 pose_source 不一致：%s" % unique)
+    pose_source = unique[0]
+
+    out = Path(out)
+    if out.exists():
+        raise FileExistsError("输出目录已经存在，不覆盖：%s" % out)
+    out.mkdir(parents=True)
+    qc_report, _html, csv_path = qc_episode_dir(root, out)
+    by_id = {episode.get("episode_id"): episode for episode in loaded}
+    packaged = []
+    rejected = []
+    for item in qc_report.get("results") or []:
+        brief = _qc_brief(item)
+        episode = by_id.get(brief["episode_id"])
+        counts = _unmeasured_pose_counts(episode) if episode is not None else {}
+        brief.update(counts)
+        slam = ((episode or {}).get("hand_pose") or {}).get("slam") or {}
+        value = slam.get("accuracy")
+        brief["accuracy"] = value if is_measured_accuracy(value, slam.get("pose_source")) else None
+        brief["accuracy_note"] = slam.get("notes")
+        if brief["accepted"]:
+            packaged.append(brief)
+        else:
+            rejected.append(brief)
+    accepted = int(qc_report.get("accepted_episodes") or 0)
+    accepted_ids = {item["episode_id"] for item in packaged}
+    accuracy = shared_measured_accuracy([
+        episode for episode in loaded if episode.get("episode_id") in accepted_ids
+    ])
+    if accepted and csv_path is not None:
+        lerobot = export_lerobot_dir(root, csv_path, out / "lerobot", repo_id)
+    else:
+        lerobot = {"dir": None, "result": "没有通过 QC 的片段，未导出"}
+
+    def _total(key):
+        return int(sum(int(item.get(key) or 0) for item in packaged))
+
+    ok_frames = _total("ok_frames")
+    tracking_lost = _total("tracking_lost_frames")
+    pose_missing = _total("pose_missing_frames")
+    report = {
+        "package": "unmeasured_pose_episodes",
+        "episodes_dir": str(root),
+        "pose_source": pose_source,
+        "hands": "absent",
+        "accuracy": accuracy,
+        "ok_frames": ok_frames,
+        "tracking_lost_frames": tracking_lost,
+        "pose_missing_frames": pose_missing,
+        "episodes": len(paths),
+        "packaged_episodes": packaged,
+        "rejected_episodes": rejected,
+        "qc": {
+            "yield": qc_report.get("yield"),
+            "raw_frames": qc_report.get("raw_frames"),
+            "usable_frames": qc_report.get("usable_frames"),
+            "episodes": qc_report.get("episodes"),
+            "accepted_episodes": qc_report.get("accepted_episodes"),
+            "rejected_count": qc_report.get("rejected_episodes"),
+            "source": "egodata.stereo_qc.qc_stereo_episode",
+        },
+        "lerobot": lerobot,
+        "limits": [
+            "每一份 episode 用自己的 hand_pose.slam.T_world_cam。没有用某一个会话的轨迹覆盖其他片段。",
+            "手部没有测量。不把关节或手腕放进 SLAM 世界系。",
+            "pose_source=%s。丢失帧的 observation.pose 是 null，不补单位阵。" % pose_source,
+            "包级 accuracy 只在每一份被接受的 episode 都有同一份测过的 Umeyama 时写入。各段不同、手写数字、头戴真值来源都是 null。",
+            "QC 拒绝的片段留在 rejected_episodes，不写进 LeRobot 包。",
+        ],
+    }
+    _dump(out / "report.json", _jsonable(report))
+    if log:
+        log(
+            "package=pose_only episodes=%d accepted=%d rejected=%d pose_source=%s "
+            "ok=%d tracking_lost=%d pose_missing=%d accuracy=%s"
+            % (
+                len(paths), accepted, len(rejected), pose_source,
+                ok_frames, tracking_lost, pose_missing,
+                "null" if accuracy is None else "measured",
+            )
+        )
+    return report
+
+
 def main(argv=None):
     import argparse
     import sys
@@ -670,6 +850,8 @@ def main(argv=None):
     parser.add_argument("--episodes", default=None, help="已有统一 episode 目录：跳过手部，做 QC 和 LeRobot")
     parser.add_argument("--package-annotated", action="store_true",
                         help="episodes 里每份已经有自己的世界位姿。不再用一个会话的轨迹覆盖它们")
+    parser.add_argument("--package-pose-only", action="store_true",
+                        help="缺测手、各自已有外部轨迹的 episode 打成一个包。不跑手")
     parser.add_argument("--no-export", action="store_true")
     parser.add_argument("--run-orbslam3", action="store_true")
     parser.add_argument("--repo-id", default="local/headcam_mvp")
@@ -684,8 +866,8 @@ def main(argv=None):
         if not args.batch or not args.sequence:
             print("需要同时给出 --batch 和 --sequence", file=sys.stderr)
             return 1
-        if args.package_annotated:
-            print("--batch 不和 --package-annotated 一起用。", file=sys.stderr)
+        if args.package_annotated or args.package_pose_only:
+            print("--batch 不和打包入口一起用。", file=sys.stderr)
             return 1
         if not args.skip_hands:
             print("这条导出不跑手。手进 SLAM 世界系还停在 MANO 许可上。请加 --skip-hands。", file=sys.stderr)
@@ -715,6 +897,32 @@ def main(argv=None):
             print(lerobot["error"], file=sys.stderr)
             return 1
         if not lerobot.get("dir") and not lerobot.get("dependency_missing"):
+            print(lerobot.get("result") or "未导出", file=sys.stderr)
+            return 1
+        return 0
+    if args.package_pose_only and args.package_annotated:
+        print("--package-pose-only 和 --package-annotated 不能一起用。", file=sys.stderr)
+        return 1
+    if args.package_pose_only:
+        if not args.episodes:
+            print("需要 --episodes", file=sys.stderr)
+            return 1
+        if args.session or args.tum or args.pose_source:
+            print(
+                "--package-pose-only 不再读取会话或另一条轨迹。不要同时传 --session、--tum、--pose-source。",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            report = package_unmeasured_pose_episodes(args.episodes, args.out, repo_id=args.repo_id)
+        except (FileNotFoundError, FileExistsError, ValueError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        lerobot = report.get("lerobot") or {}
+        if lerobot.get("error") and not lerobot.get("dependency_missing"):
+            print(lerobot["error"], file=sys.stderr)
+            return 1
+        if not lerobot.get("dir"):
             print(lerobot.get("result") or "未导出", file=sys.stderr)
             return 1
         return 0

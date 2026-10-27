@@ -32,7 +32,7 @@ def _library_path(orbslam_root):
 
 def run_sequence(
     clip_dirs, work, orbslam_bin, vocab, orbslam_root,
-    name=None, participant_id=None,
+    name=None, participant_id=None, session_out=None, episode_id=None,
 ):
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
@@ -41,7 +41,10 @@ def run_sequence(
     yaml_path = work / "cam.yaml"
     log_path = work / "stereo_euroc.log"
     record_path = work / "sequence.json"
-    prepared = write_quest3_euroc(clip_dirs, euroc, gt_tum, yaml_path)
+    prepared = write_quest3_euroc(
+        clip_dirs, euroc, gt_tum, yaml_path,
+        session_out=session_out, episode_id=episode_id,
+    )
     sequence_id = prepared["sequence_id"]
     participant = participant_id or prepared.get("participant_id") or str(sequence_id).split("_")[0]
     label = name or sequence_id
@@ -91,11 +94,14 @@ def main(argv=None):
     parser.add_argument("--orbslam-root", required=True)
     parser.add_argument("--name", default=None)
     parser.add_argument("--participant", default=None)
+    parser.add_argument("--session", default=None, help="另写缺测手导出用的会话。不写 slam.tum")
+    parser.add_argument("--episode-id", default=None)
     args = parser.parse_args(argv)
     try:
         record = run_sequence(
             args.clips, args.work, args.orbslam_bin, args.vocab, args.orbslam_root,
             name=args.name, participant_id=args.participant,
+            session_out=args.session, episode_id=args.episode_id,
         )
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)

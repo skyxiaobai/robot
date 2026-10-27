@@ -2892,6 +2892,26 @@ class BatchAccuracyExportTest(unittest.TestCase):
         short_accuracy, _short_note = measured_accuracy_from_record(short)
         self.assertEqual(short_accuracy["ate"]["se3"]["rmse_m"], 0.0008185619223686899)
 
+    def test_unique_name_wins_when_sequence_id_is_shared(self):
+        from headcam.batch_export import find_sequence, load_batch
+
+        batch = load_batch(self.BATCH)
+        named = find_sequence(batch, "P0018_15ad9743")
+        self.assertEqual(named["name"], "P0018_15ad9743")
+        self.assertEqual(named["clip_ids"], [1125, 1126, 1127, 1128, 1129])
+        self.assertEqual(named["input_frames"], 750)
+        other = find_sequence(batch, "P0018_15ad9743_c1121")
+        self.assertEqual(other["clip_ids"], [1121, 1122, 1123, 1124])
+        self.assertEqual(other["input_frames"], 600)
+        with self.assertRaises(ValueError) as raised:
+            find_sequence({
+                "sequences": [
+                    {"name": "a_c1", "sequence_id": "shared"},
+                    {"name": "a_c2", "sequence_id": "shared"},
+                ],
+            }, "shared")
+        self.assertIn("不猜测", str(raised.exception))
+
     def test_identity_and_ground_truth_copies_are_refused(self):
         import tempfile
 
@@ -3174,6 +3194,195 @@ class BatchAccuracyExportTest(unittest.TestCase):
             self.assertIsNotNone(slam["T_world_cam"][0])
             table = pq.read_table(root / "lost" / "lerobot" / "data" / "chunk-000" / "file-000.parquet")
             self.assertIsNone(table.column("observation.pose")[-1].as_py())
+
+
+class UnmeasuredPosePackageTest(unittest.TestCase):
+    """多段缺测手、各自的外部轨迹打成一个包。单位阵和头戴真值不进。"""
+
+    def _moving_tum(self, path, stamps, shift):
+        rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        points = [
+            np.array([0.0, 0.0, 0.0]),
+            np.array([0.2, 0.0, 0.0]),
+            np.array([0.2, 0.2, 0.0]),
+            np.array([0.0, 0.2, 0.0]),
+        ]
+        lines = ["# pose_source=orbslam3_stereo_euroc"]
+        gt_lines = ["# pose_source=hot3d_gt_mocap"]
+        for stamp, point in zip(stamps, points):
+            est = np.eye(4)
+            est[:3, :3] = rotation
+            est[:3, 3] = rotation @ point + shift
+            gt = np.eye(4)
+            gt[:3, 3] = point
+            lines.append(_tum_line("%.9f" % stamp, est))
+            gt_lines.append(_tum_line("%.9f" % stamp, gt))
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        gt_path = path.parent / (path.stem + "_gt.txt")
+        gt_path.write_text("\n".join(gt_lines) + "\n", encoding="utf-8")
+        return gt_path
+
+    def _skip_episode(self, root, name, shift, lost_last=False):
+        from headcam.export_mvp import main as export_main
+
+        stamps = [index / 30.0 for index in range(4)]
+        session = _write_session(root / ("sess-" + name), stamps)
+        meta_path = session / "metadata.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["episode_id"] = "hot3d/quest3/%s" % name
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        tum = root / ("%s_tum.txt" % name)
+        gt = self._moving_tum(tum, stamps, shift)
+        out = root / ("one-" + name)
+        code = export_main([
+            "--session", str(session),
+            "--out", str(out),
+            "--skip-hands",
+            "--slam-backend", "external_tum",
+            "--tum", str(tum),
+            "--pose-source", "orbslam3_stereo_euroc",
+            "--gt-tum", str(gt),
+        ])
+        self.assertEqual(code, 0, (out / "report.json").read_text(encoding="utf-8") if (out / "report.json").is_file() else "no report")
+        episode_path = out / "episodes" / "session.json"
+        episode = json.loads(episode_path.read_text(encoding="utf-8"))
+        if lost_last:
+            slam = episode["hand_pose"]["slam"]
+            slam["pose_status"][-1] = "tracking_lost"
+            slam["T_world_cam"][-1] = None
+            slam["world_points_scope"] = "ok_frames_only"
+            episode["camera_poses"][-1] = None
+        return episode
+
+    def test_two_skip_hands_episodes_keep_separate_poses(self):
+        import shutil
+        import tempfile
+
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:
+            self.skipTest("未安装 pyarrow，跳过缺测手多 episode 包")
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("没有 ffmpeg，跳过缺测手多 episode 包")
+
+        from headcam.export_mvp import main as export_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            episodes = root / "episodes"
+            episodes.mkdir()
+            first = self._skip_episode(root, "a", np.array([0.4, -0.2, 0.1]))
+            second = self._skip_episode(root, "b", np.array([-0.3, 0.5, 0.2]), lost_last=True)
+            (episodes / "a.json").write_text(json.dumps(first), encoding="utf-8")
+            (episodes / "b.json").write_text(json.dumps(second), encoding="utf-8")
+            out = root / "pack"
+            code = export_main([
+                "--package-pose-only",
+                "--episodes", str(episodes),
+                "--out", str(out),
+                "--repo-id", "local/headcam_mvp_pose",
+            ])
+            report_text = (out / "report.json").read_text(encoding="utf-8") if (out / "report.json").is_file() else ""
+            self.assertEqual(code, 0, report_text)
+            report = json.loads(report_text)
+            self.assertEqual(report["pose_source"], "orbslam3_stereo_euroc")
+            self.assertEqual(report["hands"], "absent")
+            self.assertIsNone(report["accuracy"])
+            self.assertEqual(report["episodes"], 2)
+            self.assertEqual(report["ok_frames"], 7)
+            self.assertEqual(report["tracking_lost_frames"], 1)
+            self.assertEqual(report["pose_missing_frames"], 0)
+            self.assertEqual(report["rejected_episodes"], [])
+            note = json.loads((out / "lerobot" / "meta" / "egodata_export.json").read_text(encoding="utf-8"))
+            self.assertEqual(note["pose_source"], "orbslam3_stereo_euroc")
+            self.assertEqual(note["hands"], "absent")
+            self.assertIsNone(note["accuracy"])
+            info = json.loads((out / "lerobot" / "meta" / "info.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["pose_source"], "orbslam3_stereo_euroc")
+            self.assertEqual(info["total_episodes"], 2)
+            self.assertEqual(info["total_frames"], 8)
+            self.assertNotIn("accuracy", info)
+            table = pq.read_table(out / "lerobot" / "data" / "chunk-000" / "file-000.parquet")
+            rows = table.to_pylist()
+            self.assertEqual(len(rows), 8)
+            by_episode = {}
+            for row in rows:
+                by_episode.setdefault(row["episode_index"], []).append(row)
+            self.assertEqual(len(by_episode), 2)
+            translations = []
+            for subset in by_episode.values():
+                poses = [item["observation.pose"] for item in subset]
+                self.assertTrue(any(pose is not None for pose in poses))
+                finite = [pose for pose in poses if pose is not None]
+                self.assertFalse(all(abs(pose[0]) < 1e-8 and abs(pose[1]) < 1e-8 and abs(pose[2]) < 1e-8 for pose in finite))
+                translations.append(tuple(finite[0][:3]))
+            self.assertNotEqual(translations[0], translations[1])
+            lost_rows = [row for row in rows if row["slam_status"] == "tracking_lost"]
+            self.assertEqual(len(lost_rows), 1)
+            self.assertIsNone(lost_rows[0]["observation.pose"])
+
+    def test_identity_and_ground_truth_sources_are_refused(self):
+        import shutil
+        import tempfile
+
+        try:
+            import pyarrow.parquet  # noqa: F401
+        except ImportError:
+            self.skipTest("未安装 pyarrow，跳过缺测手打包拒绝")
+        if shutil.which("ffmpeg") is None:
+            self.skipTest("没有 ffmpeg，跳过缺测手打包拒绝")
+
+        from headcam.export_mvp import main as export_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            episode = self._skip_episode(root, "moved", np.array([0.4, -0.2, 0.1]))
+            episodes = root / "episodes"
+            episodes.mkdir()
+            identity = json.loads(json.dumps(episode))
+            identity["episode_id"] = "hot3d/quest3/identity"
+            for index, status in enumerate(identity["hand_pose"]["slam"]["pose_status"]):
+                if status == "ok":
+                    identity["hand_pose"]["slam"]["T_world_cam"][index] = np.eye(4).tolist()
+            (episodes / "identity.json").write_text(json.dumps(identity), encoding="utf-8")
+            out = root / "out-identity"
+            code = export_main([
+                "--package-pose-only",
+                "--episodes", str(episodes),
+                "--out", str(out),
+            ])
+            self.assertEqual(code, 1)
+            self.assertFalse(out.exists())
+
+            gt = json.loads(json.dumps(episode))
+            gt["hand_pose"]["slam"]["pose_source"] = "hot3d_gt_mocap"
+            gt_dir = root / "gt-episodes"
+            gt_dir.mkdir()
+            (gt_dir / "gt.json").write_text(json.dumps(gt), encoding="utf-8")
+            gt_out = root / "out-gt"
+            gt_code = export_main([
+                "--package-pose-only",
+                "--episodes", str(gt_dir),
+                "--out", str(gt_out),
+            ])
+            self.assertEqual(gt_code, 1)
+            self.assertFalse(gt_out.exists())
+
+            other = json.loads(json.dumps(episode))
+            other["episode_id"] = "hot3d/quest3/other"
+            other["hand_pose"]["slam"]["pose_source"] = "external_measured"
+            mixed = root / "mixed"
+            mixed.mkdir()
+            (mixed / "a.json").write_text(json.dumps(episode), encoding="utf-8")
+            (mixed / "b.json").write_text(json.dumps(other), encoding="utf-8")
+            mixed_out = root / "out-mixed"
+            mixed_code = export_main([
+                "--package-pose-only",
+                "--episodes", str(mixed),
+                "--out", str(mixed_out),
+            ])
+            self.assertEqual(mixed_code, 1)
+            self.assertFalse(mixed_out.exists())
 
 
 if __name__ == "__main__":

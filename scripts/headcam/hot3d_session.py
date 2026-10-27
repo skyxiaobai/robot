@@ -419,11 +419,59 @@ def _intrinsics_key(camera_json):
     )
 
 
-def write_quest3_euroc(clip_dirs, euroc_out, gt_tum, orb_yaml):
+def write_pose_session(session_out, episode_id, fps, calib, stamps_ns, stamps_right_ns,
+                       left_pngs, right_pngs, hot3d_meta):
+    """写成缺测手导出用的会话。不写 ``slam.tum``，也不把头戴真值当成 SLAM。"""
+    root = Path(session_out)
+    init_session(
+        root,
+        fps=float(fps),
+        episode_id=episode_id,
+        image_width=int(calib["image_width"]),
+        image_height=int(calib["image_height"]),
+    )
+    stamp_text = [ns_to_second_text(value) for value in stamps_ns]
+    right_text = [ns_to_second_text(value) for value in stamps_right_ns]
+    (root / "timestamps.csv").write_text(
+        "frame_index,timestamp_s\n" + "".join(
+            "%d,%s\n" % (index, text) for index, text in enumerate(stamp_text)
+        ),
+        encoding="utf-8",
+    )
+    (root / "stereo" / "timestamps_lr.csv").write_text(
+        "frame_index,left_s,right_s\n" + "".join(
+            "%d,%s,%s\n" % (index, left, right)
+            for index, (left, right) in enumerate(zip(stamp_text, right_text))
+        ),
+        encoding="utf-8",
+    )
+    write_calibration_yaml(root / "calib.yaml", calib)
+    if left_pngs:
+        _write_video(left_pngs, root / "stereo" / "left.mp4", fps)
+    if right_pngs:
+        _write_video(right_pngs, root / "stereo" / "right.mp4", fps)
+    meta_path = root / "metadata.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["task"] = ""
+    meta["instruction"] = ""
+    meta["environment"] = "unknown"
+    meta["timestamps_source"] = "hot3d_image_timestamps_ns"
+    meta["timestamps_are_hardware"] = False
+    meta["hardware_capture"] = False
+    meta["hot3d"] = hot3d_meta
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    refresh_calib_json(root)
+    if (root / "slam.tum").exists():
+        raise RuntimeError("转换不应写出 slam.tum")
+    return root
+
+
+def write_quest3_euroc(clip_dirs, euroc_out, gt_tum, orb_yaml, session_out=None, episode_id=None):
     """把同一条连续 Quest3 录制写成 stereo_euroc 目录、头戴真值和 yaml。
 
     左右 png 都用左目时间戳命名，因为 stereo_euroc 用 times.txt 的同一列去找两路图。
     不写 slam.tum，也不把头戴定位交出去当 SLAM 轨迹。
+    ``session_out`` 给出时另写一份缺测手导出用的会话，视频来自去畸变左目。
     """
     import cv2
     from eval_hot3d_stereo import K_of, load_frame_cameras, pinhole_of
@@ -524,6 +572,31 @@ def write_quest3_euroc(clip_dirs, euroc_out, gt_tum, orb_yaml):
     stamp_text = [ns_to_second_text(value) for value in stamps_ns]
     write_headset_tum(gt_tum, stamp_text, poses)
     write_orbslam3_yaml(orb_yaml, calib, fps)
+    sequence_id = ordered[0]["sequence_id"]
+    session_path = None
+    if session_out is not None:
+        label = episode_id or "hot3d/quest3/%s" % sequence_id
+        left_pngs = [euroc_root / "mav0" / "cam0" / "data" / ("%d.png" % stamp) for stamp in stamps_ns]
+        right_pngs = [euroc_root / "mav0" / "cam1" / "data" / ("%d.png" % stamp) for stamp in stamps_ns]
+        session_path = write_pose_session(
+            session_out, label, fps, calib, stamps_ns, stamps_right, left_pngs, right_pngs,
+            {
+                "dataset": "HOT3D-Clips",
+                "device": "Quest3",
+                "sequence_id": sequence_id,
+                "participant_id": ordered[0]["participant_id"],
+                "clip_ids": run["clip_ids"],
+                "frames": len(stamps_ns),
+                "fps_source": "image_timestamps_ns 中位间隔换成整数 Hz",
+                "pose_source": POSE_SOURCE_GT,
+                "pose_file": str(Path(gt_tum)),
+                "slam_tum_written": False,
+                "baseline_m": float(np.linalg.norm(translation)),
+                "extrinsic_drift_m": drift,
+                "undistort": "FISHEYE624 去畸变，虚拟针孔，Quest3 旋转 -90 度",
+                "imu_note": "HOT3D-Clips 的这个 tar 没有 IMU 样本。不写测量，也不跑 stereo-inertial。",
+            },
+        )
     return {
         "sequence_id": ordered[0]["sequence_id"],
         "participant_id": ordered[0]["participant_id"],
@@ -539,6 +612,7 @@ def write_quest3_euroc(clip_dirs, euroc_out, gt_tum, orb_yaml):
         "pose_source": POSE_SOURCE_GT,
         "slam_tum_written": False,
         "intrinsic_maps_rebuilt": rebuilt,
+        "session": None if session_path is None else str(session_path),
     }
 
 
