@@ -206,27 +206,34 @@ class MirrorAndIngest(unittest.TestCase):
 
 
 class CommittedState(unittest.TestCase):
-    def test_iteration_2_ingested(self):
+    def test_iteration_5_ingested(self):
         state = json.loads((ROOT / "experiments" / "auto_state.json").read_text(encoding="utf-8"))
-        self.assertEqual(state["last_iteration"], 4)
+        self.assertEqual(state["last_iteration"], 5)
         self.assertEqual(state["last_kernel"], "justinz2010/xhey-auto-iter")
-        running = state["running"]
-        self.assertEqual(running["iteration"], 5)
-        self.assertEqual(running["kernel"], "justinz2010/xhey-auto-iter")
-        self.assertEqual(running["version"], 5)
-        self.assertEqual(running["launched"], "2026-10-19 09:27")
-        self.assertEqual(len(running["candidates"]), 3)
-        ids = {json.loads(l)["id"] for l in (ROOT / "experiments" / "ledger.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()}
-        self.assertTrue({"iter004_c0", "iter004_c1", "iter004_c2", "iter003_c0", "iter003_c1", "iter003_c2", "C1", "C8"} <= ids)
+        self.assertIsNone(state["running"])
+        self.assertIsNone(state["queue_running"])
+        self.assertIn("skip xphi: missing data/xphi/unified", state["note"])
+        rows = {json.loads(l)["id"]: json.loads(l) for l in (ROOT / "experiments" / "ledger.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()}
+        self.assertTrue({"iter005_c0", "iter005_c1", "iter005_c2", "iter004_c0", "iter004_c1", "iter004_c2", "iter003_c0", "iter003_c1", "iter003_c2", "C1", "C8"} <= set(rows))
+        c0 = rows["iter005_c0"]
+        self.assertEqual(c0["status"], "ok")
+        self.assertEqual(c0["config"]["mix"], "iphone+xphi+xhey_rgb+aug")
+        self.assertEqual(c0["config"]["hidden"], 512)
+        self.assertEqual(c0["config"]["dropout"], 0.1)
+        self.assertEqual(c0["config"]["aug_noise"], 0.2)
+        self.assertAlmostEqual(c0["overall_ade_cm"], 9.762002370560513)
+        self.assertAlmostEqual(c0["delta_overall_cm"], -0.017088933847007937)
+        self.assertAlmostEqual(c0["delta_moving_cm"], -0.13821353307380768)
+        self.assertIn("skip xphi: missing data/xphi/unified", c0["note"])
+        self.assertIn("did not actually consume xPhi", c0["note"])
 
     def test_c9_done_worse_and_c9b_already_running(self):
         state = json.loads((ROOT / "experiments" / "auto_state.json").read_text(encoding="utf-8"))
         self.assertIsNone(state["queue_running"])
-        running = state["running"]
-        self.assertEqual(running["iteration"], 5)
-        self.assertEqual(running["kernel"], "justinz2010/xhey-auto-iter")
-        self.assertEqual(running["version"], 5)
-        self.assertEqual(running["launched"], "2026-10-19 09:27")
+        self.assertIsNone(state["running"])
+        self.assertEqual(state["last_iteration"], 5)
+        self.assertEqual(state["last_kernel"], "justinz2010/xhey-auto-iter")
+        self.assertIn("skip xphi: missing data/xphi/unified", state["note"])
         self.assertNotIn("queue_running_also", state)
         q = json.loads((ROOT / "docs" / "xhey" / "queue.json").read_text(encoding="utf-8"))
         ids = [i["id"] for i in q["queue"]]
@@ -282,7 +289,7 @@ class CommittedState(unittest.TestCase):
         self.assertIn("6000", c9b["protocol"])
         self.assertIn("3000", c9b["protocol"])
         ok, skipped = ai.split_qc_ready(ai.ready_queue_items(stera_exists=True, queue=q))
-        self.assertEqual([item["id"] for item in ok], ["C15", "C16"])
+        self.assertEqual([item["id"] for item in ok], ["C15"])
         self.assertEqual(skipped, [])
         c15 = by_id["C15"]
         self.assertEqual(c15["status"], "ready")
@@ -290,7 +297,7 @@ class CommittedState(unittest.TestCase):
         self.assertIn("--cum-weight 1.0", c15["protocol"])
         self.assertIn("--qc-filter", c15["protocol"])
         c16 = by_id["C16"]
-        self.assertEqual(c16["status"], "ready")
+        self.assertEqual(c16["status"], "done_worse_vs_ctl")
         self.assertEqual(c16["mix"], "iphone+egoverse+xhey_rgb+aug")
         self.assertEqual(c16["slug"], "justinz2010/xhey-rsi-c16-egoverse")
         self.assertIn("--qc-filter", c16["protocol"])
