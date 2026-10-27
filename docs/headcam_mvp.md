@@ -1136,3 +1136,49 @@ package=pose_only episodes=4 accepted=4 rejected=0 pose_source=orbslam3_stereo_e
 ### 还缺的
 
 这个四段包的 accuracy 仍是 null，因为四段这次的 SE3 RMSE 和 batch 行的绝对差都大于 1e-6 m。clip-000000 / 000300 / 000700 / 001100 那个头戴真值包没有被这次的轨迹替换。P0003 整段残差和 P0002 开头固定平移没有再查。手进 SLAM 世界系仍等 Justin 的 MANO 许可。
+
+## 四段短 clip 的 ORB-SLAM3 缺测手包
+
+上一节的 2850 帧包留在 `/tmp/slam/multi_pose/lerobot`，这次没有覆盖，也没有改 `docs/headcam/orbslam3_quest3_batch.json`。clip-000000、clip-000300、clip-000700、clip-001100 仍不在那 15 行的 `clip_ids` 里。这一节另下了这四段 Hugging Face `bop-benchmark/hot3d` 的 `train_quest3`，各 150 帧，在这台机器上跑 `stereo_euroc`，再打成另一个缺测手的多 episode 包。图像、tar、去畸变 png、轨迹和 LeRobot 目录都在 `/tmp`，没有入库。
+
+| clip | 序列 | 参与者 | 帧 |
+| --- | --- | --- | --- |
+| clip-000000 | `P0002_210fc0da` | P0002 | 150 |
+| clip-000300 | `P0003_5e1a34f8` | P0003 | 150 |
+| clip-000700 | `P0010_3224a967` | P0010 | 150 |
+| clip-001100 | `P0017_d2495f49` | P0017 | 150 |
+
+`write_quest3_euroc`：都是 30 fps、1024×1280，左右同步 0 ms，左右内参表各重建 1 次。基线：clip-000000 是 0.06368567581770954 m，clip-000300 是 0.06361127711681205 m，clip-000700 是 0.06361127219638592 m，clip-001100 是 0.06368155119263902 m。外参漂移：1.3407708431633166e-07 m、1.766177832163487e-07 m、1.4517020204469397e-07 m、1.804308712059654e-07 m。没有 IMU。
+
+ORB-SLAM3 是上游 `4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4` 的 `stereo_euroc`。OpenCV 4.6.0，Eigen 3.4.0，Pangolin v0.6（`dd801d244db3a8e27b7fe8020cd751404aa818fd`）。查看器关掉，帧间 sleep 去掉，这两处只在本机 `/tmp` 的 `Examples/Stereo/stereo_euroc.cc`。二进制不入库。本机 gcc 13 默认按 C++17 编 `Thirdparty/g2o` 时，clip-000000 在日志 `New Map created with 551 points` 之后退出码 -6，`double free or corruption (out)`，落在 `g2o::HyperGraph::clear` / `Optimizer::PoseOptimization`，没有写出 `CameraTrajectory.txt`。把同一份 g2o 用 `-std=c++11` 重编，和 ORB-SLAM3 的 `-std=c++11` 对齐之后，四段都是退出码 0。下面的轨迹和 ATE 都来自这次重编。
+
+四段都是局部地图失败 0，回环 0，地图 1，丢失 0，`CameraTrajectory.txt` 150 行、150 个时间戳。第一帧平移是 0。日志里的新地图点数：clip-000000 是 551，clip-000300 是 656，clip-000700 是 543，clip-001100 是 486。关键帧：17、8、10、21。
+
+这次相对头戴真值的 Umeyama 写进了每一段自己的 `report.json` 和 episode。来源是 `pose_source=orbslam3_stereo_euroc`，真值文件头是 `hot3d_gt_mocap`。`accuracy_source=measured_this_run`。文档上一节 clip-000000 的 SE3 RMSE 0.006408 m 留在那一节，没有写入这四份轨迹。
+
+| clip | SE3 RMSE (m) | SE3 中位 (m) | SE3 最大 (m) | Sim3 RMSE (m) | Sim3 尺度 | 末帧平移 |
+| --- | --- | --- | --- | --- | --- | --- |
+| clip-000000 | 0.0045912349693376705 | 0.004226443939589596 | 0.014209958267527703 | 0.002830270810618332 | 1.0282527167188087 | `[-0.094589248, -0.245565057, 0.168445095]` |
+| clip-000300 | 0.0017128617629292439 | 0.0012812311134126073 | 0.003413361805056417 | 0.0005832235613042844 | 1.0140845282400313 | `[-0.191976130, 0.164640561, -0.126090199]` |
+| clip-000700 | 0.0007797332618919564 | 0.0005260818839636823 | 0.003662961842560437 | 0.0007601198771456078 | 1.0031196366517134 | `[-0.017725043, 0.030247804, 0.187362045]` |
+| clip-001100 | 0.02475762699101022 | 0.023573684693554423 | 0.039992538061840374 | 0.02424834786772622 | 0.9544006686528443 | `[-0.033097558, -0.079486132, -0.122066431]` |
+
+n 都是 150。1 秒 RPE 都配上 121 对：平移 RMSE 分别是 0.0079132006277709 m、0.002753304207956389 m、0.0018040903972870541 m、0.030710074375809204 m；旋转 RMSE 分别是 0.38270844589435427°、0.4704201773495364°、0.29795402912763896°、1.0720475347259262°。5 秒 RPE 每段只配上 1 对，主数仍是尺度固定的 SE3。`summarize_sequences` 对这四段 SE3 RMSE 的汇总是 n=4，min 0.0007797332618919564 m，median 0.0045912349693376705 m（排序后取 `n//2`），max 0.02475762699101022 m。这个汇总没有写进 LeRobot 包。
+
+单段导出走 `export_mvp --skip-hands`，轨迹文件头是 `# pose_source=orbslam3_stereo_euroc`，位姿没有改，`--tum-time-scale 1e-9`，`--gt-tum` 是这次写出的头戴真值。四段都是 `hands=skipped`，`world_pose=true`，`ok=150`，`tracking_lost=0`，`pose_missing=0`。没有走 `--batch`，因为这四段不在 15 行里。
+
+四段 episode 再交给 `--package-pose-only`。退出码 0。日志：
+
+```text
+package=pose_only episodes=4 accepted=4 rejected=0 pose_source=orbslam3_stereo_euroc ok=600 tracking_lost=0 pose_missing=0 accuracy=null
+```
+
+包级 accuracy 是 null，因为四段测到的 `trajectory_error_v1` 不是同一份，`shared_measured_accuracy` 返回 null。每一段 episode 里仍留着上面这次测到的 Umeyama。包在 `/tmp/slam/short_four/pack/lerobot`，`repo_id=local/headcam_mvp_quest3_short_orbslam3`。`meta/info.json`：`pose_source=orbslam3_stereo_euroc`，`robot_type=headcam_pose_only`，`total_episodes=4`，`total_frames=600`，`fps=30`，没有 accuracy。`meta/egodata_export.json`：`hands=absent`，`pose_source=orbslam3_stereo_euroc`，`accuracy=null`，`ok_frames=600`，`frames=600`。parquet 600 行，`slam_status` 全是 `ok`，`observation.pose` 没有 null。平移为 0 的行正好 4 行，各是一段的第 0 帧。按 `episode_index`：0 是 clip-000000，1 是 clip-000300，2 是 clip-000700，3 是 clip-001100。四段末帧平移和各自的 `CameraTrajectory.txt` 最后一行一致。这台机器没有 lerobot venv，没有用官方加载器逐帧读。
+
+数在 `docs/headcam/orbslam3_quest3/quest3_four_short_clips_orbslam3_export.json`。
+
+`python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc`：77 项，跳过 2 项（两个官方加载器，没装 lerobot 或 torch），其余通过。numpy 1.26.4，pyarrow 18.1.0，pandas 2.1.4，cv2 4.6.0。没有 Kaggle。没有下 MANO。没有把人手放进 SLAM 世界系。
+
+### 还缺的
+
+这个短 clip 包的包级 accuracy 是 null，因为四段这次的 Umeyama 不是同一份测量。2850 帧那个包没有改。15 行的 batch 没有加这四段。P0003 整段残差和 P0002 开头固定平移没有再查。手进 SLAM 世界系仍等 Justin 的 MANO 许可。
