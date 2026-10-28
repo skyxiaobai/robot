@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-"""从已经提交的时间线 JSON 区分两种残差形状。
+"""从已经提交的时间线 JSON 区分残差形状。
 
 不读轨迹文件，不跑 ORB-SLAM3，不新算 Umeyama。
 时间线里的 rmse 原样抄出。由 1 秒箱的 RMSE 再汇总，只是把已有的箱重新加总，
 不是一次新的对齐。短 clip 包的 RMSE 只在 sequence_id 和 clip_ids 都对得上时
 才算同一条录制；对不上就不抄。包级 accuracy 不在这里改，输出里的 accuracy 是 null。
+逐帧 XYZ 误差向量在时间线里时，可以减掉开头尾巴的均值平移再算 RMSE。
+没有向量时不从标量 error_m 编方向。
 """
 import argparse
 import json
@@ -34,6 +36,8 @@ WHOLE_MAX_BIN_OVER_RMSE = 2.0
 SIM3_STILL_THERE = 0.8
 RMSE_IDENTITY_ABS_M = 1e-12
 HOST_SAME_ABS_M = 1e-6
+# 开头尾巴减掉均值之后，全程 RMSE 落到原来的这个比例及以下，才叫塌掉。
+MEAN_SUBTRACT_COLLAPSE_RATIO = 0.25
 
 NOTE = (
     "形状诊断只读已提交的时间线和 batch 行。"
@@ -41,25 +45,15 @@ NOTE = (
     "1 秒箱的 pooled_rmse_m 是各箱 n * rmse^2 的加总，不是重新对齐。"
     "accuracy 是 null。短 clip 的 RMSE 在录制对不上时不抄。"
     "归类不是原因。"
-)
-
-CASES = (
-    {
-        "name": "P0002_273c2819",
-        "timeline": "P0002_273c2819_timeline.json",
-        "record": "P0002_273c2819.json",
-        "rerun": "P0002_273c2819_rerun.json",
-        "prevhost": "P0002_273c2819_prevhost.json",
-    },
-    {
-        "name": "P0003_b153ade2",
-        "timeline": "P0003_b153ade2_timeline.json",
-        "record": "P0003_b153ade2.json",
-        "rerun": None,
-        "prevhost": "P0003_b153ade2_prevhost.json",
-    },
+    "已提交的时间线没有逐帧 XYZ 向量时，减掉均值平移之后的 RMSE 是 unknown，不从标量 error_m 编方向。"
 )
 SHORT_EXPORT = "quest3_four_short_clips_orbslam3_export.json"
+PATTERN_KEYS = (
+    "opening_fixed_translation",
+    "whole_sequence_residual",
+    "unclassified",
+    "refused",
+)
 
 
 def _load(path):
@@ -118,6 +112,158 @@ def _pooled(bins):
 
 def _finite_rmse(value):
     return isinstance(value, (int, float)) and math.isfinite(float(value))
+
+
+def _vector_rows(payload):
+    """N×3 的有限 XYZ。标量、缺一维、非有限值都不是向量。"""
+    if not isinstance(payload, list) or not payload:
+        return None
+    rows = []
+    for item in payload:
+        if not isinstance(item, (list, tuple)) or len(item) != 3:
+            return None
+        if not all(_finite_rmse(value) for value in item):
+            return None
+        rows.append((float(item[0]), float(item[1]), float(item[2])))
+    return rows
+
+
+def _rmse_rows(rows):
+    total = 0.0
+    for row in rows:
+        total += row[0] * row[0] + row[1] * row[1] + row[2] * row[2]
+    return math.sqrt(total / len(rows))
+
+
+def _mean_row(rows):
+    count = float(len(rows))
+    return (
+        sum(row[0] for row in rows) / count,
+        sum(row[1] for row in rows) / count,
+        sum(row[2] for row in rows) / count,
+    )
+
+
+def _collapsed(before, after):
+    if not _finite_rmse(before) or not _finite_rmse(after) or float(before) <= 0.0:
+        return False
+    return float(after) <= MEAN_SUBTRACT_COLLAPSE_RATIO * float(before)
+
+
+def _empty_mean_subtract(status):
+    return {
+        "status": status,
+        "applied": False,
+        "collapsed": False,
+        "n": None,
+        "tail_n": None,
+        "rmse_before_m": None,
+        "rmse_after_m": None,
+        "opening_tail_mean_m": None,
+        "opening_tail_mean_norm_m": None,
+        "sequence_mean_subtracted_rmse_m": None,
+        "sequence_mean_collapsed": False,
+    }
+
+
+def opening_tail_mean_subtract(vectors, tail_n):
+    """从开头 tail_n 帧减掉它们自己的均值平移，再算全程 RMSE。
+
+    tail_n 为 0，或尾巴盖住全部帧时，不编一段开头。
+    整段减去自身均值是另一项：一次平移会塌掉，方向在变的整段残差不会。
+    这不是新的 Umeyama，也不写 accuracy。
+    """
+    rows = _vector_rows(vectors)
+    if rows is None:
+        return _empty_mean_subtract("direction_unknown")
+    before = _rmse_rows(rows)
+    center = _mean_row(rows)
+    centered = tuple((row[0] - center[0], row[1] - center[1], row[2] - center[2]) for row in rows)
+    sequence_rmse = _rmse_rows(centered)
+    tail = 0 if tail_n is None else int(tail_n)
+    result = {
+        "status": "no_opening_tail",
+        "applied": False,
+        "collapsed": False,
+        "n": len(rows),
+        "tail_n": tail,
+        "rmse_before_m": before,
+        "rmse_after_m": None,
+        "opening_tail_mean_m": None,
+        "opening_tail_mean_norm_m": None,
+        "sequence_mean_subtracted_rmse_m": sequence_rmse,
+        "sequence_mean_collapsed": _collapsed(before, sequence_rmse),
+    }
+    if tail <= 0 or tail >= len(rows):
+        return result
+    mean = _mean_row(rows[:tail])
+    adjusted = []
+    for index, row in enumerate(rows):
+        if index < tail:
+            adjusted.append((row[0] - mean[0], row[1] - mean[1], row[2] - mean[2]))
+        else:
+            adjusted.append(row)
+    after = _rmse_rows(adjusted)
+    result.update({
+        "status": "applied",
+        "applied": True,
+        "collapsed": _collapsed(before, after),
+        "rmse_after_m": after,
+        "opening_tail_mean_m": [mean[0], mean[1], mean[2]],
+        "opening_tail_mean_norm_m": math.sqrt(mean[0] * mean[0] + mean[1] * mean[1] + mean[2] * mean[2]),
+    })
+    return result
+
+
+def _opening_tail_count(timeline):
+    """从 t=0 开始的唯一一段尾巴的帧数。多段、或不是前缀，就当没有开头尾巴。"""
+    runs = timeline.get("tail_runs") if isinstance(timeline, dict) else None
+    if not isinstance(runs, list) or len(runs) != 1 or not isinstance(runs[0], dict):
+        return 0
+    run = runs[0]
+    if not _finite_rmse(run.get("t0_s")) or float(run["t0_s"]) > 1e-9:
+        return 0
+    if not isinstance(run.get("n"), int) or int(run["n"]) <= 0:
+        return 0
+    return int(run["n"])
+
+
+def _mean_subtract_block(timeline):
+    if not isinstance(timeline, dict) or "error_vectors_m" not in timeline:
+        return _empty_mean_subtract("absent_from_json")
+    rows = _vector_rows(timeline.get("error_vectors_m"))
+    if rows is None:
+        return _empty_mean_subtract("direction_unknown")
+    if timeline.get("n") != len(rows):
+        return _empty_mean_subtract("direction_unknown")
+    block = opening_tail_mean_subtract(rows, _opening_tail_count(timeline))
+    timeline_rmse = timeline.get("rmse_m")
+    if not _finite_rmse(timeline_rmse) or abs(block["rmse_before_m"] - float(timeline_rmse)) > RMSE_IDENTITY_ABS_M:
+        return _empty_mean_subtract("vector_rmse_mismatch")
+    return block
+
+
+def _export_rerun_summary(payload):
+    """后来的导出重跑是另一份测量。数字可以抄出来，但不拿来代替时间线的 RMSE。"""
+    out = {
+        "present": False,
+        "used_as_this_measurement": False,
+        "this_run_se3_rmse_m": None,
+        "batch_se3_rmse_m": None,
+        "abs_diff_m": None,
+    }
+    if not isinstance(payload, dict):
+        return out
+    out["present"] = True
+    this = payload.get("this_run_se3_rmse_m")
+    batch = payload.get("batch_se3_rmse_m")
+    if _finite_rmse(this):
+        out["this_run_se3_rmse_m"] = float(this)
+    if _finite_rmse(batch):
+        out["batch_se3_rmse_m"] = float(batch)
+    if out["this_run_se3_rmse_m"] is not None and out["batch_se3_rmse_m"] is not None:
+        out["abs_diff_m"] = abs(out["this_run_se3_rmse_m"] - out["batch_se3_rmse_m"])
+    return out
 
 
 def _measurement(timeline, record, rerun):
@@ -466,7 +612,22 @@ def _short_clip_relation(record, short_export):
     return out
 
 
-def _unknowns(timeline, host, short_rel, pattern):
+def _vector_unknown(mean_subtract):
+    status = mean_subtract.get("status")
+    if status == "absent_from_json":
+        return "absent_from_json", "时间线没有逐帧误差向量，不能把均值平移减掉再算一次 RMSE。"
+    if status == "direction_unknown":
+        return "direction_unknown", "逐帧误差不是 XYZ 向量。不能从标量 error_m 编出方向再减均值。"
+    if status == "vector_rmse_mismatch":
+        return "vector_rmse_mismatch", "逐帧向量的 RMSE 和时间线 rmse_m 差超过 1e-12 m，没有改写时间线上的 RMSE。"
+    if status == "applied":
+        return "present", "开头尾巴的均值平移已经从这些向量里减掉。这不是新的 Umeyama。"
+    if status == "no_opening_tail":
+        return "present", "有逐帧 XYZ 向量，但没有从 t=0 开始的单段尾巴，所以没有减开头均值。"
+    return status, None
+
+
+def _unknowns(timeline, host, short_rel, pattern, mean_subtract):
     brightness = "unmeasured"
     detail = None
     if isinstance(timeline.get("images"), dict):
@@ -475,9 +636,10 @@ def _unknowns(timeline, host, short_rel, pattern):
     elif timeline.get("images_note"):
         brightness = "aggregate_only"
         detail = timeline.get("images_note")
+    vector_status, vector_detail = _vector_unknown(mean_subtract)
     items = [
         {"item": "cause", "status": "unknown", "detail": "形状归类没有给出原因。日志里没有带时间戳的重定位。"},
-        {"item": "per_frame_error_vectors", "status": "absent_from_json", "detail": "时间线没有逐帧误差向量，不能把均值平移减掉再算一次 RMSE。"},
+        {"item": "per_frame_error_vectors", "status": vector_status, "detail": vector_detail},
         {"item": "relocalization_timestamp", "status": "absent_from_json"},
         {"item": "tracked_features", "status": "null" if timeline.get("tracked_features") is None else "present"},
         {"item": "imu", "status": "not_in_these_records"},
@@ -495,14 +657,19 @@ def _unknowns(timeline, host, short_rel, pattern):
     return items
 
 
-def diagnose_case(name, timeline, record=None, prevhost=None, short_export=None, rerun=None, sources=None):
+def diagnose_case(
+    name, timeline, record=None, prevhost=None, short_export=None, rerun=None,
+    export_rerun=None, sources=None,
+):
     """给一份时间线归类。accuracy 固定是 null，不接收外部传入的误差数字。"""
-    measurement = _measurement(timeline if isinstance(timeline, dict) else {}, record, rerun)
+    timeline_doc = timeline if isinstance(timeline, dict) else {}
+    measurement = _measurement(timeline_doc, record, rerun)
     host = _host_comparison(record, prevhost)
     short_rel = _short_clip_relation(record, short_export)
+    mean_subtract = _mean_subtract_block(timeline_doc)
     opening_reasons, opening_derived = ([], None)
     whole_reasons, whole_derived = ([], None)
-    if isinstance(timeline, dict) and measurement["same_measurement"]:
+    if measurement["same_measurement"]:
         opening_reasons, opening_derived = _opening_assessment(timeline)
         whole_reasons, whole_derived = _whole_assessment(timeline, record)
         if record is not None and record.get("lost_frames") not in (0, None):
@@ -535,50 +702,69 @@ def diagnose_case(name, timeline, record=None, prevhost=None, short_export=None,
         "opening_reasons": opening_reasons,
         "whole_reasons": whole_reasons,
         "host_comparison": host,
+        "export_rerun": _export_rerun_summary(export_rerun),
         "short_clip_package": short_rel,
-        "unknown": _unknowns(timeline if isinstance(timeline, dict) else {}, host, short_rel, pattern),
+        "mean_subtract": mean_subtract,
+        "unknown": _unknowns(timeline_doc, host, short_rel, pattern, mean_subtract),
         "sources": sources or {},
     }
 
 
 def diagnose_repo(docs_dir):
-    """读 docs/headcam/orbslam3_quest3 里已经提交的两份时间线。"""
+    """读 docs/headcam/orbslam3_quest3 里每一份已提交的 *_timeline.json。"""
     root = Path(docs_dir)
     short_path = root / SHORT_EXPORT
     short_export = _load(short_path) if short_path.is_file() else None
     cases = []
-    for spec in CASES:
-        timeline_path = root / spec["timeline"]
-        record_path = root / spec["record"]
-        rerun_path = root / spec["rerun"] if spec["rerun"] else None
-        prevhost_path = root / spec["prevhost"] if spec["prevhost"] else None
-        cases.append(diagnose_case(
-            spec["name"],
+    for timeline_path in sorted(root.glob("*_timeline.json")):
+        name = timeline_path.name[: -len("_timeline.json")]
+        record_path = root / ("%s.json" % name)
+        rerun_path = root / ("%s_rerun.json" % name)
+        prevhost_path = root / ("%s_prevhost.json" % name)
+        export_path = root / ("%s_export_rerun.json" % name)
+        record = _load(record_path) if record_path.is_file() else None
+        case = diagnose_case(
+            name,
             _load(timeline_path),
-            record=_load(record_path),
-            prevhost=_load(prevhost_path) if prevhost_path is not None else None,
+            record=record,
+            prevhost=_load(prevhost_path) if prevhost_path.is_file() else None,
             short_export=short_export,
-            rerun=_load(rerun_path) if rerun_path is not None else None,
+            rerun=_load(rerun_path) if rerun_path.is_file() else None,
+            export_rerun=_load(export_path) if export_path.is_file() else None,
             sources={
-                "timeline": spec["timeline"],
-                "record": spec["record"],
-                "rerun": spec["rerun"],
-                "prevhost": spec["prevhost"],
+                "timeline": timeline_path.name,
+                "record": record_path.name if record_path.is_file() else None,
+                "rerun": rerun_path.name if rerun_path.is_file() else None,
+                "prevhost": prevhost_path.name if prevhost_path.is_file() else None,
+                "export_rerun": export_path.name if export_path.is_file() else None,
                 "short_clip_export": SHORT_EXPORT if short_export is not None else None,
             },
-        ))
+        )
+        if record is None:
+            case["pattern"] = "refused"
+            case["proven"] = None
+            case["measurement"]["same_measurement"] = False
+            reasons = list(case["measurement"]["refuse_reasons"])
+            if "record_missing" not in reasons:
+                reasons.append("record_missing")
+            case["measurement"]["refuse_reasons"] = reasons
+        cases.append(case)
+    counts = {key: 0 for key in PATTERN_KEYS}
+    for case in cases:
+        counts[case["pattern"]] = counts.get(case["pattern"], 0) + 1
     return {
         "kind": REPORT_KIND,
         "accuracy": None,
         "new_ate": False,
         "package_accuracy_rule": "null_when_episode_measurements_differ",
         "note": NOTE,
+        "pattern_counts": counts,
         "cases": cases,
     }
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="从已提交的时间线 JSON 归类 P0002 开头平移和 P0003 整段残差。")
+    parser = argparse.ArgumentParser(description="从已提交的时间线 JSON 归类残差形状。不新算 ATE。")
     parser.add_argument("--docs", required=True)
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)

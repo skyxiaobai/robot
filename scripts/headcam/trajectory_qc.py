@@ -522,6 +522,7 @@ def diagnose_files(
     linear, angular = motion_series(stamps, paired["gt_poses"])
     report["motion_in_tail"] = _speed_summary(linear, angular, tail_mask) if tail_mask.any() else None
     report["motion_outside_tail"] = _speed_summary(linear, angular, outside)
+    report["error_vectors_m"] = np.asarray(paired["error_vectors"], dtype=float).tolist()
     report["status"] = "ok"
     report["failure"] = None
     return report

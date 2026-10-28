@@ -2802,6 +2802,10 @@ class TrajectoryTimelineTest(unittest.TestCase):
             report["motion_outside_tail"]["linear_speed_m_s"]["max"],
             report["motion_in_tail"]["linear_speed_m_s"]["max"] - 1e-9,
         )
+        vectors = np.asarray(report["error_vectors_m"], dtype=float)
+        self.assertEqual(vectors.shape, (report["n"], 3))
+        vector_rmse = float(np.sqrt(np.mean(np.sum(vectors ** 2, axis=1))))
+        self.assertAlmostEqual(vector_rmse, report["rmse_m"], delta=1e-12)
 
 
 class BatchAccuracyExportTest(unittest.TestCase):
@@ -3701,6 +3705,195 @@ class ResidualShapeDiagnosisTest(unittest.TestCase):
         committed = json.loads((docs / "residual_shape_diagnosis.json").read_text(encoding="utf-8"))
         self.assertEqual(committed, report)
 
+    def test_every_committed_timeline_is_classified_without_inventing_vectors(self):
+        from headcam.residual_diagnosis import diagnose_repo
+
+        docs = ROOT / "docs" / "headcam" / "orbslam3_quest3"
+        files = sorted(path.name for path in docs.glob("*_timeline.json"))
+        self.assertEqual(len(files), 15)
+        report = diagnose_repo(docs)
+        self.assertEqual([case["sources"]["timeline"] for case in report["cases"]], files)
+        patterns = {case["name"]: case["pattern"] for case in report["cases"]}
+        self.assertEqual(patterns, {
+            "P0002_273c2819": "opening_fixed_translation",
+            "P0002_45904c71": "unclassified",
+            "P0003_46b683a2": "unclassified",
+            "P0003_b153ade2": "whole_sequence_residual",
+            "P0010_086ff32a": "unclassified",
+            "P0010_3224a967": "unclassified",
+            "P0010_5edabbe9": "opening_fixed_translation",
+            "P0013_0ec32d10": "unclassified",
+            "P0013_a2b36677": "unclassified",
+            "P0017_1a07e9e7": "unclassified",
+            "P0017_44db2c1d": "unclassified",
+            "P0018_15ad9743": "unclassified",
+            "P0018_15ad9743_c1121": "unclassified",
+            "P0021_5d8b0988": "unclassified",
+            "P0021_8f2f3894": "unclassified",
+        })
+        self.assertEqual(report["pattern_counts"], {
+            "opening_fixed_translation": 2,
+            "whole_sequence_residual": 1,
+            "unclassified": 12,
+            "refused": 0,
+        })
+        self.assertIsNone(report["accuracy"])
+        self.assertFalse(report["new_ate"])
+        by_name = {case["name"]: case for case in report["cases"]}
+        for name, case in by_name.items():
+            timeline = json.loads((docs / case["sources"]["timeline"]).read_text(encoding="utf-8"))
+            self.assertNotIn("error_vectors_m", timeline)
+            self.assertTrue(case["measurement"]["same_measurement"], name)
+            self.assertEqual(case["measurement"]["timeline_rmse_m"], timeline["rmse_m"])
+            self.assertEqual(case["measurement"]["record_rmse_m"], timeline["rmse_m"])
+            self.assertIsNone(case["accuracy"])
+            self.assertFalse(case["new_ate"])
+            self.assertIsNone(case["short_clip_package"]["copied_rmse_m"])
+            self.assertEqual(case["mean_subtract"]["status"], "absent_from_json")
+            self.assertFalse(case["mean_subtract"]["applied"])
+            self.assertFalse(case["mean_subtract"]["collapsed"])
+            self.assertIsNone(case["mean_subtract"]["rmse_after_m"])
+            self.assertIsNone(case["mean_subtract"]["sequence_mean_subtracted_rmse_m"])
+            unknown = {item["item"]: item["status"] for item in case["unknown"]}
+            self.assertEqual(unknown["per_frame_error_vectors"], "absent_from_json")
+            self.assertEqual(unknown["cause"], "unknown")
+            self.assertEqual(unknown["hands_in_slam_world"], "waiting_on_mano_license")
+        p10 = by_name["P0010_5edabbe9"]
+        self.assertEqual(p10["proven"]["rmse_m"], 0.04942053479288229)
+        self.assertEqual(p10["proven"]["n"], 1800)
+        self.assertEqual(p10["proven"]["tail_runs"][0]["t0_s"], 0.0)
+        self.assertEqual(p10["proven"]["tail_runs"][0]["t1_s"], 5.866666666996025)
+        self.assertEqual(p10["proven"]["tail_runs"][0]["n"], 177)
+        self.assertEqual(p10["proven"]["tail_runs"][0]["rmse_m"], 0.1483826203615348)
+        self.assertEqual(p10["proven"]["tail_geometry"][0]["offset"]["mean_norm_m"], 0.14796632492630718)
+        self.assertEqual(p10["proven"]["tail_geometry"][0]["offset"]["rms_component_std_m"], 0.006412714276026166)
+        self.assertEqual(p10["derived"]["offset_over_spread"], 23.073899531042105)
+        self.assertEqual(p10["proven"]["outside_tail"]["n"], 1623)
+        self.assertEqual(p10["proven"]["outside_tail"]["rmse_m"], 0.017538277969787148)
+        self.assertEqual(p10["proven"]["max_error"]["index"], 170)
+        self.assertEqual(p10["proven"]["max_error"]["t_s"], 5.666666666998935)
+        self.assertEqual(p10["proven"]["max_error"]["error_m"], 0.15811514024780318)
+        self.assertEqual(p10["proven"]["max_error"]["clip_id"], 748)
+        self.assertEqual(p10["proven"]["max_error"]["offset_in_clip"], 20)
+        self.assertEqual(p10["proven"]["keyframes"], 88)
+        self.assertEqual(p10["proven"]["lost_frames"], 0)
+        lost = by_name["P0002_45904c71"]
+        self.assertEqual(lost["proven"]["lost_frames"], 25)
+        self.assertIn("lost_frames", lost["opening_reasons"])
+        self.assertIn("lost_frames", lost["whole_reasons"])
+        quiet = by_name["P0017_1a07e9e7"]
+        self.assertEqual(quiet["whole_reasons"], ["step_large"])
+        self.assertEqual(quiet["proven"]["rmse_m"], 0.0008185619223686899)
+        self.assertFalse(quiet["export_rerun"]["used_as_this_measurement"])
+        self.assertEqual(quiet["export_rerun"]["this_run_se3_rmse_m"], 0.0008689981649285166)
+        self.assertEqual(quiet["export_rerun"]["batch_se3_rmse_m"], 0.0008185619223686899)
+        self.assertNotEqual(quiet["proven"]["rmse_m"], quiet["export_rerun"]["this_run_se3_rmse_m"])
+        other = by_name["P0018_15ad9743_c1121"]
+        self.assertFalse(other["export_rerun"]["used_as_this_measurement"])
+        self.assertEqual(other["export_rerun"]["this_run_se3_rmse_m"], 0.0027235435865570787)
+        self.assertEqual(other["proven"]["rmse_m"], 0.003080392875958846)
+        overlap = by_name["P0010_3224a967"]
+        self.assertTrue(overlap["short_clip_package"]["same_recording"])
+        self.assertIsNone(overlap["short_clip_package"]["copied_rmse_m"])
+        blob = json.dumps(report)
+        for copied in (
+            "0.0045912349693376705",
+            "0.0017128617629292439",
+            "0.0007797332618919564",
+            "0.02475762699101022",
+        ):
+            self.assertNotIn(copied, blob)
+        self.assertNotIn("trajectory_error_v1", blob)
+        self.assertNotIn("rotation_row_major", blob)
+
+    def test_opening_vectors_collapse_under_tail_mean_subtract(self):
+        import math
+
+        from headcam.residual_diagnosis import diagnose_case, opening_tail_mean_subtract
+
+        vectors = [[0.06, 0.0, 0.0]] * 10 + [[0.0, 0.0, 0.0]] * 90
+        direct = opening_tail_mean_subtract(vectors, 10)
+        self.assertTrue(direct["applied"])
+        self.assertTrue(direct["collapsed"])
+        self.assertLess(direct["rmse_after_m"], 1e-12)
+        self.assertAlmostEqual(direct["opening_tail_mean_norm_m"], 0.06)
+        self.assertFalse(direct["sequence_mean_collapsed"])
+        self.assertGreater(direct["sequence_mean_subtracted_rmse_m"], 0.015)
+
+        timeline = self._opening_timeline()
+        timeline["rmse_m"] = math.sqrt(10.0 * (0.06 ** 2) / 100.0)
+        timeline["error_vectors_m"] = vectors
+        case = diagnose_case("synthetic-open-vectors", timeline)
+        self.assertEqual(case["pattern"], "opening_fixed_translation")
+        mean_subtract = case["mean_subtract"]
+        self.assertEqual(mean_subtract["status"], "applied")
+        self.assertTrue(mean_subtract["applied"])
+        self.assertTrue(mean_subtract["collapsed"])
+        self.assertEqual(mean_subtract["tail_n"], 10)
+        self.assertAlmostEqual(mean_subtract["rmse_before_m"], timeline["rmse_m"])
+        self.assertLess(mean_subtract["rmse_after_m"], 1e-12)
+        self.assertAlmostEqual(mean_subtract["opening_tail_mean_m"][0], 0.06)
+        self.assertFalse(mean_subtract["sequence_mean_collapsed"])
+        self.assertIsNone(case["accuracy"])
+        self.assertFalse(case["new_ate"])
+        unknown = {item["item"]: item["status"] for item in case["unknown"]}
+        self.assertEqual(unknown["per_frame_error_vectors"], "present")
+
+    def test_whole_sequence_vectors_do_not_collapse_and_scalars_have_no_direction(self):
+        import math
+
+        from headcam.residual_diagnosis import diagnose_case, opening_tail_mean_subtract
+
+        spinning = []
+        for index in range(100):
+            theta = 2.0 * math.pi * index / 100.0
+            spinning.append([0.03 * math.cos(theta), 0.03 * math.sin(theta), 0.0])
+        probed = opening_tail_mean_subtract(spinning, 10)
+        self.assertTrue(probed["applied"])
+        self.assertFalse(probed["collapsed"])
+        self.assertGreater(probed["rmse_after_m"], 0.8 * probed["rmse_before_m"])
+        untouched = opening_tail_mean_subtract(spinning, 0)
+        self.assertFalse(untouched["applied"])
+        self.assertFalse(untouched["collapsed"])
+        self.assertIsNone(untouched["rmse_after_m"])
+        self.assertFalse(untouched["sequence_mean_collapsed"])
+        self.assertGreater(untouched["sequence_mean_subtracted_rmse_m"], 0.025)
+
+        timeline = self._flat_timeline()
+        timeline["error_vectors_m"] = spinning
+        case = diagnose_case("synthetic-spin", timeline)
+        self.assertEqual(case["pattern"], "whole_sequence_residual")
+        mean_subtract = case["mean_subtract"]
+        self.assertEqual(mean_subtract["status"], "no_opening_tail")
+        self.assertFalse(mean_subtract["applied"])
+        self.assertFalse(mean_subtract["collapsed"])
+        self.assertIsNone(mean_subtract["rmse_after_m"])
+        self.assertFalse(mean_subtract["sequence_mean_collapsed"])
+        self.assertGreater(mean_subtract["sequence_mean_subtracted_rmse_m"], 0.025)
+        self.assertAlmostEqual(mean_subtract["rmse_before_m"], 0.03)
+        self.assertIsNone(case["accuracy"])
+
+        scalar = self._opening_timeline()
+        scalar["error_vectors_m"] = [0.06] * 100
+        refused = diagnose_case("synthetic-scalar", scalar, record=self._record(0.02, 100))
+        self.assertEqual(refused["pattern"], "opening_fixed_translation")
+        self.assertEqual(refused["mean_subtract"]["status"], "direction_unknown")
+        self.assertFalse(refused["mean_subtract"]["applied"])
+        self.assertIsNone(refused["mean_subtract"]["rmse_after_m"])
+        self.assertIsNone(refused["mean_subtract"]["sequence_mean_subtracted_rmse_m"])
+        self.assertEqual(refused["proven"]["rmse_m"], 0.02)
+        unknown = {item["item"]: item["status"] for item in refused["unknown"]}
+        self.assertEqual(unknown["per_frame_error_vectors"], "direction_unknown")
+
+        mismatch = self._opening_timeline()
+        mismatch["error_vectors_m"] = [[0.5, 0.0, 0.0]] * 100
+        mismatched = diagnose_case("synthetic-vector-mismatch", mismatch, record=self._record(0.02, 100))
+        self.assertEqual(mismatched["pattern"], "opening_fixed_translation")
+        self.assertEqual(mismatched["mean_subtract"]["status"], "vector_rmse_mismatch")
+        self.assertIsNone(mismatched["mean_subtract"]["rmse_after_m"])
+        self.assertEqual(mismatched["proven"]["rmse_m"], 0.02)
+        self.assertIsNone(mismatched["accuracy"])
+
     def test_cli_writes_the_report(self):
         import tempfile
 
@@ -3711,10 +3904,11 @@ class ResidualShapeDiagnosisTest(unittest.TestCase):
             code = main(["--docs", str(ROOT / "docs" / "headcam" / "orbslam3_quest3"), "--out", str(out)])
             self.assertEqual(code, 0)
             report = json.loads(out.read_text(encoding="utf-8"))
-            self.assertEqual(
-                [case["pattern"] for case in report["cases"]],
-                ["opening_fixed_translation", "whole_sequence_residual"],
-            )
+            self.assertEqual(len(report["cases"]), 15)
+            self.assertEqual(report["pattern_counts"]["opening_fixed_translation"], 2)
+            self.assertEqual(report["pattern_counts"]["whole_sequence_residual"], 1)
+            self.assertEqual(report["pattern_counts"]["unclassified"], 12)
+            self.assertEqual(report["pattern_counts"]["refused"], 0)
             self.assertIsNone(report["accuracy"])
 
 
