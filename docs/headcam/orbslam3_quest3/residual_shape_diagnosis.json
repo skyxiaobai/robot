@@ -1,0 +1,383 @@
+{
+  "kind": "residual_shape_diagnosis_v1",
+  "accuracy": null,
+  "new_ate": false,
+  "package_accuracy_rule": "null_when_episode_measurements_differ",
+  "note": "形状诊断只读已提交的时间线和 batch 行。rmse 从那些文件原样抄出，没有新的 Umeyama，也没有新的 ATE。1 秒箱的 pooled_rmse_m 是各箱 n * rmse^2 的加总，不是重新对齐。accuracy 是 null。短 clip 的 RMSE 在录制对不上时不抄。归类不是原因。",
+  "cases": [
+    {
+      "name": "P0002_273c2819",
+      "pattern": "opening_fixed_translation",
+      "accuracy": null,
+      "new_ate": false,
+      "measurement": {
+        "same_measurement": true,
+        "timeline_rmse_m": 0.014536769894140768,
+        "record_rmse_m": 0.014536769894140768,
+        "rerun_rmse_m": 0.014536769894140768,
+        "refuse_reasons": []
+      },
+      "proven": {
+        "n": 1050,
+        "rmse_m": 0.014536769894140768,
+        "median_m": 0.0040423255435268765,
+        "max_m": 0.06606663538241843,
+        "max_error": {
+          "index": 39,
+          "t_s": 1.3000000000029104,
+          "error_m": 0.06606663538241843,
+          "clip_id": 6,
+          "offset_in_clip": 39
+        },
+        "sse_share_worst_10pct": {
+          "n_worst": 105,
+          "share": 0.9139904154615902
+        },
+        "tail_threshold_m": 0.02,
+        "tail_runs": [
+          {
+            "t0_s": 0.0,
+            "t1_s": 1.7000000000043656,
+            "n": 52,
+            "rmse_m": 0.061654164438708026,
+            "max_m": 0.06606663538241843
+          }
+        ],
+        "tail_geometry": [
+          {
+            "t0_s": 0.0,
+            "t1_s": 1.7000000000043656,
+            "offset": {
+              "n": 52,
+              "mean_norm_m": 0.06062457775745827,
+              "rms_component_std_m": 0.006478080074763555
+            },
+            "step": {
+              "n_steps": 51,
+              "trans_rmse_m": 0.002916849944043936,
+              "trans_median_m": 0.0012657564608129753,
+              "rot_rmse_deg": 0.15150243565023788
+            }
+          }
+        ],
+        "outside_tail": {
+          "n": 998,
+          "rmse_m": 0.004926238619860379,
+          "median_m": 0.0037992139759612216,
+          "max_m": 0.016672495626819422
+        },
+        "outside_tail_step": {
+          "n_steps": 997,
+          "trans_rmse_m": 0.0008946829663664574,
+          "trans_median_m": 0.0005322580299385748,
+          "rot_rmse_deg": 0.10195609464164868
+        },
+        "seams": {
+          "near": {
+            "n": 36,
+            "rmse_m": 0.004596351884180073,
+            "median_m": 0.0037194348890640765,
+            "max_m": 0.008857777451921423
+          },
+          "away": {
+            "n": 1014,
+            "rmse_m": 0.014767194393526986,
+            "median_m": 0.004124940541654814,
+            "max_m": 0.06606663538241843
+          },
+          "radius_frames": 2,
+          "n_near": 36
+        },
+        "max_error_exceeds_seam_neighborhood": true,
+        "tracked_features": null,
+        "record_se3_rmse_m": 0.014536769894140768,
+        "record_sim3_rmse_m": 0.014520470758477963,
+        "record_similarity_scale": 1.0111402616823868,
+        "lost_frames": 0,
+        "fail_to_track_local_map": 0,
+        "loop_closures": 0,
+        "reinits": 0,
+        "keyframes": 80
+      },
+      "derived": {
+        "offset_over_spread": 9.35841747211978,
+        "step_over_tail_rmse": 0.047309860908806095,
+        "outside_over_tail_rmse": 0.07990114965806856,
+        "bins_starting_before_tail_end": {
+          "n": 60,
+          "pooled_rmse_m": 0.057502605856651304,
+          "sse_share": 0.8941310398242173,
+          "includes_bins_that_extend_past_the_tail": true
+        },
+        "bins_starting_at_or_after_tail_end": {
+          "n": 990,
+          "pooled_rmse_m": 0.0048711251976878405
+        },
+        "bins_ending_at_or_before_tail_end": {
+          "n": 30,
+          "pooled_rmse_m": 0.06434934008061646
+        },
+        "fastest_linear_speed_m_s_in_tail": 0.11823643444934767,
+        "fastest_linear_speed_m_s_outside_tail": 0.28569690017074567,
+        "fastest_linear_speed_is_outside_tail": true
+      },
+      "opening_reasons": [],
+      "whole_reasons": [
+        "has_tail",
+        "has_tail_geometry",
+        "outside_n",
+        "outside_rmse",
+        "worst_share",
+        "step_count",
+        "bin_span"
+      ],
+      "host_comparison": {
+        "prevhost_timeline_in_repo": false,
+        "shape_on_prevhost": "unknown",
+        "prevhost_rmse_used_as_this_run": false,
+        "compared": true,
+        "current_se3_rmse_m": 0.014536769894140768,
+        "prevhost_se3_rmse_m": 0.015275329451131102,
+        "abs_delta_m": 0.0007385595569903338,
+        "rmse_within_1e-6_m": false,
+        "current_keyframes": 80,
+        "prevhost_keyframes": 79,
+        "current_lost_frames": 0,
+        "prevhost_lost_frames": 0,
+        "current_fail_to_track_local_map": 0,
+        "prevhost_fail_to_track_local_map": 0
+      },
+      "short_clip_package": {
+        "checked": true,
+        "same_recording": false,
+        "overlaps": [],
+        "used_as_remeasurement": false,
+        "copied_rmse_m": null,
+        "observed_package_accuracy": null
+      },
+      "unknown": [
+        {
+          "item": "cause",
+          "status": "unknown",
+          "detail": "形状归类没有给出原因。日志里没有带时间戳的重定位。"
+        },
+        {
+          "item": "per_frame_error_vectors",
+          "status": "absent_from_json",
+          "detail": "时间线没有逐帧误差向量，不能把均值平移减掉再算一次 RMSE。"
+        },
+        {
+          "item": "relocalization_timestamp",
+          "status": "absent_from_json"
+        },
+        {
+          "item": "tracked_features",
+          "status": "null"
+        },
+        {
+          "item": "imu",
+          "status": "not_in_these_records"
+        },
+        {
+          "item": "brightness_without_opening",
+          "status": "aggregate_only",
+          "detail": "亮度和模糊来自同一次轨迹、png 还在时的 trajectory_qc。这次重跑没有 --image-dir，因为 euroc png 已经删掉。其余字段是这次 diagnose_files 在同一份 CameraTrajectory.txt 上算的。"
+        },
+        {
+          "item": "prevhost_shape",
+          "status": "unknown"
+        },
+        {
+          "item": "short_clip_package",
+          "status": "different_recording",
+          "detail": "短 clip 的 RMSE 没有抄进这份诊断。"
+        },
+        {
+          "item": "hands_in_slam_world",
+          "status": "waiting_on_mano_license"
+        },
+        {
+          "item": "new_ate",
+          "status": "not_computed"
+        },
+        {
+          "item": "pattern",
+          "status": "opening_fixed_translation"
+        }
+      ],
+      "sources": {
+        "timeline": "P0002_273c2819_timeline.json",
+        "record": "P0002_273c2819.json",
+        "rerun": "P0002_273c2819_rerun.json",
+        "prevhost": "P0002_273c2819_prevhost.json",
+        "short_clip_export": "quest3_four_short_clips_orbslam3_export.json"
+      }
+    },
+    {
+      "name": "P0003_b153ade2",
+      "pattern": "whole_sequence_residual",
+      "accuracy": null,
+      "new_ate": false,
+      "measurement": {
+        "same_measurement": true,
+        "timeline_rmse_m": 0.034938410199040267,
+        "record_rmse_m": 0.034938410199040267,
+        "rerun_rmse_m": null,
+        "refuse_reasons": []
+      },
+      "proven": {
+        "n": 1800,
+        "rmse_m": 0.034938410199040267,
+        "median_m": 0.03130053034361041,
+        "max_m": 0.053364086668572314,
+        "max_error": {
+          "index": 1025,
+          "t_s": 34.166666666998935,
+          "error_m": 0.053364086668572314,
+          "clip_id": 486,
+          "offset_in_clip": 125
+        },
+        "sse_share_worst_10pct": {
+          "n_worst": 180,
+          "share": 0.19338232065630634
+        },
+        "tail_threshold_m": 0.09390159103083123,
+        "tail_runs": [],
+        "tail_geometry": [],
+        "outside_tail": {
+          "n": 1800,
+          "rmse_m": 0.034938410199040267,
+          "median_m": 0.03130053034361041,
+          "max_m": 0.053364086668572314
+        },
+        "outside_tail_step": {
+          "n_steps": 1799,
+          "trans_rmse_m": 0.001817144902473394,
+          "trans_median_m": 0.0008622802988736087,
+          "rot_rmse_deg": 0.08433025879716792
+        },
+        "seams": {
+          "near": {
+            "n": 66,
+            "rmse_m": 0.033607351081445413,
+            "median_m": 0.030441358407759137,
+            "max_m": 0.05326156858868167
+          },
+          "away": {
+            "n": 1734,
+            "rmse_m": 0.03498807298792872,
+            "median_m": 0.03136746503843178,
+            "max_m": 0.053364086668572314
+          },
+          "radius_frames": 2,
+          "n_near": 66
+        },
+        "max_error_exceeds_seam_neighborhood": true,
+        "tracked_features": null,
+        "record_se3_rmse_m": 0.034938410199040267,
+        "record_sim3_rmse_m": 0.033468149532695377,
+        "record_similarity_scale": 0.9407163993842738,
+        "lost_frames": 0,
+        "fail_to_track_local_map": 0,
+        "loop_closures": 0,
+        "reinits": 0,
+        "keyframes": 180
+      },
+      "derived": {
+        "step_over_position_rmse": 0.05200994813791812,
+        "worst_10pct_share": 0.19338232065630634,
+        "min_bin_rmse_m": 0.02024805329022599,
+        "max_bin_rmse_m": 0.04997181196923633,
+        "min_bin_over_rmse": 0.5795356221097373,
+        "max_bin_over_rmse": 1.4302829374477095,
+        "sim3_over_se3": 0.9579185012148813,
+        "scale_removes_residual": false
+      },
+      "opening_reasons": [
+        "tail_count"
+      ],
+      "whole_reasons": [],
+      "host_comparison": {
+        "prevhost_timeline_in_repo": false,
+        "shape_on_prevhost": "unknown",
+        "prevhost_rmse_used_as_this_run": false,
+        "compared": true,
+        "current_se3_rmse_m": 0.034938410199040267,
+        "prevhost_se3_rmse_m": 0.0034270419514742423,
+        "abs_delta_m": 0.03151136824756602,
+        "rmse_within_1e-6_m": false,
+        "current_keyframes": 180,
+        "prevhost_keyframes": 157,
+        "current_lost_frames": 0,
+        "prevhost_lost_frames": 0,
+        "current_fail_to_track_local_map": 0,
+        "prevhost_fail_to_track_local_map": 0
+      },
+      "short_clip_package": {
+        "checked": true,
+        "same_recording": false,
+        "overlaps": [],
+        "used_as_remeasurement": false,
+        "copied_rmse_m": null,
+        "observed_package_accuracy": null
+      },
+      "unknown": [
+        {
+          "item": "cause",
+          "status": "unknown",
+          "detail": "形状归类没有给出原因。日志里没有带时间戳的重定位。"
+        },
+        {
+          "item": "per_frame_error_vectors",
+          "status": "absent_from_json",
+          "detail": "时间线没有逐帧误差向量，不能把均值平移减掉再算一次 RMSE。"
+        },
+        {
+          "item": "relocalization_timestamp",
+          "status": "absent_from_json"
+        },
+        {
+          "item": "tracked_features",
+          "status": "null"
+        },
+        {
+          "item": "imu",
+          "status": "not_in_these_records"
+        },
+        {
+          "item": "brightness_without_opening",
+          "status": "unmeasured",
+          "detail": null
+        },
+        {
+          "item": "prevhost_shape",
+          "status": "unknown"
+        },
+        {
+          "item": "short_clip_package",
+          "status": "different_recording",
+          "detail": "短 clip 的 RMSE 没有抄进这份诊断。"
+        },
+        {
+          "item": "hands_in_slam_world",
+          "status": "waiting_on_mano_license"
+        },
+        {
+          "item": "new_ate",
+          "status": "not_computed"
+        },
+        {
+          "item": "pattern",
+          "status": "whole_sequence_residual"
+        }
+      ],
+      "sources": {
+        "timeline": "P0003_b153ade2_timeline.json",
+        "record": "P0003_b153ade2.json",
+        "rerun": null,
+        "prevhost": "P0003_b153ade2_prevhost.json",
+        "short_clip_export": "quest3_four_short_clips_orbslam3_export.json"
+      }
+    }
+  ]
+}

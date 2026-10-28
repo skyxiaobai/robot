@@ -3385,5 +3385,338 @@ class UnmeasuredPosePackageTest(unittest.TestCase):
             self.assertFalse(mixed_out.exists())
 
 
+class ResidualShapeDiagnosisTest(unittest.TestCase):
+    """已提交时间线的残差形状。不跑 SLAM，不新算 ATE，不抄对不上的 RMSE。"""
+
+    def _opening_timeline(self):
+        bins = [{"n": 30, "rmse_m": 0.04, "median_m": 0.04, "max_m": 0.06, "t0_s": 0.0, "t1_s": 1.0}]
+        for index in range(7):
+            bins.append({
+                "n": 10,
+                "rmse_m": 0.004,
+                "median_m": 0.004,
+                "max_m": 0.005,
+                "t0_s": 1.0 + index,
+                "t1_s": 2.0 + index,
+            })
+        return {
+            "kind": "trajectory_error_timeline_v1",
+            "status": "ok",
+            "estimate_pose_source": "orbslam3_stereo_euroc",
+            "reference_pose_source": "hot3d_gt_mocap",
+            "n": 100,
+            "rmse_m": 0.02,
+            "median_m": 0.004,
+            "max_m": 0.06,
+            "max_error": {"index": 2, "t_s": 0.1, "error_m": 0.06, "clip_id": 6, "offset_in_clip": 2},
+            "sse_share_worst_10pct": {"n_worst": 10, "share": 0.9},
+            "tail_runs": [{"t0_s": 0.0, "t1_s": 0.3, "n": 10, "rmse_m": 0.06, "max_m": 0.06}],
+            "tail_geometry": [{
+                "t0_s": 0.0,
+                "t1_s": 0.3,
+                "offset": {"n": 10, "mean_norm_m": 0.058, "rms_component_std_m": 0.004},
+                "step": {"n_steps": 9, "trans_rmse_m": 0.002, "trans_median_m": 0.001, "rot_rmse_deg": 0.1},
+            }],
+            "outside_tail": {"n": 90, "rmse_m": 0.005, "median_m": 0.004, "max_m": 0.01},
+            "outside_tail_step": {"n_steps": 89, "trans_rmse_m": 0.001, "trans_median_m": 0.001, "rot_rmse_deg": 0.05},
+            "bins_s": bins,
+            "tracked_features": None,
+            "motion_in_tail": {"linear_speed_m_s": {"n": 9, "median": 0.2, "max": 0.3}},
+            "motion_outside_tail": {"linear_speed_m_s": {"n": 90, "median": 0.2, "max": 0.9}},
+            "accuracy": 0.01,
+        }
+
+    def _flat_timeline(self):
+        bins = [
+            {"n": 10, "rmse_m": 0.03, "median_m": 0.03, "max_m": 0.031, "t0_s": float(index), "t1_s": float(index + 1)}
+            for index in range(10)
+        ]
+        return {
+            "kind": "trajectory_error_timeline_v1",
+            "status": "ok",
+            "estimate_pose_source": "orbslam3_stereo_euroc",
+            "reference_pose_source": "hot3d_gt_mocap",
+            "n": 100,
+            "rmse_m": 0.03,
+            "median_m": 0.03,
+            "max_m": 0.031,
+            "max_error": {"index": 4, "t_s": 4.0, "error_m": 0.031, "clip_id": 1, "offset_in_clip": 4},
+            "sse_share_worst_10pct": {"n_worst": 10, "share": 0.11},
+            "tail_runs": [],
+            "tail_geometry": [],
+            "outside_tail": {"n": 100, "rmse_m": 0.03, "median_m": 0.03, "max_m": 0.031},
+            "outside_tail_step": {"n_steps": 99, "trans_rmse_m": 0.001, "trans_median_m": 0.001, "rot_rmse_deg": 0.1},
+            "bins_s": bins,
+            "tracked_features": None,
+            "images": None,
+        }
+
+    def _record(self, rmse, n, sim3=None, lost=0, pose_source="orbslam3_stereo_euroc", sequence_id="P0002_273c2819", clips=None):
+        ate = {"se3": {"n": n, "rmse_m": rmse}}
+        if sim3 is not None:
+            ate["sim3"] = {"n": n, "rmse_m": sim3, "similarity_scale": 1.0}
+        return {
+            "sequence_id": sequence_id,
+            "clip_ids": [6, 7] if clips is None else clips,
+            "pose_source": pose_source,
+            "reference_pose_source": "hot3d_gt_mocap",
+            "lost_frames": lost,
+            "fail_to_track_local_map": 0,
+            "loop_closures": 0,
+            "reinits": 0,
+            "map_keyframes": [{"map": 0, "keyframes": 10}],
+            "accuracy": {"kind": "trajectory_error_v1", "ate": ate},
+        }
+
+    def test_opening_prefix_is_fixed_translation(self):
+        from headcam.residual_diagnosis import diagnose_case
+
+        case = diagnose_case("synthetic-open", self._opening_timeline(), record=self._record(0.02, 100))
+        self.assertEqual(case["pattern"], "opening_fixed_translation")
+        self.assertEqual(case["opening_reasons"], [])
+        self.assertIn("has_tail", case["whole_reasons"])
+        self.assertGreater(case["derived"]["offset_over_spread"], 5.0)
+        self.assertLess(case["derived"]["step_over_tail_rmse"], 0.1)
+        self.assertTrue(case["derived"]["fastest_linear_speed_is_outside_tail"])
+        self.assertTrue(case["derived"]["bins_starting_before_tail_end"]["includes_bins_that_extend_past_the_tail"])
+        self.assertIsNone(case["accuracy"])
+        self.assertFalse(case["new_ate"])
+        self.assertNotIn("trajectory_error_v1", json.dumps(case))
+
+    def test_middle_tail_is_unclassified(self):
+        from headcam.residual_diagnosis import diagnose_case
+
+        timeline = self._opening_timeline()
+        timeline["tail_runs"][0]["t0_s"] = 3.0
+        timeline["tail_runs"][0]["t1_s"] = 3.3
+        timeline["tail_geometry"][0]["t0_s"] = 3.0
+        timeline["tail_geometry"][0]["t1_s"] = 3.3
+        timeline["max_error"]["t_s"] = 3.1
+        case = diagnose_case("synthetic-middle", timeline)
+        self.assertEqual(case["pattern"], "unclassified")
+        self.assertIn("tail_not_prefix", case["opening_reasons"])
+        self.assertIn("has_tail", case["whole_reasons"])
+        self.assertIsNone(case["accuracy"])
+
+    def test_flat_timeline_is_whole_sequence_residual(self):
+        from headcam.residual_diagnosis import diagnose_case
+
+        case = diagnose_case("synthetic-flat", self._flat_timeline())
+        self.assertEqual(case["pattern"], "whole_sequence_residual")
+        self.assertEqual(case["whole_reasons"], [])
+        self.assertIn("tail_count", case["opening_reasons"])
+        self.assertIsNone(case["derived"]["scale_removes_residual"])
+        self.assertIsNone(case["derived"]["sim3_over_se3"])
+        self.assertIsNone(case["accuracy"])
+
+    def test_quiet_half_and_scale_fix_are_not_whole_sequence(self):
+        from headcam.residual_diagnosis import diagnose_case
+
+        quiet = self._flat_timeline()
+        for item in quiet["bins_s"][:5]:
+            item["rmse_m"] = 0.001
+        quiet["rmse_m"] = 0.035
+        quiet["outside_tail"]["rmse_m"] = 0.035
+        case = diagnose_case("synthetic-quiet", quiet)
+        self.assertEqual(case["pattern"], "unclassified")
+        self.assertIn("bin_span", case["whole_reasons"])
+
+        scaled = self._flat_timeline()
+        case = diagnose_case("synthetic-scale", scaled, record=self._record(0.03, 100, sim3=0.01))
+        self.assertEqual(case["pattern"], "unclassified")
+        self.assertIn("sim3_reduces_rmse", case["whole_reasons"])
+        self.assertTrue(case["derived"]["whole_sequence"]["scale_removes_residual"])
+        self.assertIsNone(case["accuracy"])
+
+    def test_mismatched_rmse_and_ground_truth_header_are_refused(self):
+        from headcam.residual_diagnosis import diagnose_case
+
+        timeline = self._opening_timeline()
+        mismatch = diagnose_case("synthetic-mismatch", timeline, record=self._record(0.5, 100))
+        self.assertEqual(mismatch["pattern"], "refused")
+        self.assertIn("rmse_mismatch", mismatch["measurement"]["refuse_reasons"])
+        self.assertIsNone(mismatch["proven"])
+        self.assertIsNone(mismatch["accuracy"])
+
+        relabel = diagnose_case(
+            "synthetic-gt",
+            timeline,
+            record=self._record(0.02, 100, pose_source="hot3d_gt_mocap"),
+        )
+        self.assertEqual(relabel["pattern"], "refused")
+        self.assertIn("record_pose_source", relabel["measurement"]["refuse_reasons"])
+        self.assertIsNone(relabel["accuracy"])
+
+    def test_lost_frames_stay_unclassified_and_accuracy_stays_null(self):
+        from headcam.residual_diagnosis import diagnose_case
+
+        case = diagnose_case(
+            "synthetic-lost",
+            self._opening_timeline(),
+            record=self._record(0.02, 100, lost=4),
+        )
+        self.assertEqual(case["pattern"], "unclassified")
+        self.assertIn("lost_frames", case["opening_reasons"])
+        self.assertIn("lost_frames", case["whole_reasons"])
+        self.assertEqual(case["proven"]["lost_frames"], 4)
+        self.assertEqual(case["proven"]["rmse_m"], 0.02)
+        self.assertIsNone(case["accuracy"])
+
+    def test_short_clip_rmse_is_not_copied(self):
+        from headcam.residual_diagnosis import diagnose_case
+
+        timeline = self._opening_timeline()
+        record = self._record(0.02, 100, sequence_id="P0002_273c2819", clips=[6, 7, 8, 9, 10, 11, 12])
+        other = {
+            "package_accuracy": None,
+            "sequences": [{
+                "name": "clip-000000",
+                "sequence_id": "P0002_210fc0da",
+                "clip_ids": [0],
+                "accuracy": {"ate": {"se3": {"rmse_m": 0.0045912349693376705}}},
+            }],
+        }
+        case = diagnose_case("synthetic-other", timeline, record=record, short_export=other)
+        self.assertFalse(case["short_clip_package"]["same_recording"])
+        self.assertIsNone(case["short_clip_package"]["copied_rmse_m"])
+        self.assertNotIn("0.0045912349693376705", json.dumps(case))
+        self.assertEqual(case["pattern"], "opening_fixed_translation")
+
+        overlap = {
+            "package_accuracy": 0.02,
+            "sequences": [{
+                "name": "clip-000006",
+                "sequence_id": "P0002_other",
+                "clip_ids": [6],
+                "accuracy": {"ate": {"se3": {"rmse_m": 0.123456}}},
+            }],
+        }
+        case = diagnose_case("synthetic-overlap", timeline, record=record, short_export=overlap)
+        self.assertTrue(case["short_clip_package"]["same_recording"])
+        self.assertEqual(case["short_clip_package"]["overlaps"][0]["shared_clip_ids"], [6])
+        self.assertIsNone(case["short_clip_package"]["copied_rmse_m"])
+        self.assertNotIn("0.123456", json.dumps(case))
+        self.assertEqual(case["pattern"], "opening_fixed_translation")
+        self.assertIsNone(case["accuracy"])
+        statuses = {item["item"]: item["status"] for item in case["unknown"]}
+        self.assertEqual(statuses["short_clip_package"], "same_recording")
+        self.assertEqual(statuses["hands_in_slam_world"], "waiting_on_mano_license")
+
+    def test_committed_p0002_and_p0003_match_the_documented_numbers(self):
+        from headcam.residual_diagnosis import diagnose_repo
+
+        docs = ROOT / "docs" / "headcam" / "orbslam3_quest3"
+        report = diagnose_repo(docs)
+        by_name = {case["name"]: case for case in report["cases"]}
+        p2 = by_name["P0002_273c2819"]
+        self.assertEqual(p2["pattern"], "opening_fixed_translation")
+        self.assertEqual(p2["proven"]["rmse_m"], 0.014536769894140768)
+        self.assertEqual(p2["proven"]["median_m"], 0.0040423255435268765)
+        self.assertEqual(p2["proven"]["max_m"], 0.06606663538241843)
+        self.assertEqual(p2["proven"]["max_error"]["t_s"], 1.3000000000029104)
+        self.assertEqual(p2["proven"]["max_error"]["index"], 39)
+        self.assertEqual(p2["proven"]["max_error"]["clip_id"], 6)
+        self.assertEqual(p2["proven"]["max_error"]["offset_in_clip"], 39)
+        self.assertEqual(p2["proven"]["tail_runs"][0]["t0_s"], 0.0)
+        self.assertEqual(p2["proven"]["tail_runs"][0]["t1_s"], 1.7000000000043656)
+        self.assertEqual(p2["proven"]["tail_runs"][0]["n"], 52)
+        self.assertEqual(p2["proven"]["tail_runs"][0]["rmse_m"], 0.061654164438708026)
+        self.assertEqual(p2["proven"]["tail_geometry"][0]["offset"]["mean_norm_m"], 0.06062457775745827)
+        self.assertEqual(p2["proven"]["tail_geometry"][0]["offset"]["rms_component_std_m"], 0.006478080074763555)
+        self.assertEqual(p2["proven"]["tail_geometry"][0]["step"]["trans_rmse_m"], 0.002916849944043936)
+        self.assertEqual(p2["proven"]["outside_tail"]["n"], 998)
+        self.assertEqual(p2["proven"]["outside_tail"]["rmse_m"], 0.004926238619860379)
+        self.assertEqual(p2["derived"]["offset_over_spread"], 9.35841747211978)
+        self.assertEqual(p2["derived"]["bins_starting_before_tail_end"]["n"], 60)
+        self.assertEqual(p2["derived"]["bins_starting_before_tail_end"]["sse_share"], 0.8941310398242173)
+        self.assertEqual(p2["derived"]["bins_starting_at_or_after_tail_end"]["n"], 990)
+        self.assertEqual(p2["derived"]["bins_starting_at_or_after_tail_end"]["pooled_rmse_m"], 0.0048711251976878405)
+        self.assertTrue(p2["derived"]["fastest_linear_speed_is_outside_tail"])
+        self.assertTrue(p2["proven"]["max_error_exceeds_seam_neighborhood"])
+        self.assertEqual(p2["measurement"]["rerun_rmse_m"], 0.014536769894140768)
+        self.assertTrue(p2["measurement"]["same_measurement"])
+        self.assertEqual(p2["host_comparison"]["prevhost_se3_rmse_m"], 0.015275329451131102)
+        self.assertEqual(p2["host_comparison"]["abs_delta_m"], 0.0007385595569903338)
+        self.assertFalse(p2["host_comparison"]["rmse_within_1e-6_m"])
+        self.assertEqual(p2["host_comparison"]["shape_on_prevhost"], "unknown")
+        self.assertFalse(p2["host_comparison"]["prevhost_rmse_used_as_this_run"])
+        self.assertFalse(p2["host_comparison"]["prevhost_timeline_in_repo"])
+        self.assertNotEqual(p2["proven"]["rmse_m"], p2["host_comparison"]["prevhost_se3_rmse_m"])
+        self.assertFalse(p2["short_clip_package"]["same_recording"])
+        self.assertIsNone(p2["short_clip_package"]["copied_rmse_m"])
+        self.assertIsNone(p2["short_clip_package"]["observed_package_accuracy"])
+        self.assertIsNone(p2["accuracy"])
+        self.assertFalse(p2["new_ate"])
+        p2_unknown = {item["item"]: item["status"] for item in p2["unknown"]}
+        self.assertEqual(p2_unknown["brightness_without_opening"], "aggregate_only")
+        self.assertEqual(p2_unknown["per_frame_error_vectors"], "absent_from_json")
+        self.assertEqual(p2_unknown["cause"], "unknown")
+        self.assertEqual(p2_unknown["hands_in_slam_world"], "waiting_on_mano_license")
+
+        p3 = by_name["P0003_b153ade2"]
+        self.assertEqual(p3["pattern"], "whole_sequence_residual")
+        self.assertEqual(p3["proven"]["rmse_m"], 0.034938410199040267)
+        self.assertEqual(p3["proven"]["median_m"], 0.03130053034361041)
+        self.assertEqual(p3["proven"]["max_m"], 0.053364086668572314)
+        self.assertEqual(p3["proven"]["tail_runs"], [])
+        self.assertEqual(p3["proven"]["tail_threshold_m"], 0.09390159103083123)
+        self.assertEqual(p3["proven"]["sse_share_worst_10pct"]["share"], 0.19338232065630634)
+        self.assertEqual(p3["proven"]["sse_share_worst_10pct"]["n_worst"], 180)
+        self.assertEqual(p3["proven"]["outside_tail"]["n"], 1800)
+        self.assertEqual(p3["proven"]["outside_tail_step"]["n_steps"], 1799)
+        self.assertEqual(p3["proven"]["outside_tail_step"]["trans_rmse_m"], 0.001817144902473394)
+        self.assertEqual(p3["proven"]["max_error"]["t_s"], 34.166666666998935)
+        self.assertEqual(p3["proven"]["max_error"]["clip_id"], 486)
+        self.assertEqual(p3["proven"]["max_error"]["offset_in_clip"], 125)
+        self.assertEqual(p3["proven"]["record_sim3_rmse_m"], 0.033468149532695377)
+        self.assertEqual(p3["proven"]["record_similarity_scale"], 0.9407163993842738)
+        self.assertEqual(p3["proven"]["keyframes"], 180)
+        self.assertEqual(p3["proven"]["lost_frames"], 0)
+        self.assertEqual(p3["proven"]["fail_to_track_local_map"], 0)
+        self.assertEqual(p3["derived"]["step_over_position_rmse"], 0.05200994813791812)
+        self.assertEqual(p3["derived"]["min_bin_rmse_m"], 0.02024805329022599)
+        self.assertEqual(p3["derived"]["max_bin_rmse_m"], 0.04997181196923633)
+        self.assertEqual(p3["derived"]["min_bin_over_rmse"], 0.5795356221097373)
+        self.assertEqual(p3["derived"]["max_bin_over_rmse"], 1.4302829374477095)
+        self.assertEqual(p3["derived"]["sim3_over_se3"], 0.9579185012148813)
+        self.assertFalse(p3["derived"]["scale_removes_residual"])
+        self.assertEqual(p3["host_comparison"]["prevhost_se3_rmse_m"], 0.0034270419514742423)
+        self.assertEqual(p3["host_comparison"]["abs_delta_m"], 0.03151136824756602)
+        self.assertEqual(p3["host_comparison"]["prevhost_keyframes"], 157)
+        self.assertFalse(p3["host_comparison"]["rmse_within_1e-6_m"])
+        self.assertEqual(p3["host_comparison"]["shape_on_prevhost"], "unknown")
+        self.assertFalse(p3["host_comparison"]["prevhost_rmse_used_as_this_run"])
+        self.assertFalse(p3["short_clip_package"]["same_recording"])
+        self.assertIsNone(p3["accuracy"])
+        p3_unknown = {item["item"]: item["status"] for item in p3["unknown"]}
+        self.assertEqual(p3_unknown["brightness_without_opening"], "unmeasured")
+        self.assertIsNone(report["accuracy"])
+        self.assertFalse(report["new_ate"])
+        self.assertEqual(report["package_accuracy_rule"], "null_when_episode_measurements_differ")
+        blob = json.dumps(report)
+        self.assertNotIn("trajectory_error_v1", blob)
+        self.assertNotIn("rotation_row_major", blob)
+        self.assertNotIn("0.0045912349693376705", blob)
+        self.assertNotIn("0.0017128617629292439", blob)
+        committed = json.loads((docs / "residual_shape_diagnosis.json").read_text(encoding="utf-8"))
+        self.assertEqual(committed, report)
+
+    def test_cli_writes_the_report(self):
+        import tempfile
+
+        from headcam.residual_diagnosis import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            code = main(["--docs", str(ROOT / "docs" / "headcam" / "orbslam3_quest3"), "--out", str(out)])
+            self.assertEqual(code, 0)
+            report = json.loads(out.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [case["pattern"] for case in report["cases"]],
+                ["opening_fixed_translation", "whole_sequence_residual"],
+            )
+            self.assertIsNone(report["accuracy"])
+
+
 if __name__ == "__main__":
     unittest.main()
