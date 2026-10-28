@@ -69,6 +69,9 @@ python scripts/headcam/export_mvp.py --session /data/sess01 --out outputs/sess01
 
 # 手部之前已经导出过统一 episode：只补位姿状态、QC 和 LeRobot。
 python scripts/headcam/export_mvp.py --session /data/sess01 --episodes outputs/episodes --out outputs/sess01_mvp
+
+# 这一轮算不算合格。不合并，不新算 Umeyama，不下 MANO。
+PYTHONPATH=scripts python3 -m headcam.verification_gate
 ```
 
 `capture` 的默认就是不打开设备。要真的录，加 `--run`，并且本机要有 ffmpeg 和两个视频节点。失败时不把缺的时间戳填上。
@@ -1305,4 +1308,22 @@ PYTHONPATH=scripts python3 -m headcam.residual_diagnosis \
 ### 还缺的
 
 形状归类没有给出原因。上一台机器的时间线不在仓库里，P0002、P0003、P0021 的 prevhost 形状仍是 unknown。亮度没有把开头拿掉：`P0002_273c2819`、`P0010_3224a967`、`P0010_5edabbe9`、`P0013_0ec32d10`、`P0017_44db2c1d`、`P0018_15ad9743` 只有整段 Pearson（`aggregate_only`），其余是 `unmeasured`。euroc png 不在这台机器上。15 份已提交时间线没有逐帧 XYZ 向量，减掉均值平移之后的 RMSE 是 unknown，也没有逐帧特征数。这些记录里没有 IMU。四段短 clip 包和 2850 帧那个包的包级 accuracy 仍是 null。手进 SLAM 世界系仍等 Justin 的 MANO 许可。没有下 MANO，没有 Kaggle，没有新的 ATE。
+
+## 一轮增量的验收门
+
+上面每一轮结束时，都用同一句话收束：没有新的 ATE，包级 accuracy 在测量不相同的时候保持 null，没有下 MANO。从这一节起，这句话有一道机器可跑的门。清单在 `docs/headcam/verification_gate.md`。
+
+合格增量是下面这条命令退出码为 0，并且第一行是 `result: PASS`：
+
+```bash
+PYTHONPATH=scripts python3 -m headcam.verification_gate
+```
+
+它做五件事。包级和 episode 的 `accuracy` 在 remount（这次重跑）与 batch 行相差超过 1e-6 m，或各段测量不是同一份时，必须是 null。时间线与 batch 的 SE3 RMSE 差超过 1e-12 m 时，这条是 `refused`，并且不用作这次测量。声称残差归类时，`residual_shape_diagnosis.json` 必须和 `diagnose_repo` 对已提交时间线的重算一致，报告里的 `accuracy` 仍是 null。没有 `error_vectors_m` 时，减均值之后的 RMSE 保持 unknown，不从标量编 XYZ。`tests.test_headcam_mvp`、`tests.test_stereo_qc`、`tests.test_headcam_verification_gate` 要通过；缺可选依赖的 skip 算通过。
+
+`held:` 里仍然要问 Justin 的是：MANO 许可、人手进 SLAM 世界系、自动合并、没有二进制或参考数据时新算 Umeyama、没有逐帧向量时编 XYZ。这道门不合并，不下载 MANO，不跑 ORB-SLAM3，也不新造 RMSE。PASS 只说明这轮声明和已提交文件没有越过这些线。
+
+这轮若另外写出包级 accuracy 或 remount 相对 batch 的数，用 `--claim` 交一份 `headcam_mvp_increment_v1`。不交声明时，门核对已提交的 15 份时间线和残差报告。`--skip-tests` 和 `--no-repo` 只用于调试，不能代替合格命令。
+
+系统解释器 `python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc tests.test_headcam_verification_gate`：105 项，跳过 12 项（这台机器没装 pyarrow、cv2、lerobot、torch；其中两项是官方加载器），其余通过。numpy 1.26.4。没有 Kaggle。没有下 MANO。没有新的 ATE。
 
