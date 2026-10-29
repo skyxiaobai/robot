@@ -25,6 +25,8 @@ mediapipe>=0.10.30 去掉了 ``mp.solutions``。后端改用 Tasks ``HandLandmar
 
 相机系关节再乘 SLAM 的 ``T_world_cam`` 才是规格 §7.1 的世界系标签。
 没有轨迹文件时位姿是单位阵，此时坐标仍在相机系，不能当成已经完成的世界系。
+``headcam.slam_vio`` 在没有轨迹时不把这个单位阵写进 ``slam.tum``，而是标记
+``pose_missing``（见 ``docs/headcam_mvp.md``）。
 """
 import math
 import os

@@ -1,0 +1,32 @@
+{
+  "kind": "synthetic_error_vector_fixture_v1",
+  "synthetic": true,
+  "hot3d_ate": false,
+  "not_a_measurement": true,
+  "note": "合成轨迹，只锁 error_vectors_m 的写入和减均值。不是 HOT3D，不是 Quest3 重挂载。文件头的 pose_source 只为了让 diagnose_files 接受输入。这些数字不能写入 accuracy，也不能当成已提交的 15 条时间线的测量。",
+  "cases": {
+    "opening_fixed_translation": {
+      "estimate": "opening_fixed_translation/estimate.txt",
+      "gt": "opening_fixed_translation/gt.txt",
+      "estimate_scale": 1e-09,
+      "gt_scale": 1.0,
+      "n": 80,
+      "opening_frames": 4,
+      "shift_m": [
+        0.5,
+        0.0,
+        0.0
+      ],
+      "note": "前 4 帧的估计位置沿 x 加了 0.5 m。其余帧和真值重合。真值是沿 x 每帧 1 m 的直线。"
+    },
+    "whole_sequence_residual": {
+      "estimate": "whole_sequence_residual/estimate.txt",
+      "gt": "whole_sequence_residual/gt.txt",
+      "estimate_scale": 1e-09,
+      "gt_scale": 1.0,
+      "n": 80,
+      "radius_m": 0.04,
+      "note": "估计位置在真值直线上加了半径 0.04 m 的水平绕圈。整段减去自身均值不塌，只减前 10 帧的均值也不塌。"
+    }
+  }
+}

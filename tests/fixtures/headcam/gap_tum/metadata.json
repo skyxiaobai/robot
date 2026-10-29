@@ -1,0 +1,5 @@
+{
+  "episode_id": "headcam/gap-tum-fixture",
+  "fps": 30.0,
+  "note": "合成时间戳，用来检查关联标签。不是一次 SLAM 测量。"
+}

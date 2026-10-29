@@ -1,0 +1,123 @@
+{
+  "name": "P0010_5edabbe9",
+  "sequence_id": "P0010_5edabbe9",
+  "participant_id": "P0010",
+  "device": "Quest3",
+  "clip_ids": [
+    747,
+    748,
+    749,
+    750,
+    751,
+    752,
+    753,
+    754,
+    755,
+    756,
+    757,
+    758
+  ],
+  "input_frames": 1800,
+  "pose_source": "orbslam3_stereo_euroc",
+  "reference_pose_source": "hot3d_gt_mocap",
+  "count_note": "tracked_frames 是保存轨迹里不同时间戳的个数。丢失帧是输入帧数减去它。ORB-SLAM3 不把跟踪失败的帧写进 CameraTrajectory.txt。reinits 是日志里 Creation of new map with id 的次数减 1，第一次是启动时的地图。日志没打印就是 null，不当成 0。maps 是保存轨迹时打印的 atlas 地图数。frames_set_to_lost_at_reset 是重置地图时打印的整数，不是丢失帧。",
+  "baseline_m": 0.06361127736546111,
+  "extrinsic_drift_m": 1.68859379928884e-07,
+  "estimate_time_scale": 1e-09,
+  "gt_time_scale": 1.0,
+  "fail_to_track_local_map": 0,
+  "loop_closures": 0,
+  "map_creations": 1,
+  "reinits": 0,
+  "maps": 1,
+  "map_keyframes": [
+    {
+      "map": 0,
+      "keyframes": 88
+    }
+  ],
+  "frames_set_to_lost_at_reset": [],
+  "tracked_frames": 1800,
+  "trajectory_rows": 1800,
+  "duplicate_trajectory_rows": 0,
+  "lost_frames": 0,
+  "status": "ok",
+  "failure": null,
+  "accuracy": {
+    "kind": "trajectory_error_v1",
+    "method": "umeyama",
+    "estimate_pose_source": "orbslam3_stereo_euroc",
+    "reference_pose_source": "hot3d_gt_mocap",
+    "max_dt_s": 0.05,
+    "ate": {
+      "se3": {
+        "n": 1800,
+        "rmse_m": 0.04942053479288229,
+        "median_m": 0.018706983087599,
+        "max_m": 0.15811514024780318,
+        "alignment": "umeyama_se3",
+        "scale": "fixed_1",
+        "rotation_row_major": [
+          -0.121412059630484,
+          -0.9611160101117329,
+          0.24802243221770726,
+          -0.07872435199091457,
+          -0.2397599432707656,
+          -0.9676350789457822,
+          0.989475410598917,
+          -0.13700797316106303,
+          -0.04655348655474778
+        ],
+        "translation": [
+          0.18085595871101467,
+          1.2142403690528247,
+          0.12924280107048325
+        ],
+        "applied_as": "p_ref = R @ p_est + t，尺度固定为 1。R 按行展开。"
+      },
+      "sim3": {
+        "n": 1800,
+        "rmse_m": 0.0474363595017323,
+        "median_m": 0.02036083438493182,
+        "max_m": 0.14806233098645888,
+        "alignment": "umeyama_sim3",
+        "scale": "free",
+        "similarity_scale": 0.9183096427504743
+      }
+    },
+    "rpe": [
+      {
+        "delta_s": 1.0,
+        "max_delta_error_s": 0.05,
+        "alignment": "none_relative",
+        "n_poses": 1800,
+        "n_pairs": 1771,
+        "trans_rmse_m": 0.021701871293961936,
+        "trans_median_m": 0.0028033748293830834,
+        "rot_rmse_deg": 0.9773847764821652,
+        "rot_median_deg": 0.33716796901073304
+      },
+      {
+        "delta_s": 5.0,
+        "max_delta_error_s": 0.05,
+        "alignment": "none_relative",
+        "n_poses": 1800,
+        "n_pairs": 1651,
+        "trans_rmse_m": 0.05195165630965154,
+        "trans_median_m": 0.004772420998592089,
+        "rot_rmse_deg": 1.9775546690152412,
+        "rot_median_deg": 0.6218145350601485
+      }
+    ],
+    "note": "相机中心，最近邻，超过 max_dt_s 不配。重复时间戳只留第一行。SE3 尺度固定为 1。Sim3 尺度自由，similarity_scale 乘在估计轨迹上。RPE 不做这次全局对齐。"
+  },
+  "fps": 30,
+  "sync_error_ms_max": 0.0,
+  "image_width": 1024,
+  "image_height": 1280,
+  "intrinsic_maps_rebuilt": {
+    "1201-1": 1,
+    "1201-2": 1
+  },
+  "orbslam3_exit_code": 0
+}

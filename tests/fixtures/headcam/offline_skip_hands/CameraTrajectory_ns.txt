@@ -1,0 +1,5 @@
+# synthetic nanoseconds = seconds * 1e9. Not an ORB-SLAM3 run. accuracy unmeasured.
+0 0.10 0.00 0.00 0 0 0 1
+33000000 0.11 0.00 0.00 0 0 0 1
+66000000 0.12 0.00 0.00 0 0 0 1
+99000000 0.13 0.00 0.00 0 0 0 1
