@@ -1,0 +1,15 @@
+{
+  "kind": "trajectory_error_timeline_v1",
+  "synthetic": true,
+  "hot3d_ate": false,
+  "not_a_measurement": true,
+  "note": "合成时间线。只有标量 error_m，没有 error_vectors_m。不是 HOT3D ATE。",
+  "n": 4,
+  "rmse_m": 0.06,
+  "error_m": [
+    0.06,
+    0.06,
+    0.06,
+    0.06
+  ]
+}

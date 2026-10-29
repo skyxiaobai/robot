@@ -1327,3 +1327,21 @@ PYTHONPATH=scripts python3 -m headcam.verification_gate
 
 系统解释器 `python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc tests.test_headcam_verification_gate`：105 项，跳过 12 项（这台机器没装 pyarrow、cv2、lerobot、torch；其中两项是官方加载器），其余通过。numpy 1.26.4。没有 Kaggle。没有下 MANO。没有新的 ATE。
 
+## 合成轨迹上的向量写入
+
+这一轮没有重挂载。全机没有 `stereo_euroc`，也没有 HOT3D train tar，`ORB_SLAM3` 不在 PATH 上。没有重跑 `P0002_273c2819`（clips 6–12）或 `P0010_5edabbe9`（clips 747–758），没有新的 Umeyama。15 份已提交 Quest3 时间线仍然没有 `error_vectors_m`。`mean_subtract.status` 仍是 `absent_from_json`，`rmse_after_m` 仍是 null。P0002 的 0.06062457775745827 m 和 P0010 的 0.14796632492630718 m 都还不能减掉再算。`docs/headcam/orbslam3_quest3/residual_shape_diagnosis.json` 的归类和 RMSE 没有改。要等有 ORB-SLAM3 二进制和 HOT3D train_quest3 的机器，才能从真实轨迹把向量写进这 15 份时间线。
+
+`diagnose_files` 只在估计轨迹和头戴真值对齐成功时计算向量。`attach_error_vectors` 要求 N×3，并且向量 RMSE 和时间线 `rmse_m` 的差不超过 1e-12 m。对不上就不写入，status 也不留在 ok。`write_timeline` 写盘前再做一次 JSON 往返。只有标量 `error_m` 的 ok 时间线会写成 `status=failed`，`rmse_m` 是 null，文件里没有 `error_vectors_m`。
+
+夹具在 `tests/fixtures/headcam/synthetic_error_vectors/`。`metadata.json` 是 `synthetic=true`、`hot3d_ate=false`。文件头的 `pose_source` 只为了让读取器接受，不是 HOT3D 测量，也不能抄进 `accuracy`。
+
+合成开头固定平移：80 帧沿 x 的直线，前 4 帧估计位置加了 0.5 m。`diagnose_files` 写进 JSON 的 `error_vectors_m` 是 N×3。从 t = 0 的那一段尾巴减掉这段自己的均值之后，全程 RMSE 落到原来的 0.25 及以下。整段减去自身均值不塌。
+
+合成整段残差：估计位置加了半径 0.04 m 的水平绕圈。没有从 t = 0 开始的尾巴，`rmse_after_m` 是 null。整段减去自身均值不塌。只减前 10 帧的均值，全程 RMSE 仍大于减之前的 0.8。
+
+`scalar_only.json` 的 `error_vectors_m` 是标量，`direction_unknown`，`rmse_after_m` 是 null。`absent_vectors.json` 只有标量 `error_m`，`absent_from_json`，`rmse_after_m` 是 null。`claim_rmse_without_vectors.json` 在没有向量时声称减完之后的 RMSE 是 0.001 m。验收门对这份声明退出码是 1，原因里有 `mean_subtract_unknown` 和 `absent_from_json`。
+
+没有下 MANO。没有 Kaggle。没有把人手放进 SLAM 世界系。没有新的 ATE。包级 accuracy 在测量不相同的时候仍是 null。
+
+系统解释器 `python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc tests.test_headcam_verification_gate`：112 项，跳过 12 项（这台机器没装 pyarrow、cv2、lerobot、torch；其中两项是官方加载器），其余通过。numpy 1.26.4。
+

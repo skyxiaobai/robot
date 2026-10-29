@@ -303,6 +303,27 @@ class VerificationGateRepoTest(unittest.TestCase):
         self.assertIn("result: FAIL", buf.getvalue())
         self.assertIn("accuracy_not_measured", buf.getvalue())
 
+    def test_claim_fixture_cannot_publish_mean_subtract_without_vectors(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+
+        path = (
+            ROOT / "tests" / "fixtures" / "headcam"
+            / "synthetic_error_vectors" / "claim_rmse_without_vectors.json"
+        )
+        claim = json.loads(path.read_text(encoding="utf-8"))
+        self.assertIsNone(claim["mean_subtract"].get("error_vectors_m"))
+        reasons = evaluate_claim(claim)
+        self.assertIn("mean_subtract_unknown", _codes(reasons))
+        buf = StringIO()
+        with redirect_stdout(buf):
+            code = main(["--skip-tests", "--no-repo", "--claim", str(path)])
+        self.assertEqual(code, 1)
+        text = buf.getvalue()
+        self.assertTrue(text.startswith("result: FAIL\n"))
+        self.assertIn("mean_subtract_unknown", text)
+        self.assertIn("absent_from_json", text)
+
 
 if __name__ == "__main__":
     unittest.main()

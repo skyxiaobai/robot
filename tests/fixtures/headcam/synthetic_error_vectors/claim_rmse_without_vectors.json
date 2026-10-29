@@ -1,0 +1,23 @@
+{
+  "kind": "headcam_mvp_increment_v1",
+  "synthetic": true,
+  "hot3d_ate": false,
+  "not_a_measurement": true,
+  "note": "合成声明。没有 error_vectors_m 时不能写出减均值之后的 RMSE。不是 HOT3D ATE。",
+  "package_accuracy": null,
+  "episodes": [],
+  "timelines": [],
+  "mean_subtract": {
+    "status": "applied",
+    "rmse_after_m": 0.001,
+    "rmse_m": 0.02
+  },
+  "mano_fetch": false,
+  "hands_in_slam_world": false,
+  "auto_merge": false,
+  "new_umeyama": false,
+  "orbslam3_binary_present": false,
+  "reference_data_present": false,
+  "invented_xyz": false,
+  "claims_classification": false
+}

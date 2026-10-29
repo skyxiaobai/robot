@@ -28,6 +28,13 @@ NOTE = (
     "线速度和角速度来自头戴真值相邻帧，不是 SLAM 轨迹。"
     "Pearson 在样本少于 3 或某一列没有起伏时是 null，不写成 0。"
     "这些相关和分组只是同一批帧上的数字，不是原因。"
+    "status 为 ok 时，error_vectors_m 是对齐后的逐帧 XYZ，N×3，和 rmse_m 一致。"
+    "没有这份向量时不从标量 error_m 编方向。"
+)
+# 与 residual_diagnosis.RMSE_IDENTITY_ABS_M 相同。差过了这个数就不写入向量。
+VECTOR_RMSE_ABS_M = 1e-12
+_MISSING_VECTORS = (
+    "ok 的时间线缺少和 rmse_m 一致的 error_vectors_m，不写入向量，也不保留这份 RMSE。"
 )
 
 
@@ -441,6 +448,81 @@ def _aligned_errors(estimate_tum, gt_tum, estimate_scale, gt_scale, max_dt_s):
     }, None
 
 
+def error_vector_table(vectors):
+    """N×3 的有限 XYZ。标量列表不是向量，这里不补方向。"""
+    if vectors is None or isinstance(vectors, (str, bytes)):
+        return None
+    try:
+        array = np.asarray(vectors, dtype=float)
+    except (TypeError, ValueError):
+        return None
+    if array.ndim != 2 or array.shape[1] != 3 or array.shape[0] < 1:
+        return None
+    if not np.isfinite(array).all():
+        return None
+    return array
+
+
+def vectors_match_timeline(n, rmse_m, vectors):
+    """向量行数等于 n，并且向量 RMSE 和时间线 rmse_m 的差不超过 1e-12 m。"""
+    if isinstance(n, bool) or isinstance(rmse_m, bool):
+        return False
+    if not isinstance(n, (int, np.integer)) or int(n) < 1:
+        return False
+    if not isinstance(rmse_m, (int, float, np.floating)) or not np.isfinite(rmse_m):
+        return False
+    array = error_vector_table(vectors)
+    if array is None or array.shape[0] != int(n):
+        return False
+    got = float(np.sqrt(np.mean(np.sum(array * array, axis=1))))
+    return abs(got - float(rmse_m)) <= VECTOR_RMSE_ABS_M
+
+
+def attach_error_vectors(report, vectors):
+    """把 N×3 误差写进时间线。对不上 n 或 rmse_m 时不写入，也不留旧向量。"""
+    if not isinstance(report, dict):
+        return False
+    if not vectors_match_timeline(report.get("n"), report.get("rmse_m"), vectors):
+        report.pop("error_vectors_m", None)
+        return False
+    report["error_vectors_m"] = error_vector_table(vectors).tolist()
+    return True
+
+
+def _failed_timeline(failure):
+    return {
+        "kind": "trajectory_error_timeline_v1",
+        "status": "failed",
+        "failure": failure,
+        "rmse_m": None,
+        "tracked_features": None,
+        "note": NOTE,
+    }
+
+
+def write_timeline(path, report):
+    """写成 JSON。status 为 ok 时，写盘之后的 error_vectors_m 仍须和 rmse_m 一致。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = report if isinstance(report, dict) else _failed_timeline("时间线不是对象。")
+    if payload.get("status") == "ok":
+        encoded = json.dumps(payload, ensure_ascii=False, indent=2)
+        try:
+            loaded = json.loads(encoded)
+        except json.JSONDecodeError:
+            loaded = None
+        matched = isinstance(loaded, dict) and vectors_match_timeline(
+            loaded.get("n"), loaded.get("rmse_m"), loaded.get("error_vectors_m"),
+        )
+        if not matched:
+            payload = _failed_timeline(_MISSING_VECTORS)
+            encoded = json.dumps(payload, ensure_ascii=False, indent=2)
+        path.write_text(encoded + "\n", encoding="utf-8")
+        return payload
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return payload
+
+
 def _image_series(times, image_dir, estimate_scale):
     import cv2
 
@@ -522,7 +604,15 @@ def diagnose_files(
     linear, angular = motion_series(stamps, paired["gt_poses"])
     report["motion_in_tail"] = _speed_summary(linear, angular, tail_mask) if tail_mask.any() else None
     report["motion_outside_tail"] = _speed_summary(linear, angular, outside)
-    report["error_vectors_m"] = np.asarray(paired["error_vectors"], dtype=float).tolist()
+    if not attach_error_vectors(report, paired["error_vectors"]):
+        return {
+            "kind": "trajectory_error_timeline_v1",
+            "status": "failed",
+            "failure": "对齐后的误差向量和 rmse_m 不一致，不写入 error_vectors_m。",
+            "rmse_m": None,
+            "tracked_features": None,
+            "note": NOTE,
+        }
     report["status"] = "ok"
     report["failure"] = None
     return report
@@ -558,11 +648,9 @@ def main(argv=None):
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(report.get("status"), "rmse", report.get("rmse_m"))
-    return 0 if report.get("status") == "ok" else 2
+    payload = write_timeline(args.out, report)
+    print(payload.get("status"), "rmse", payload.get("rmse_m"))
+    return 0 if payload.get("status") == "ok" else 2
 
 
 if __name__ == "__main__":

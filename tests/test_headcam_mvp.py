@@ -3912,5 +3912,150 @@ class ResidualShapeDiagnosisTest(unittest.TestCase):
             self.assertIsNone(report["accuracy"])
 
 
+SYNTHETIC_VECTORS = ROOT / "tests" / "fixtures" / "headcam" / "synthetic_error_vectors"
+
+
+class SyntheticErrorVectorPersistTest(unittest.TestCase):
+    """合成轨迹锁住 error_vectors_m 的写入。不是 HOT3D，也不是 Quest3 的 ATE。"""
+
+    def _meta(self):
+        return json.loads((SYNTHETIC_VECTORS / "metadata.json").read_text(encoding="utf-8"))
+
+    def _write_case(self, name):
+        import tempfile
+
+        from headcam.trajectory_qc import main
+
+        spec = self._meta()["cases"][name]
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "timeline.json"
+            code = main([
+                "--estimate", str(SYNTHETIC_VECTORS / spec["estimate"]),
+                "--gt", str(SYNTHETIC_VECTORS / spec["gt"]),
+                "--estimate-scale", str(spec["estimate_scale"]),
+                "--gt-scale", str(spec["gt_scale"]),
+                "--clip-lengths", str(spec["n"]),
+                "--out", str(out),
+            ])
+            text = out.read_text(encoding="utf-8")
+            report = json.loads(text)
+        return code, report
+
+    def test_fixture_is_labeled_synthetic(self):
+        meta = self._meta()
+        self.assertTrue(meta["synthetic"])
+        self.assertFalse(meta["hot3d_ate"])
+        self.assertTrue(meta["not_a_measurement"])
+        for name, spec in meta["cases"].items():
+            for key in ("estimate", "gt"):
+                text = (SYNTHETIC_VECTORS / spec[key]).read_text(encoding="utf-8")
+                self.assertIn("synthetic_fixture=%s" % name, text)
+                self.assertIn("not_hot3d_ate=true", text)
+        for name in ("scalar_only.json", "absent_vectors.json"):
+            payload = json.loads((SYNTHETIC_VECTORS / name).read_text(encoding="utf-8"))
+            self.assertTrue(payload["synthetic"])
+            self.assertFalse(payload["hot3d_ate"])
+
+    def test_attach_rejects_scalars_and_rmse_mismatch(self):
+        from headcam.residual_diagnosis import RMSE_IDENTITY_ABS_M
+        from headcam.trajectory_qc import VECTOR_RMSE_ABS_M, attach_error_vectors
+
+        self.assertEqual(VECTOR_RMSE_ABS_M, RMSE_IDENTITY_ABS_M)
+        scalar = {"n": 4, "rmse_m": 0.06, "error_vectors_m": [[1.0, 0.0, 0.0]]}
+        self.assertFalse(attach_error_vectors(scalar, [0.06, 0.06, 0.06, 0.06]))
+        self.assertNotIn("error_vectors_m", scalar)
+
+        mismatch = {"n": 2, "rmse_m": 0.06}
+        self.assertFalse(attach_error_vectors(mismatch, [[0.5, 0.0, 0.0], [0.5, 0.0, 0.0]]))
+        self.assertNotIn("error_vectors_m", mismatch)
+
+        vectors = [[0.06, 0.0, 0.0], [0.06, 0.0, 0.0]]
+        matched = {"n": 2, "rmse_m": 0.06}
+        self.assertTrue(attach_error_vectors(matched, vectors))
+        self.assertEqual(matched["error_vectors_m"], vectors)
+
+    def test_write_timeline_refuses_ok_without_vectors(self):
+        import tempfile
+
+        from headcam.trajectory_qc import write_timeline
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "timeline.json"
+            payload = write_timeline(path, {
+                "kind": "trajectory_error_timeline_v1",
+                "status": "ok",
+                "n": 4,
+                "rmse_m": 0.02,
+                "error_m": [0.02, 0.02, 0.02, 0.02],
+            })
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(loaded["status"], "failed")
+        self.assertIsNone(loaded["rmse_m"])
+        self.assertNotIn("error_vectors_m", loaded)
+        self.assertNotIn("error_m", loaded)
+        self.assertNotIn("accuracy", loaded)
+
+    def test_opening_fixture_persists_vectors_and_collapses(self):
+        from headcam.residual_diagnosis import opening_tail_mean_subtract
+
+        code, report = self._write_case("opening_fixed_translation")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["status"], "ok")
+        self.assertNotIn("accuracy", report)
+        vectors = report["error_vectors_m"]
+        self.assertEqual(len(vectors), report["n"])
+        self.assertTrue(all(len(row) == 3 for row in vectors))
+        self.assertEqual(len(report["tail_runs"]), 1)
+        self.assertLess(report["tail_runs"][0]["t0_s"], 1e-9)
+        block = opening_tail_mean_subtract(vectors, report["tail_runs"][0]["n"])
+        self.assertEqual(block["status"], "applied")
+        self.assertTrue(block["collapsed"])
+        self.assertLessEqual(block["rmse_after_m"], 0.25 * block["rmse_before_m"])
+        self.assertAlmostEqual(block["rmse_before_m"], report["rmse_m"], delta=1e-12)
+        self.assertFalse(block["sequence_mean_collapsed"])
+
+    def test_whole_sequence_fixture_does_not_collapse(self):
+        from headcam.residual_diagnosis import opening_tail_mean_subtract
+
+        code, report = self._write_case("whole_sequence_residual")
+        self.assertEqual(code, 0)
+        self.assertEqual(report["status"], "ok")
+        self.assertNotIn("accuracy", report)
+        self.assertEqual(report["tail_runs"], [])
+        vectors = report["error_vectors_m"]
+        self.assertEqual(len(vectors), report["n"])
+        untouched = opening_tail_mean_subtract(vectors, 0)
+        self.assertEqual(untouched["status"], "no_opening_tail")
+        self.assertFalse(untouched["applied"])
+        self.assertIsNone(untouched["rmse_after_m"])
+        self.assertFalse(untouched["sequence_mean_collapsed"])
+        forced = opening_tail_mean_subtract(vectors, 10)
+        self.assertTrue(forced["applied"])
+        self.assertFalse(forced["collapsed"])
+        self.assertGreater(forced["rmse_after_m"], 0.8 * forced["rmse_before_m"])
+
+    def test_scalar_and_absent_fixtures_stay_unknown(self):
+        from headcam.residual_diagnosis import diagnose_case
+
+        scalar = json.loads((SYNTHETIC_VECTORS / "scalar_only.json").read_text(encoding="utf-8"))
+        scalar_case = diagnose_case("synthetic-scalar-only", scalar)
+        self.assertEqual(scalar_case["mean_subtract"]["status"], "direction_unknown")
+        self.assertIsNone(scalar_case["mean_subtract"]["rmse_after_m"])
+        self.assertIsNone(scalar_case["mean_subtract"]["sequence_mean_subtracted_rmse_m"])
+        self.assertIsNone(scalar_case["accuracy"])
+        self.assertFalse(scalar_case["new_ate"])
+
+        absent = json.loads((SYNTHETIC_VECTORS / "absent_vectors.json").read_text(encoding="utf-8"))
+        self.assertIn("error_m", absent)
+        self.assertNotIn("error_vectors_m", absent)
+        absent_case = diagnose_case("synthetic-absent-vectors", absent)
+        self.assertEqual(absent_case["mean_subtract"]["status"], "absent_from_json")
+        self.assertIsNone(absent_case["mean_subtract"]["rmse_after_m"])
+        self.assertIsNone(absent_case["mean_subtract"]["sequence_mean_subtracted_rmse_m"])
+        self.assertIsNone(absent_case["accuracy"])
+        self.assertFalse(absent_case["new_ate"])
+
+
 if __name__ == "__main__":
     unittest.main()

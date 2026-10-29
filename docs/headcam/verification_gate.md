@@ -31,7 +31,7 @@ python3 -m unittest tests.test_headcam_mvp tests.test_stereo_qc tests.test_headc
 1. 包级和每一段 episode 的 `accuracy` 只接受 null，或一份真实的 `trajectory_error_v1`。remount 的 SE3 RMSE 和 batch 行相差超过 `1e-6` m（`batch_export.RMSE_MATCH_ATOL_M`）时，这段和包级都保持 null。各段测量不是同一份时，包级保持 null。手写数字保持 null。
 2. 时间线 SE3 RMSE 和 batch 行相差不超过 `1e-12` m（`residual_diagnosis.RMSE_IDENTITY_ABS_M`），才可以把这条当作这次测量。超过时 `pattern` 是 `refused`，并且 `used_as_this_measurement` 是 false。
 3. 声称残差归类时，`docs/headcam/orbslam3_quest3/residual_shape_diagnosis.json` 在，并且和 `diagnose_repo` 对这批已提交时间线的重算结果一致。报告的 `accuracy` 是 null，`new_ate` 是 false。短 clip 的 RMSE 不抄进报告。
-4. 时间线没有 `error_vectors_m` 时，`mean_subtract.status` 是 `absent_from_json`，`rmse_after_m` 是 null。不从标量 `error_m` 编出逐帧 XYZ。向量和时间线 RMSE 差超过 `1e-12` m 时，不改写时间线上的 RMSE。
+4. 时间线没有 `error_vectors_m` 时，`mean_subtract.status` 是 `absent_from_json`，`rmse_after_m` 是 null。不从标量 `error_m` 编出逐帧 XYZ。向量和时间线 RMSE 差超过 `1e-12` m 时，不改写时间线上的 RMSE。已提交的 15 份 Quest3 时间线仍然没有 `error_vectors_m`，要等有 ORB-SLAM3 二进制和 HOT3D 参考数据的机器重挂载。`tests/fixtures/headcam/synthetic_error_vectors/` 是合成轨迹，不是 HOT3D ATE，不进入 `residual_shape_diagnosis.json`。
 5. 上面的单测通过。skip 只来自本机缺的可选依赖。
 
 门不重算 ATE。PASS 只说明声明和已提交文件没有违反这些规则，不说明新跑出了一条轨迹。
