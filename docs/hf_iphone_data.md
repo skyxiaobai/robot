@@ -43,4 +43,4 @@ python scripts/train_xhey.py --ablation
 python scripts/train_xhey.py --mix iphone+zeno_lidar+aug
 ```
 
-Held-out eval is always Justin's iPhone Pro Max clips (`outputs/iphone_mcap/run_s2`).
+Held-out eval in `train_xhey.py` is currently Justin's iPhone Pro Max clips (`outputs/iphone_mcap/run_s2`). As of 2026-11-01 these clips are demoted to a frozen domain probe and the HF phone sources here are no longer being expanded; see [`STRATEGY_PUBLIC_EGO_FIRST.md`](STRATEGY_PUBLIC_EGO_FIRST.md).
