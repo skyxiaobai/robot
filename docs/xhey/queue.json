@@ -1,4 +1,5 @@
 {
+  "launch_paused": "2026-11-01 策略改为公开第一视角数据为主（docs/STRATEGY_PUBLIC_EGO_FIRST.md）：旧的 3 段 iPhone 留一法评测分不出差别，且自动迭代内核没有加载 xPhi。step 只收已完成内核的结果，不再推新内核（含 C15 和提议器），等 Eval v2 落地后删掉这一键。",
   "note": "Justin 10-14 要求 DI / Stera 优先：顺序 C8 → C7 → C9 → C2。每日迭代按顺序取第一个 status=ready 的候选提交到 Kaggle（同时最多 1 个 GPU kernel；不抢占正在跑的）。跑完把结果写进 ledger.csv 并把 status 改成 done_*。C9 v1（2026-10-15 21:24，未质检、世界系 DI）已完成：未过滤 3 段 LOO，zero 11.026，C9ctl 11.062（+0.037，moving -0.021），C9 11.100（+0.075，moving -0.005），没有超过同次对照，结论 done_worse。C9b（质检 + 相机系，2 段 LOO）已入账：整体 7.235 vs 对照 7.221，手在动 −0.050 vs −0.068，没有超过同次对照且整体差于 zero，结论 done_worse_vs_ctl。不要再提交。新候选默认必须带 --qc-filter。",
   "queue": [
     {

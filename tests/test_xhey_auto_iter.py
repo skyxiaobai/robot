@@ -139,6 +139,19 @@ class MirrorAndIngest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(pushed, ["C2"])
 
+    def test_launch_paused_blocks_queue_and_proposer(self):
+        self.state.write_text(json.dumps({"running": None}), encoding="utf-8")
+        q = _queue()
+        q["launch_paused"] = "public egocentric first"
+        self.queue.write_text(json.dumps(q), encoding="utf-8")
+        with patch.object(ai, "kernel_status", return_value="UNKNOWN:none"), \
+                patch.object(ai, "stera_data_exists", return_value=False), \
+                patch.object(ai, "kernel_has_qc_filter", return_value=True), \
+                patch.object(ai, "submit_queue_item", side_effect=AssertionError("paused")), \
+                patch.object(ai, "launch", side_effect=AssertionError("paused")):
+            rc = ai.step(type("A", (), {"no_launch": False, "k": 3})())
+        self.assertEqual(rc, 0)
+
     def test_unfiltered_ready_is_not_submitted_and_blocks_proposer(self):
         """C9 v1 没有 --qc-filter。循环不能再交这种候选，也不能因此改跑提议器。"""
         self.state.write_text(json.dumps({"running": None, "queue_running": None}), encoding="utf-8")
@@ -282,15 +295,16 @@ class CommittedState(unittest.TestCase):
         self.assertIn("6000", c9b["protocol"])
         self.assertIn("3000", c9b["protocol"])
         ok, skipped = ai.split_qc_ready(ai.ready_queue_items(stera_exists=True, queue=q))
-        self.assertEqual([item["id"] for item in ok], ["C15", "C16"])
+        self.assertEqual([item["id"] for item in ok], ["C15"])
         self.assertEqual(skipped, [])
+        self.assertTrue(q.get("launch_paused"))
         c15 = by_id["C15"]
         self.assertEqual(c15["status"], "ready")
         self.assertEqual(c15["mix"], "iphone+xhey_rgb+aug")
         self.assertIn("--cum-weight 1.0", c15["protocol"])
         self.assertIn("--qc-filter", c15["protocol"])
         c16 = by_id["C16"]
-        self.assertEqual(c16["status"], "ready")
+        self.assertEqual(c16["status"], "done_worse_vs_ctl")
         self.assertEqual(c16["mix"], "iphone+egoverse+xhey_rgb+aug")
         self.assertEqual(c16["slug"], "justinz2010/xhey-rsi-c16-egoverse")
         self.assertIn("--qc-filter", c16["protocol"])
