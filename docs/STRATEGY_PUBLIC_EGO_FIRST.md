@@ -14,7 +14,7 @@
    - 「再录 ≥10 段 iPhone Pro 深度片段」（台账 C5）**取消**。
 2. **新的主训练数据**：**EgoDex**（Apple Vision Pro 设备追踪的手，带视频、内参、头部位姿）为第一主干；**EgoVerse/Mecka**（MANO 真值关键点 + 头部位姿 + 真实内参）为第二主干，前提是先把许可确认清楚；**HOI4D**（RGB-D + MANO 真值）和 **HOT3D**（动捕级真值）主要用来做**公开的深度/金标评测**，顺带少量训练。**Open-AoE** 规模最大、许可对商用最友好，在新评测协议下重测一次再决定。
 3. **现在 C10–C16 测出来的差异不可信。** 这不是因为公开数据没用，而是评测本身分不出差别：所有配比之间只差 0.005–0.02 cm（ADE 约 12.5 cm，不到 0.2%）。置信区间是在 3 段片段的**步长 1、互相重叠**的窗口上做独立同分布 bootstrap 算出来的，明显偏窄（见 §2.2）。所以 C14「done_win」（比对照好 0.012 cm）、C11/C12/C13/C16 的「没超过对照」，都**不能**当成数据集好坏的结论。
-4. **训练流程本身也挡住了公开数据的作用**：`train_xhey.py` 里 `iphone` 必选；公开数据**不带画面**（`has_image=0`），只训练手部状态分支；预训练完再在 2 段 iPhone 片段上微调，用同一批 iPhone 片段做早停，再选 shrink 系数，预测结果被收向「手不动」。公开数据的主要价值（大量视频 + 设备追踪的手）基本没用上。
+4. **训练流程本身也挡住了公开数据的作用**：`train_xhey.py` 里 `iphone` 必选；公开数据**不带画面**（`has_image=0`），只训练手部状态分支；预训练完再在 2 段 iPhone 片段上微调，用同一批 iPhone 片段做早停，再在 0–1 之间选 shrink 系数（选 0 就等于「手不动」）。公开数据的主要价值（大量视频 + 设备追踪的手）基本没用上。
 5. **找到一个会让结果失真的 bug**：自动迭代内核（`xhey_auto_iter.py` 的 `KERNEL_TEMPLATE`）既不挂 `xhey-xphi-cam` 数据集，也不传 `--xphi`，但提议器从 C14 的最佳配置出发，会一直提出 `iphone+xphi+…` 的配比。`train_xhey.py` 的 `try_external` 找不到目录时**静默跳过**，所以第 3、4、5 轮里带 xPhi 的候选实际上都**没有用到 xPhi**。证据：`iter004_c2`（xPhi，噪声 0.2，lr 1.0）和 `iter003_c1`（没有 xPhi，同样超参）的 overall / moving ADE 完全相同（9.752460214243373 / 12.535582195742764）。
 6. **保留的东西**：统一 episode 格式、各数据集转换器、`common/frames.py` 坐标规范化和 `sanity_check`、分段 QC 成绩单、`action_valid` 掩码、LeRobot v3 导出、双目管线（留给头戴）、「同一次运行带对照」的台账纪律、默认 `--qc-filter`。这些已经能用，换数据源时直接沿用。
 7. **停止投入的东西**：针对 iPhone 3 段留一法的自动调参、更多 iPhone 采集、xPhi / DI / zeno / Hubdata 扩量、Flora（C18：非商用许可，T4 跑不动）、Dyn-HaMR 继续修（C17）。
@@ -100,7 +100,7 @@ iPhone mcap ─► mcap_adapter ─► rgbd_pipeline（WiLoR + LiDAR 放手腕�
 
 1. **任务太难、信号太弱**：未来约 1 秒的手腕位移中位只有 5.5–6.2 cm，逐帧跳变噪声 1.2–1.4 cm（C15）。在 2 段片段上，模型最稳的策略就是接近不动。
 2. **公开数据只喂了手部状态**：图像特征在公开数据上全是 0，`has_image=0`。EgoDex、HOI4D、Stera、Open-AoE 都有视频，但没有用。
-3. **最后一步总是在 iPhone 上微调、在 iPhone 上选模型**：预训练学到的东西，会被 3000 步微调和 shrink 选择洗掉一大半。
+3. **最后一步总是在 iPhone 上微调、在 iPhone 上选模型**：预训练学到的东西，很可能被 3000 步微调和 shrink 选择冲淡（推测；各臂实际选中的 shrink 值和预训练前后的曲线都在 `metrics.json` 的 `curves` 里，阶段 0 可以先核对）。
 
 ---
 
@@ -129,9 +129,9 @@ iPhone mcap ─► mcap_adapter ─► rgbd_pipeline（WiLoR + LiDAR 放手腕�
 | 优先级 | 数据集 | 手部标签 | 视频 / 深度 / 头部位姿 | 许可 | 仓库代码 | 仓库里已用 / 全量 | 定位 |
 |---:|---|---|---|---|---|---|---|
 | **1** | **EgoDex**（Apple） | Vision Pro 设备追踪的 ARKit 关节（不是伪标签） | 有 mp4 / 无深度 / 每帧相机位姿 + 内参 | CC BY-NC-ND（研究用，不能分发改写版） | `convert_egodex.py`、`egodata/egodex.py`、`egodex_act_eval.py`、固定划分 `docs/egodex_act/split.json`；Kaggle `xhey-egodex-cam`（私有） | test 部分 3243 条、7.65 h（C13 只取了 4 h）/ 全量 829 h（据 `2607.24744v1.pdf` 综述表） | **主训练 + 主评测之一** |
-| **2** | **EgoVerse / Mecka** | MANO 真值关键点 | 有视频 / 无深度 / 头部位姿 + 真实内参；**原生 10 Hz** | freeform 行 license 字段为空（旗舰行 CC BY-SA 4.0）→ **扩量前必须先确认** | `convert_egoverse.py`（已处理 10 Hz 插值陷阱、`head_const`）；Kaggle `xhey-egoverse-cam` | 401 段、保留 3.99 h / mecka 目录 828 h | **主训练之二**（许可确认后） |
-| **3** | **HOI4D** | MANO 真值（只标交互的那只手，多为右手） | RGB-D / 有深度 / 相机内参 | CC BY-NC 4.0 | `convert_hoi4d.py`；Kaggle `xhey-hoi4d-pretrain` | 1487 段、8.26 h / 发布的 4000 段（待核实小时数） | **公开深度金标评测**（替代 iPhone 的「有深度」角色）+ 少量训练 |
-| **4** | **HOT3D**（Meta，Quest3 / Aria） | 动捕级真值手 + 物体 6DoF | 双目 / 无深度图 / 标定位姿 | HOT3D 许可（研究）+ MANO | `headcam/hot3d_adapter.py`、`eval_hot3d_stereo.py`、`hot3d_train_compare.py` | 24 段（训练对比）/ 13.9 h（综述表） | **金标评测 + 双目管线基准**（和自研头戴最像） |
+| **2** | **EgoVerse / Mecka** | MANO 真值关键点 | 视频：转换器没读，是否随 zarr 提供**待核实** / 无深度 / 头部位姿 + 真实内参；**原生 10 Hz** | freeform 行 license 字段为空（旗舰行 CC BY-SA 4.0）→ **扩量前必须先确认** | `convert_egoverse.py`（已处理 10 Hz 插值陷阱、`head_const`）；Kaggle `xhey-egoverse-cam` | 401 段、保留 3.99 h / mecka 目录 828 h | **主训练之二**（许可确认后） |
+| **3** | **HOI4D** | MANO 真值（只标交互的那只手，多为右手） | RGB-D / 有深度 / 相机内参 | CC BY-NC 4.0 | `convert_hoi4d.py`；Kaggle `xhey-hoi4d-pretrain` | 1487 段、8.26 h / 带手部真值的发布序列 1875 段（`queue.json` C12；1487 段过了运动过滤） | **公开深度金标评测**（替代 iPhone 的「有深度」角色）+ 少量训练 |
+| **4** | **HOT3D**（Meta，Quest3 / Aria） | 动捕级真值手 + 物体 6DoF | 双目 / 无深度图 / 标定位姿 | HOT3D 许可（研究）+ MANO | `headcam/hot3d_adapter.py`、`eval_hot3d_stereo.py`、`hot3d_train_compare.py` | XHEY 预训练用过 24 段，双目训练对比 4 段 / 13.9 h（综述表） | **金标评测 + 双目管线基准**（和自研头戴最像） |
 | **5** | **Open-AoE**（OpenAoE-2000h） | MANO 重建 | 有视频 / 无深度 / SLAM 相机轨迹 | Open-AoE 许可**允许商用**（需署名）；MANO 派生部分非商用 | `convert_openaoe.py`（world / camera 两种） | nano 2.5 h + tiny 切片 13.9 h / 2000 h | **在新评测下重测**；以后要商用时是首选候选 |
 | 6 | Stera-10M | WiLoR + LiDAR 锚定 | 有视频 / 有深度 / ARKit 重力世界系 | CC BY-NC 4.0，gated | `stera_fetch.py`、`convert_stera.py` | 转换 19.66 h、QC 保留 7.14 h / 200 h | 备选。本质还是「iPhone 头戴 + WiLoR」，和硬约束的方向不一致 |
 | 7 | xPhi-Ego-100 | 单目 WiLoR 伪标签，内参是**假设的** HFOV 90° | 有视频 / 无 / 无 | **Apache-2.0**（最宽松） | `kaggle/xphi_wilor`、`wilor_video_to_episodes.py` | 5.03 h，QC 保留 0.32 h | **冻结**。动作标签太差；以后可能只拿视频做视觉预训练 |
@@ -259,6 +259,30 @@ iPhone mcap ─► mcap_adapter ─► rgbd_pipeline（WiLoR + LiDAR 放手腕�
 4. 不要把单目 WiLoR 的绝对深度当成公制标签（没有 LiDAR / 双目锚定时）。
 5. 不要再扩 xPhi / DI / zeno / Hubdata，不要再修 Flora / Dyn-HaMR。
 6. 不要删 iPhone 管线代码和冻结片段。
+
+---
+
+## 10. 剩余阻塞与待 Justin 决定的事
+
+**代码阻塞（阶段 0 要先解决，否则阶段 1 跑不了或结果不可信）**
+
+| 阻塞 | 位置 | 不解决会怎样 |
+|---|---|---|
+| `iphone` 必选，没有「只用公开数据」的训练路径 | `scripts/train_xhey.py::train_mix` | P1–P6 根本跑不了 |
+| 置信区间按重叠窗口独立同分布 bootstrap | `scripts/hot3d_train_compare.py::bootstrap_ci` | 继续把 0.01 cm 级的差距判成胜负 |
+| 缺数据静默跳过 | `scripts/train_xhey.py::try_external` | 配比名字和实际用的数据对不上（xPhi bug 就是这样来的） |
+| 自动迭代内核不挂 xPhi | `scripts/xhey_auto_iter.py`（`DATASETS`、`KERNEL_TEMPLATE`、`propose`） | 删掉 `launch_paused` 之前必须先修 |
+| 公开数据不带画面 | `scripts/train_xhey.py::build_external` | 图像分支学不到公开视频 |
+| 第 3–5 轮带 xPhi 的台账行没有标注 | `experiments/ledger.jsonl` | 提议器的代理模型会把这些行当成「xPhi 有效 / 无效」的证据 |
+
+**需要 Justin 拍板的事**
+
+1. EgoVerse freeform 行的许可：确认之前只能维持现在的 4 h 研究用量。
+2. EgoDex train 部分：存储放在哪、Kaggle 数据集的大小上限怎么处理（本次没有核实各 part 的大小）。
+3. 研究和商用是否分成两条路线记账，以及商用打标器怎么选（WiLoR / MANO 都是非商用）。
+4. 本机如果还有 `xhey_auto_iter.py step` 的 cron：现在它只会收结果，留着也可以，但 Eval v2 落地前不要删掉 `queue.json` 的 `launch_paused`。
+
+**本次没做的**：没有下载数据，没有提交 Kaggle，没有转换数据，也没有动 `train_xhey.py` 和评测代码。上表里的代码改动都留给阶段 0。
 
 ---
 
