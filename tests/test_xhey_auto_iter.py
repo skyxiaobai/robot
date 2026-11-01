@@ -77,7 +77,7 @@ class MirrorAndIngest(unittest.TestCase):
         ai.append_ledger([row])
         text = self.csv.read_text(encoding="utf-8")
         self.assertIn("E0,baseline,zero", text)
-        self.assertIn("iter001_c0,2026-10-14,iphone+openaoe_nano_cam+aug,11.0700,14.0500,0.0444,win_moving,justinz2010/xhey-auto-iter", text)
+        self.assertIn("iter001_c0,2026-10-14,iphone+openaoe_nano_cam+aug,11.0700,14.0500,0.0444,evidence_insufficient,justinz2010/xhey-auto-iter", text)
         self.assertTrue(text.startswith("id,date,mix"))
 
     def test_ingest_c1_updates_csv_row(self):
@@ -107,7 +107,7 @@ class MirrorAndIngest(unittest.TestCase):
         self.assertAlmostEqual(rows["C1"]["delta_moving_cm"], -0.0713)
         self.assertEqual(rows["C1"]["config"]["loss_move_cm"], 5.0)
         csv = self.csv.read_text(encoding="utf-8")
-        self.assertIn("C1,2026-10-14,iphone+xhey_rgb+aug loss_move_cm=5.0,11.1000,14.0100,0.0745,win_moving,justinz2010/xhey-rsi-c1-moveloss", csv)
+        self.assertIn("C1,2026-10-14,iphone+xhey_rgb+aug loss_move_cm=5.0,11.1000,14.0100,0.0745,evidence_insufficient,justinz2010/xhey-rsi-c1-moveloss", csv)
         self.assertNotIn("running_kaggle", csv)
 
     def test_running_iter_does_not_submit_queue(self):

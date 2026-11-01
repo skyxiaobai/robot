@@ -26,6 +26,7 @@ justinz2010/xhey-iphone-sessions、justinz2010/xhey-openaoe-pretrain；内核 ju
 import argparse, base64, csv, io, itertools, json, subprocess, sys, tarfile
 from datetime import datetime
 from pathlib import Path
+from xhey_ledger import reviewed_rows, decision_status
 
 ROOT = Path(__file__).resolve().parents[1]
 EXP = ROOT / "experiments"
@@ -80,9 +81,7 @@ def key(c):
 
 
 def load_ledger():
-    if not LEDGER.exists():
-        return []
-    return [json.loads(l) for l in LEDGER.read_text(encoding="utf-8").splitlines() if l.strip()]
+    return reviewed_rows(LEDGER)
 
 
 def append_ledger(rows):
@@ -101,7 +100,14 @@ def row_from_metrics(m, mix, cfg, run_id, iteration, source):
             "delta_overall_cm": r["ade_minus_zero_cm"], "delta_overall_ci95": r.get("ade_minus_zero_ci95"),
             "moving_ade_cm": r.get("moving_ade_cm"), "zero_moving_ade_cm": r.get("moving_zero_ade_cm"),
             "delta_moving_cm": r.get("moving_minus_zero_cm"), "delta_moving_ci95": r.get("moving_minus_zero_ci95"),
-            "seed_std_cm": r.get("ade_cm_seed_std")}
+            "seed_std_cm": r.get("ade_cm_seed_std"),
+            "ci_method": r.get("ci_method"), "n_eval_units": r.get("n_eval_units"),
+            "n_moving_eval_units": r.get("n_moving_eval_units"),
+            "decision_eligible": False, "proposer_eligible": False,
+            "evidence_status": "evidence_insufficient",
+            "actual_data": m.get("actual_data"),
+            "source_audit": ("xphi_not_loaded_suspected: archived auto kernel lacks mount/--xphi; verify run logs"
+                             if "xphi" in mix.split("+") and source == KERNEL else None)}
 
 
 def _fmt(x):
@@ -137,19 +143,7 @@ def mix_label(cfg):
 
 
 def csv_status_for(row):
-    st = row.get("status") or ""
-    if st != "ok":
-        return st
-    ci = row.get("delta_moving_ci95") or [None, None]
-    d = row.get("delta_moving_cm")
-    if d is not None and ci[0] is not None and ci[1] is not None and ci[1] < 0:
-        return "win_moving"
-    if d is not None and d < 0:
-        return "better_moving"
-    overall = row.get("delta_overall_cm")
-    if overall is not None and overall > 0:
-        return "done_worse"
-    return "ok"
+    return decision_status(row)
 
 
 def jsonl_to_csv(row):
@@ -263,6 +257,9 @@ def ready_queue_items(stera_exists=None, queue=None):
         st = item.get("status") or ""
         if _closed(st):
             continue
+        mix = item.get("mix") or QUEUE_CONFIG.get(item.get("id"), {}).get("mix", "")
+        if "xphi" in mix.split("+"):
+            continue  # frozen independently of the global launch pause
         needs = _needs_stera(item)
         if st == "ready":
             (stera if needs else normal).append(item)
@@ -289,12 +286,26 @@ def features(c):
     return f
 
 
+# The archived template has no mount/flag contract for any other source.
+AUTO_SOURCES = {"iphone", "xhey_rgb", "openaoe"}
+
+
+def available_config(cfg):
+    mix = cfg.get("mix", "")
+    return mix in SPACE["mix"] and set(mix.split("+")) <= AUTO_SOURCES | {"aug"}
+
+
 def propose(k=3, ledger=None):
     import numpy as np
+    if load_queue().get("launch_paused"):
+        return []
     ledger = load_ledger() if ledger is None else ledger
     done = {key(r["config"]) for r in ledger if r.get("config")}
-    ok = [r for r in ledger if r.get("status") == "ok" and r.get("delta_moving_cm") is not None]
-    picks = [c for c in PINNED if key(c) not in done][:k]
+    ok = [r for r in ledger if r.get("status") == "ok" and r.get("delta_moving_cm") is not None
+          and r.get("proposer_eligible") is True and not r.get("quarantined")
+          and r.get("evidence_status") != "evidence_insufficient"
+          and available_config(r.get("config") or {})]
+    picks = [c for c in PINNED if available_config(c) and key(c) not in done][:k]
     # 候选：从默认出发，一次改 1~2 个维度（局部搜索，便宜）
     best = min(ok, key=lambda r: r["delta_moving_cm"])["config"] if ok else DEFAULT
     cands = {}
@@ -307,7 +318,7 @@ def propose(k=3, ledger=None):
                 if "openaoe" in c["mix"] and not c.get("openaoe"):
                     c["openaoe"] = "nano_cam"
                 c = norm_cfg(c); kk = key(c)
-                if kk not in done and kk not in {key(p) for p in picks}:
+                if available_config(c) and kk not in done and kk not in {key(p) for p in picks}:
                     cands[kk] = c
     cands = list(cands.values())
     if not cands:
@@ -363,14 +374,25 @@ def scripts_b64():
 KERNEL_TEMPLATE = r'''
 import subprocess, os, glob, json, time, base64, io, tarfile
 def sh(c):
-    print('+', c, flush=True); r = subprocess.run(c, shell=True); print('rc', r.returncode, flush=True); return r.returncode
+    print('+', c, flush=True)
+    subprocess.run('set -euo pipefail; ' + c, shell=True, executable='/bin/bash', check=True)
+def required(pattern):
+    hits = sorted(glob.glob('/kaggle/input/**/' + pattern, recursive=True))
+    if not hits:
+        raise RuntimeError('Missing requested Kaggle source: ' + pattern)
+    print('resolved_source', pattern, hits, flush=True)
+    return hits[0]
 CANDS = json.loads(%(cands)r)
+for c in CANDS:
+    unsupported = set(c['mix'].split('+')) - {'iphone', 'xhey_rgb', 'openaoe', 'aug'}
+    if unsupported:
+        raise RuntimeError('Unavailable sources (mount+flags not wired): ' + str(sorted(unsupported)))
 W = '/kaggle/working'; R = '/kaggle/tmp/robot'; os.makedirs(R, exist_ok=True)
 tarfile.open(fileobj=io.BytesIO(base64.b64decode(%(tgz)r)), mode='r:gz').extractall(R)
-SES = os.path.dirname(glob.glob('/kaggle/input/**/xhey-iphone-sessions/**/depth', recursive=True)[0])
-LAB = os.path.dirname(glob.glob('/kaggle/input/**/run_s2/episodes', recursive=True)[0])
-XR = glob.glob('/kaggle/input/**/xhey_rgb_unified', recursive=True)[0]
-UN = glob.glob('/kaggle/input/**/xhey-openaoe-pretrain/**/unified', recursive=True)[0]
+SES = os.path.dirname(required('xhey-iphone-sessions/**/depth'))
+LAB = os.path.dirname(required('run_s2/episodes'))
+XR = required('xhey_rgb_unified') if any('xhey_rgb' in c['mix'].split('+') for c in CANDS) else ''
+UN = required('xhey-openaoe-pretrain/**/unified') if any('openaoe' in c['mix'].split('+') for c in CANDS) else ''
 run = '/kaggle/tmp/run_s2'; os.makedirs(run + '/episodes', exist_ok=True)
 for p in glob.glob(LAB + '/episodes/*.json'):
     e = json.load(open(p)); n = os.path.basename(p)[:-5]
@@ -406,6 +428,10 @@ def save_state(state):
 
 
 def launch(cands, iteration):
+    if load_queue().get("launch_paused"):
+        raise ValueError("launch_paused: refusing direct launch")
+    if any(not available_config(c) for c in cands):
+        raise ValueError("Unavailable sources: candidate has no mount+flag contract")
     kd = EXP / "kernel"; kd.mkdir(parents=True, exist_ok=True)
     clean = [{k: v for k, v in c.items() if not k.startswith("_")} for c in cands]
     (kd / "run.py").write_text(KERNEL_TEMPLATE % {"cands": json.dumps(clean), "tgz": scripts_b64()}, encoding="utf-8")
@@ -422,6 +448,10 @@ def launch(cands, iteration):
 
 def submit_queue_item(item):
     """推送 queue.json 里的一个固定候选内核。不改 auto_state.running（那是自动迭代轮次）。"""
+    if load_queue().get("launch_paused"):
+        raise ValueError("launch_paused: refusing fixed candidate launch")
+    if "xphi" in _spec_from_queue_item(item)["mix"].split("+"):
+        raise ValueError("xPhi proposals frozen pending mount+flag/data audit")
     path = ROOT / item["dir"]
     if not (path / "kernel-metadata.json").exists():
         raise SystemExit("固定候选 %s 缺少 %s" % (item.get("id"), path))
@@ -499,12 +529,7 @@ def ingest_kernel_output(spec, iteration=0, status=None):
     for big in dest.rglob("*.pt"):
         big.unlink()
     if spec["id"] != "C1":
-        kind = "done_worse" if row.get("status") == "ok" and (row.get("delta_overall_cm") or 0) > 0 else (
-            "done_win" if row.get("status") == "ok" else "failed")
-        if str(row.get("status", "")).startswith("failed"):
-            kind = "failed"
-        elif row.get("status") == "ok" and (row.get("delta_moving_cm") or 0) < 0:
-            kind = "done_better_moving" if (row.get("delta_overall_cm") or 0) >= 0 else "done_win"
+        kind = "failed" if str(row.get("status", "")).startswith("failed") else "done_" + decision_status(row)
         set_queue_status(spec["id"], kind)
     return row
 
@@ -627,7 +652,8 @@ def ingest(state, status):
 def chart():
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "Noto Serif CJK SC", "PingFang SC", "DejaVu Sans"]
-    L = [r for r in load_ledger() if r.get("status") == "ok" and r.get("delta_moving_cm") is not None]
+    L = [r for r in load_ledger() if r.get("status") == "ok" and r.get("delta_moving_cm") is not None
+         and r.get("proposer_eligible") is True]
     if not L:
         return
     its = sorted({r["iteration"] for r in L}); best, cur = [], 1e9
@@ -735,6 +761,9 @@ def main():
     ap.add_argument("--metrics", default=None, help="ingest-c1 时用本地 metrics.json，不访问 Kaggle")
     a = ap.parse_args()
     if a.cmd == "propose":
+        if load_queue().get("launch_paused"):
+            print("launch_paused: no proposals; public-only protocol not yet approved for auto-iteration")
+            return 0
         ready, skipped = split_qc_ready(ready_queue_items())
         if skipped:
             print("没有 --qc-filter，不会提交（已在跑的仍入账）：")

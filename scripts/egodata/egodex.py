@@ -229,7 +229,11 @@ def load_episode_hdf5(path, episode_id=None):
         "schema_version": SCHEMA_VERSION,
         "episode_id": episode_id,
         "source": "egodex",
-        "source_path": str(path),
+        "source_path": str(path.resolve()),
+        # Same-index CFR video supplied alongside the HDF5; RGB training checks
+        # existence, frame count and fps. State-only conversion needs no video.
+        "video_path": str(path.with_suffix(".mp4").resolve()),
+        "video_fps": EGODEX_FPS,
         "fps": EGODEX_FPS,
         "coordinate_frame": "arkit_world",
         "image_width": width,

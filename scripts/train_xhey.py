@@ -1,26 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""XHEY：用 xhey App 在 iPhone（带激光雷达）上采的第一视角数据训练的手腕动作模型。
+"""XHEY wrist prediction: Phase-0 public-only training with explicit held-out splits.
 
-一条命令训练 + 留一段评测 + 保存模型：
-    python scripts/train_xhey.py
+    python scripts/train_xhey.py --mix egodex --split split.json --state-only
 
-数据配比消融（同批留一段 iPhone 评测）：
-    python scripts/train_xhey.py --ablation
-
-XHEY 看三样东西，预测接下来 16 步（15 fps，约 1 秒）双手手腕的位移和旋转：
-  1. 画面：每帧 RGB 经 ImageNet 预训练 ResNet18 得到 512 维特征（冻结，缓存到磁盘）
-  2. 当前手：21 个关节相对手腕的位置 + 两手腕朝向 + 两手相对位置（137 维）
-  3. 最近 8 帧手腕轨迹：相对当前手腕的位置和有无检测（ACT 的 n_obs_steps 思路）
-网络：3 层 MLP（512 宽，dropout），预测相对「手不动」的残差，只在有效手上算损失
-（action_valid 掩码，等价于 ACT 的 action_is_pad）。评测时再乘一个 shrink 系数，
-在内部验证集上选；shrink=0 就退回「手不动」。
-
---mix 用 + 连接：iphone（必选）/ egodex / hot3d / zeno_lidar（HF iPhone LiDAR，CC BY-NC）/ hub_rgb / hub_imu / zeno_raw（后三者需先 WiLoR）/ aug（镜像换手 + 2 倍速 + 输入噪声）。
-评测：留一段交叉验证，指标复用 egodex_act_eval.metrics_for，对比 zero / linear / history_revert。
-最终模型存到 <out>/xhey.pt（不进 git）。详见 docs/xhey_model.md。
+RGB uses frozen ResNet18 features; the trainable MLP image-input weights update.
+iPhone / xhey_rgb are frozen probes, never training or tuning inputs in this CLI.
+Historical iPhone loaders/augmentation helpers remain for pipeline regression.
+See docs/xhey/PHASE0_ASTRA.md for offline smoke tests and split/RGB contracts.
 """
-import argparse, json, sys, time
+import argparse, hashlib, json, sys, time
 from pathlib import Path
 import numpy as np
 
@@ -100,7 +89,23 @@ def subsample_episode(ep, k):
             return o[::k]
         return o
     out = walk(ep); out["num_frames"] = len(range(0, n, k)); out["fps"] = (ep.get("fps") or 30) / k
+    # Indices refer to the ORIGINAL video, not the downsampled labels.
+    out["video_frame_indices"] = ep.get("video_frame_indices", list(range(n)))[::k]
+    out["video_fps"] = ep.get("video_fps", ep.get("fps") or 30)
     return out
+
+
+def image_encoder():
+    """Use pre-provisioned weights only; feature extraction never downloads."""
+    import torch, torchvision
+    from urllib.parse import urlparse
+    weights = torchvision.models.ResNet18_Weights.IMAGENET1K_V1
+    checkpoint = Path(torch.hub.get_dir()) / "checkpoints" / Path(urlparse(weights.url).path).name
+    if not checkpoint.is_file():
+        raise FileNotFoundError("Local ResNet18 weights missing: %s; provision approved weights or use --state-only" % checkpoint)
+    net = torchvision.models.resnet18(weights=None)
+    net.load_state_dict(torch.load(checkpoint, map_location="cpu", weights_only=True))
+    return net
 
 
 def image_features(ep, name, cache_dir, batch=256, flip=False):
@@ -108,37 +113,60 @@ def image_features(ep, name, cache_dir, batch=256, flip=False):
     f = Path(cache_dir) / (name + (".flip" if flip else "") + ".resnet18.npy")
     video = Path(ep["video_path"])
     stat = video.stat()
-    signature = {"video": str(video.resolve()), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
-                 "num_frames": ep["num_frames"], "flip": bool(flip)}
+    indices = np.asarray(ep.get("video_frame_indices", list(range(ep["num_frames"]))), dtype=int)
+    if len(indices) != ep["num_frames"] or not len(indices) or indices[0] < 0 or np.any(np.diff(indices) <= 0):
+        raise ValueError("Invalid video_frame_indices: %s" % name)
+    timestamps = ep.get("timestamps")
+    video_fps = ep.get("video_fps", ep.get("fps"))
+    if timestamps is not None and video_fps:
+        ts = np.asarray(timestamps, float)
+        expected = (indices - indices[0]) / float(video_fps)
+        if ts.shape != indices.shape or not np.allclose(ts - ts[0], expected, atol=1e-3, rtol=0):
+            raise ValueError("Label timestamps are not aligned to video_frame_indices: %s" % name)
+    signature = {"version": 2, "video": str(video.resolve()), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+                 "indices": indices.tolist(), "video_fps": video_fps, "flip": bool(flip)}
     meta_path = f.with_suffix(".meta")
     if f.exists() and meta_path.exists() and json.loads(meta_path.read_text()) == signature:
-        return np.load(f).astype(np.float32)
-    import cv2, torch, torchvision
+        feat = np.load(f).astype(np.float32)
+        if feat.shape == (len(indices), 512) and np.isfinite(feat).all():
+            return feat
+    import cv2, torch
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    net = torchvision.models.resnet18(weights="IMAGENET1K_V1")
+    net = image_encoder()
     net.fc = torch.nn.Identity(); net = net.eval().to(dev).half()
     mean = torch.tensor([0.485, 0.456, 0.406], device=dev).view(1, 3, 1, 1)
     std = torch.tensor([0.229, 0.224, 0.225], device=dev).view(1, 3, 1, 1)
-    cap = cv2.VideoCapture(ep["video_path"]); out, buf = [], []
+    cap = cv2.VideoCapture(str(video)); out, buf = [], []
+    expected_fps = signature["video_fps"]
+    if not cap.isOpened() or (expected_fps and not np.isclose(cap.get(cv2.CAP_PROP_FPS), expected_fps, rtol=.01)):
+        cap.release()
+        raise ValueError("Video unavailable or FPS misaligned: %s" % video)
     def flush():
         x = torch.from_numpy(np.stack(buf)).to(dev).permute(0, 3, 1, 2).float() / 255
         x = ((x - mean) / std).half()
         with torch.no_grad():
             out.append(net(x).float().cpu().numpy())
         buf.clear()
-    while True:
-        ok, fr = cap.read()
-        if not ok:
-            break
-        fr = cv2.resize(fr, (224, 168))[:, :, ::-1]
-        buf.append((fr[:, ::-1] if flip else fr).copy())
-        if len(buf) == batch:
+    frame_index, selected = 0, 0
+    try:
+        while selected < len(indices):
+            ok, fr = cap.read()
+            if not ok:
+                raise ValueError("Short/undecodable RGB video %s: missing frame %d" % (video, indices[selected]))
+            if frame_index == indices[selected]:
+                fr = cv2.resize(fr, (224, 168))[:, :, ::-1]
+                buf.append((fr[:, ::-1] if flip else fr).copy())
+                selected += 1
+                if len(buf) == batch:
+                    flush()
+            frame_index += 1
+        if buf:
             flush()
-    if buf:
-        flush()
-    feat = np.concatenate(out)[: ep["num_frames"]]
-    if len(feat) < ep["num_frames"]:
-        feat = np.vstack([feat, np.zeros((ep["num_frames"] - len(feat), feat.shape[1]), np.float32)])
+    finally:
+        cap.release()
+    feat = np.concatenate(out)
+    if feat.shape != (len(indices), 512) or not np.isfinite(feat).all():
+        raise ValueError("Invalid RGB features: %s" % video)
     f.parent.mkdir(parents=True, exist_ok=True); np.save(f, feat.astype(np.float16))
     meta_path.write_text(json.dumps(signature))
     print("image features", f.name, feat.shape, flush=True)
@@ -172,6 +200,8 @@ def finish(d, img):
 
 def build_iphone(run, cache_dir):
     eps, names = load_episodes(run)
+    if not eps:
+        raise ValueError("No approved iPhone probe episodes: %s" % run)
     d = ht.to_arrays(eps)
     d["seg_ok"] = seg_row_ok(eps, names, "iphone")
     img = np.vstack([image_features(e, n, cache_dir)[: e["num_frames"] - 1] for e, n in zip(eps, names)])
@@ -211,42 +241,75 @@ def concat(ds):
     return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
 
 
-def build_external(kind, root, cache_dir):
-    """开源数据 → 和 iPhone 同样 140 维状态 / 14 维动作，30 fps 下采样到 15 fps。没有画面特征（has_image=0）。"""
+def build_external(kind, root, cache_dir, use_img=None, episode_ids=None):
+    """Load requested metric episodes. EgoDex RGB is on unless explicitly state-only.
+
+    No array cache is trusted across QC/split/video changes; the expensive image
+    encoder has its own content/alignment-aware cache. Relative video paths are
+    resolved against the episode JSON. Labels and video share original indices.
+    """
+    root = Path(root)
+    if not root.exists():
+        raise ValueError("Missing requested source %s: %s" % (kind, root))
     paths = _qc_keep(iter_episode_paths(root), kind)
-    signature = json.dumps([(str(p.resolve()), p.stat().st_size, p.stat().st_mtime_ns) for p in paths])
-    if SEG_KEEP:  # 分段成绩单变了缓存就失效
-        signature += json.dumps({p.stem: SEG_KEEP.get(p.stem) for p in paths}, sort_keys=True)
-    f = Path(cache_dir) / ("%s_arrays_p0v1.npz" % kind)
-    if f.exists():
-        with np.load(f) as cached:
-            if "metric_checked" in cached and bool(cached["metric_checked"]) and (
-                "source_signature" in cached and str(cached["source_signature"]) == signature
-            ):
-                d = {k: cached[k] for k in ("state", "action", "valid", "episode", "index")}
-                d["seg_ok"] = cached["seg_ok"] if "seg_ok" in cached else np.ones(len(d["state"]), bool)
-                return finish(d, None)
-        print("重建尺度未校验或源文件已变更的缓存", f, flush=True)
-    eps, kept_names = [], []
+    use_img = kind == "egodex" if use_img is None else use_img
+    wanted = None if episode_ids is None else set(episode_ids)
+    eps, names, ids, images, loaded_paths = [], [], [], [], []
+    from common.frames import canonicalize_for_xhey
     for p in paths:
         ep = json.loads(p.read_text())
+        eid = ep.get("episode_id") or (kind + "/" + p.stem)
+        if wanted is not None and eid not in wanted:
+            continue
+        if eid in ids:
+            raise ValueError("Duplicate episode_id in %s: %s" % (kind, eid))
         pose = ep.get("hand_pose") or {}
         if ep.get("usable_for_metric_xhey") is False or pose.get("metric_translation") is False or (
             pose.get("backend") == "wilor" and ep.get("camera_intrinsic") is None
         ):
             raise ValueError("%s 没有公制手腕标签；请用真实 --calib 重新转换，不能混入米制训练" % p)
+        if use_img:
+            video = ep.get("video_path")
+            if not video and kind == "egodex" and ep.get("source_path"):
+                video = str(Path(ep["source_path"]).with_suffix(".mp4"))
+            if not video:
+                raise ValueError("Missing RGB video_path for %s:%s; use --state-only for a declared ablation" % (kind, eid))
+            video = Path(video)
+            if not video.is_absolute():
+                video = p.parent / video
+            if not video.is_file():
+                raise ValueError("Missing RGB for %s:%s: %s" % (kind, eid, video))
+            ep["video_path"] = str(video.resolve())
         if (ep.get("fps") or 30) >= 25:
             ep = subsample_episode(ep, 2)
-        if ep["num_frames"] > H + 1:
-            from common.frames import canonicalize_for_xhey
-            eps.append(canonicalize_for_xhey(ep)); kept_names.append(p.stem)
+        if ep["num_frames"] <= H + 1:
+            if wanted is not None:
+                raise ValueError("Requested episode has zero usable windows: %s:%s" % (kind, eid))
+            continue
+        ep = canonicalize_for_xhey(ep)
+        eps.append(ep); names.append(p.stem); ids.append(eid); loaded_paths.append(p)
+        if use_img:
+            cache_name = kind + "_" + hashlib.sha256(str(p.resolve()).encode()).hexdigest()[:20]
+            images.append(image_features(ep, cache_name, cache_dir)[:-1])
+    if wanted is not None and wanted - set(ids):
+        raise ValueError("Requested episodes missing/removed by QC in %s: %s" % (kind, sorted(wanted - set(ids))))
     if not eps:
-        raise SystemExit("找不到 %s 数据：%s（见 docs/xhey_model.md 的准备步骤）" % (kind, root))
+        raise ValueError("No usable episodes in requested source %s: %s" % (kind, root))
     d = ht.to_arrays(eps)
-    d["seg_ok"] = seg_row_ok(eps, kept_names, kind)
-    f.parent.mkdir(parents=True, exist_ok=True); np.savez(f, **d, metric_checked=True, source_signature=signature)
-    print(kind, "episodes", len(eps), "rows", len(d["state"]), "valid", round(float(d["valid"].mean()), 3), flush=True)
-    return finish(d, None)
+    d["seg_ok"] = seg_row_ok(eps, names, kind)
+    d["episode_id"] = np.asarray(ids)[d["episode"]]
+    d["source"] = np.full(len(d["state"]), kind)
+    d["fps"] = np.asarray([e.get("fps") or 30 for e in eps])[d["episode"]]
+    d["episode_path"] = np.asarray([str(p.resolve()) for p in loaded_paths])[d["episode"]]
+    d["video_path"] = np.asarray([e.get("video_path") or "" for e in eps])[d["episode"]]
+    d = finish(d, np.vstack(images) if use_img else None)
+    starts = useful(d, seg_chunk_filter(d, ev.chunk_starts(d["episode"], H, 1)))
+    if not len(starts):
+        raise ValueError("Requested source %s has zero valid training windows after QC: %s" % (kind, root))
+    print("actual_source", json.dumps({"source": kind, "root": str(root.resolve()), "episodes": len(eps),
+          "rows": len(d["state"]), "valid_windows": len(starts), "image_rows": int(d["f_has"].sum()),
+          "image_coverage": float(d["f_has"].mean())}), flush=True)
+    return d
 
 
 def feats(d, starts, use_img=True, use_hist=True):
@@ -274,8 +337,15 @@ class XHEY:
         sd = X.std(0) + 1e-6; sd[sd < 1e-4] = 1.0
         self.norm = (X.mean(0), sd, (Y - IDENT).reshape(-1, STEP).std(0) + 1e-6)
 
-    def fit(self, X, Y, V, Xv, Yv, Vv, steps=3000, lr=3e-4, wd=1e-2, bs=256, eval_every=100, noise=0.0):
+    def fit(self, X, Y, V, Xv, Yv, Vv, steps=3000, lr=3e-4, wd=1e-2, bs=256, eval_every=100, noise=0.0,
+            sample_sources=None):
         """noise>0：合成增强——给输入加高斯噪声（标准化后的单位；相当于手腕轨迹抖动 + 画面特征扰动）。"""
+        if not len(X) or not len(Xv) or steps < 1:
+            raise ValueError("Training/validation must be nonempty and steps positive")
+        sources = np.asarray(sample_sources if sample_sources is not None else ["unspecified"] * len(X))
+        if len(sources) != len(X):
+            raise ValueError("sample_sources length mismatch")
+        drawn = np.zeros(len(X), dtype=np.int64)
         t = self.t; self.shrink = 1.0
         mu, sd, ysd = self.norm
         T = lambda a: t.tensor(a, dtype=t.float32, device=self.dev)
@@ -290,7 +360,9 @@ class XHEY:
         g = np.random.default_rng(self.seed); best = (np.inf, None, 0); curve = []
         for it in range(steps):
             self.net.train()
-            b = t.tensor(g.integers(0, len(Xn), bs), device=self.dev)
+            indices = g.integers(0, len(Xn), bs)
+            np.add.at(drawn, indices, 1)
+            b = t.tensor(indices, device=self.dev)
             xb = Xn[b]
             if noise > 0:
                 xb = xb + noise * t.randn_like(xb)
@@ -301,7 +373,7 @@ class XHEY:
                 cm = C[b][:, :, h:h + 1]
                 loss = loss + self.cum_w * (((pc - Ycum[h][b]) / pos_scale) ** 2 * cm).sum() / (3 * cm.sum()).clamp(min=1)
             opt.zero_grad(); loss.backward(); opt.step(); sched.step()
-            if (it + 1) % eval_every == 0:
+            if (it + 1) % eval_every == 0 or it == steps - 1:
                 v = ade_prefix(self(Xv), Yv, Vv)
                 curve.append({"step": it + 1, "loss": float(loss), "val_ade_cm": v})
                 if v is not None and v < best[0]:
@@ -315,6 +387,14 @@ class XHEY:
             v = ade_prefix(IDENT + sh * (p - IDENT), Yv, Vv)
             if v is not None and (bestv is None or v < bestv - 1e-6):
                 bestv, self.shrink = v, sh
+        self.sample_manifest = {
+            str(src): {"available_windows": int(np.sum(sources == src)),
+                       "sampled_draws": int(drawn[sources == src].sum()),
+                       "unique_sampled_windows": int(np.count_nonzero(drawn[sources == src])),
+                       "effective_weight": float(drawn[sources == src].sum() / drawn.sum()),
+                       "sampled_image_draws": int(drawn[(sources == src) & (X[:, -1] > .5)].sum())}
+            for src in np.unique(sources)}
+        print("actual_sampling", json.dumps(self.sample_manifest), flush=True)
         curve.append({"shrink": self.shrink, "val_ade_prefix_cm": bestv})
         return curve
 
@@ -412,14 +492,8 @@ def augmentation_train_starts(extra, train_starts, source_rows):
     return starts[(rejected[end] - rejected[begin]) == 0]
 
 
-MIX_HELP = (
-    "iphone 必选；egodex=EgoDex；hot3d=HOT3D；"
-    "zeno_lidar=HF zeno iPhone LiDAR 家务（米制手腕，CC BY-NC）；"
-    "hub_rgb=Hubdata iPhone RGB 经 WiLoR；"
-    "hub_imu=Hubdata iPhone RGB+IMU 经 WiLoR；"
-    "zeno_raw=zeno 开放样例视频经 WiLoR；"
-    "aug=合成增强（镜像换手 + 2 倍速 + 输入噪声）"
-)
+MIX_HELP = "public-only: egodex / hot3d / hoi4d / egoverse / openaoe; iphone is probe-only."
+EXTERNAL_KEYS = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone", "xhey_rgb", "openaoe", "stera", "di", "hoi4d", "xphi", "egoverse")
 
 
 # 自动迭代（scripts/xhey_auto_iter.py）可调的超参；默认值 = PR #47
@@ -427,36 +501,8 @@ TUNE = {"hidden": 512, "dropout": 0.2, "lr_scale": 1.0, "aug_noise": 0.1}
 
 
 def train_mix(mix, iph, train_eps, ext, seed, steps, pre_steps, use_img=True, loss_move_cm=0.0):
-    """在 iPhone 训练片段（+ 选中的开源/合成数据）上训一个 XHEY。返回模型。"""
-    tr_all = seg_chunk_filter(iph, ht.chunks(iph, train_eps))  # 只剪训练块；测试段在 main 里不动
-    tr, va = split_inner(iph, tr_all)
-    aug_train = tr.copy()
-    tr, va = useful(iph, tr), useful(iph, va)
-    X, Y, V = xyv(iph, tr, use_img); Xv, Yv, Vv = xyv(iph, va, use_img)
-    if loss_move_cm and loss_move_cm > 0:
-        keep = moving_mask_from_Y(Y, loss_move_cm)
-        if keep.any():
-            X, Y, V = X[keep], Y[keep], V[keep]
-            print("loss_move_cm", loss_move_cm, "kept", int(keep.sum()), "/", int(len(keep)), flush=True)
-    if "aug" in mix:  # 合成数据：镜像（只取训练片段，画面用翻转后的特征）+ 2 倍速
-        for extra in (ext["mirror"], ext["fast"]):
-            ex_starts = augmentation_train_starts(extra, aug_train, len(iph["state"]))
-            if not len(ex_starts):
-                continue
-            Xe, Ye, Ve = xyv(extra, ex_starts, use_img)
-            X, Y, V = np.vstack([X, Xe]), np.concatenate([Y, Ye]), np.concatenate([V, Ve])
-    m = XHEY(X.shape[1], seed, hidden=TUNE["hidden"], dropout=TUNE["dropout"]); m.set_norm(X, Y)
-    pre_keys = ("egodex", "hot3d", "zeno_lidar", "hub_rgb", "hub_imu", "zeno_raw", "zeno_phone", "xhey_rgb", "openaoe", "stera", "di", "hoi4d", "xphi", "egoverse")
-    pre = [ext[k] for k in pre_keys if k in mix and k in ext]
-    if pre:
-        P = concat(pre); ps = useful(P, seg_chunk_filter(P, ev.chunk_starts(P["episode"], H, 1)))
-        Xp, Yp, Vp = xyv(P, ps, use_img)
-        m.curves = {"pretrain": m.fit(Xp, Yp, Vp, Xv, Yv, Vv, steps=pre_steps, lr=3e-4 * TUNE["lr_scale"])}
-    else:
-        m.curves = {}
-    m.curves["finetune"] = m.fit(X, Y, V, Xv, Yv, Vv, steps=steps, lr=(1e-4 if pre else 3e-4) * TUNE["lr_scale"],
-                                 noise=TUNE["aug_noise"] if "aug" in mix else 0.0)
-    return m
+    """Retired training API; loaders and augmentation remain for probe regressions."""
+    raise ValueError("iPhone is frozen probe/eval-only; use the explicit public --split path")
 
 
 def horizon_parts(pred, Y, V):
@@ -502,24 +548,15 @@ DEFAULT_ABLATION = [
 
 
 def try_external(kind, root, cache):
-    """开源/HF 目录缺失或没有 episode 时跳过该配比分量，不整场退出。"""
-    root = Path(root)
-    if not root.exists():
-        print("skip %s: missing %s" % (kind, root), flush=True)
-        return None
-    paths = iter_episode_paths(root)
-    if not paths:
-        print("skip %s: no episode json under %s" % (kind, root), flush=True)
-        return None
-    try:
-        return build_external(kind, root, cache)
-    except SystemExit as e:
-        print("skip %s: %s" % (kind, e), flush=True)
-        return None
+    """Compatibility name: requested sources now fail closed, never return None."""
+    return build_external(kind, root, cache)
 
 def prepare_external(mixes, iph, eps, names, a):
     ext = {}
     need = set("+".join(mixes).split("+"))
+    unknown = need - set(EXTERNAL_KEYS) - {"iphone", "aug"}
+    if unknown:
+        raise ValueError("Unknown requested sources: %s" % sorted(unknown))
     cache = Path(a.out) / "cache"
     if "egodex" in need:
         _d = try_external("egodex", a.egodex, cache)
@@ -593,18 +630,23 @@ def prepare_external(mixes, iph, eps, names, a):
                                           for off, f in zip(offsets, fast_eps)])
         fd["src_end"] = fd["src_start"] + 2
         ext["fast"] = fd
+    missing = need - {"iphone", "aug"} - set(ext)
+    if missing:
+        raise ValueError("Requested sources not loaded: %s" % sorted(missing))
     return ext
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--run", default="outputs/iphone_mcap/run_s2", help="iPhone 管线输出目录（含 episodes/*.json）")
+    ap.add_argument("--run", default="outputs/iphone_mcap/run_s2", help="旧 iPhone 探针路径；public-only 训练不读取")
     ap.add_argument("--out", default="outputs/xhey", help="结果和模型保存目录")
-    ap.add_argument("--mix", default="iphone+egodex+aug",
-                    help="最终模型用哪些数据，用 + 连接。" + MIX_HELP + "。默认 iphone+egodex+aug")
-    ap.add_argument("--ablation", action="store_true",
-                    help="评测多种数据配比：" + ", ".join(DEFAULT_ABLATION) + "（加上 --mixes 可自定义）")
-    ap.add_argument("--mixes", default=None, help="自定义消融列表，逗号分隔，例如 iphone,iphone+aug")
+    ap.add_argument("--mix", default="egodex",
+                    help="公开训练数据源，用 + 连接。" + MIX_HELP)
+    ap.add_argument("--split", help="显式 train/val/test episode_id 和独立分组 JSON（必需）")
+    ap.add_argument("--state-only", action="store_true", help="声明无图消融；不加载视频/视觉权重")
+    ap.add_argument("--prepare-only", action="store_true", help="只校验本地数据并写实际清单，不训练")
+    ap.add_argument("--ablation", action="store_true", help="旧接口，public-only 拒绝；请分开运行每个配比")
+    ap.add_argument("--mixes", default=None, help="旧接口，public-only 拒绝；使用 --mix")
     ap.add_argument("--egodex", default="data/egodex_sub/unified", help="EgoDex 统一 episode JSON 目录")
     ap.add_argument("--hot3d", default="outputs/hot3d_scale/run/episodes", help="HOT3D episode JSON 目录")
     ap.add_argument("--zeno-lidar", default="data/hf_iphone/unified/zeno_lidar",
@@ -633,7 +675,7 @@ def main():
                     help="xPhi-Ego-100 WiLoR 伪标签 episode 目录（相机光学系；内参为假设视场角）")
     ap.add_argument("--move-cm", type=float, default=5.0,
                     help="「手在动」子集：未来 16 步手腕真实位移超过多少 cm")
-    ap.add_argument("--no-final", action="store_true", help="只做留一段评测，不再训最终模型（自动迭代省时间）")
+    ap.add_argument("--no-final", action="store_true", help="不保存 checkpoint；不影响显式 test 评测")
     ap.add_argument("--hidden", type=int, default=512, help="MLP 隐层宽度")
     ap.add_argument("--dropout", type=float, default=0.2)
     ap.add_argument("--lr-scale", type=float, default=1.0, help="学习率倍数（预训练和微调一起缩放）")
@@ -652,9 +694,9 @@ def main():
                     help="可选。qc_scorecard.py --segments 输出的 segments.json（可多个）：训练块只取整块落在"
                          "保留区间里的；留一段评测的测试段不剪（和旧基线可比）")
     ap.add_argument("--seeds", type=int, default=3, help="每个配比训练几个随机种子")
-    ap.add_argument("--steps", type=int, default=3000, help="iPhone（微调）阶段最大步数，按内部验证集挑最佳步")
-    ap.add_argument("--pre-steps", type=int, default=6000, help="开源数据预训练步数")
-    ap.add_argument("--no-eval", action="store_true", help="跳过留一段评测，只用全部片段训最终模型")
+    ap.add_argument("--steps", type=int, default=3000, help="公开训练最大步数；只在显式 val 上早停/shrink")
+    ap.add_argument("--pre-steps", type=int, default=None, help="旧接口；public-only 不支持两阶段训练")
+    ap.add_argument("--no-eval", action="store_true", help="跳过 test 评测；仍仅在显式 train 上训练、val 上选择")
     a = ap.parse_args()
     global QC_STRICT, CUM_W
     CUM_W = float(a.cum_weight)
@@ -674,78 +716,18 @@ def main():
         SEG_KEEP.update(load_segments(a.qc_segments))
         print("QC 分段：%d 段有保留区间，训练块只取区间内" % len(SEG_KEEP), flush=True)
     TUNE.update(hidden=a.hidden, dropout=a.dropout, lr_scale=a.lr_scale, aug_noise=a.aug_noise)
-    out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
-    t0 = time.time()
-    mixes = (a.mixes.split(",") if a.mixes else DEFAULT_ABLATION) if a.ablation else [a.mix]
-    iph, eps, names = build_iphone(a.run, out / "cache")
-    if not eps:
-        raise ValueError("No approved iPhone episodes remain after QC")
-    ext = prepare_external(mixes + [a.mix], iph, eps, names, a)
-    print("clips", names, "rows", len(iph["state"]), "valid", round(float(iph["valid"].mean()), 4), flush=True)
-    if not a.no_eval:
-        per, chunks_ade, prefix, moving = {}, {}, {}, []
-        horizon, curves, examples = {}, [], {}
-        for test_ep in range(len(names)):
-            train_eps = [e for e in range(len(names)) if e != test_ep]
-            te, tr = ht.chunks(iph, [test_ep]), ht.chunks(iph, train_eps)
-            _t, _ = ev.gather(iph, te)
-            moving.append(np.stack([np.linalg.norm(_t[:, :, 7 * h:7 * h + 3].sum(1), axis=-1) * 100 > a.move_cm
-                                    for h in range(2)], 1))
-            def add(name, pred):
-                per.setdefault(name, []).append(ev.metrics_for(iph, te, pred, [1, 8, 16]))
-                chunks_ade.setdefault(name, []).append(ht.chunk_ade(iph, te, pred))
-                Yte, Vte = ev.gather(iph, te)
-                prefix.setdefault(name, []).append(prefix_parts(pred, Yte, Vte))
-                horizon.setdefault(name, []).append(horizon_parts(pred, Yte, Vte))
-                g0 = name.split("#")[0]
-                if test_ep == 0 and g0 not in examples:
-                    examples[g0] = {"clip": names[test_ep], "chunks": trajectory_examples(pred, Yte, Vte)}
-            add("zero", np.tile(IDENT, (len(te), H, 1)))
-            X, (Y, V) = ht.features(iph["state"][tr]), ev.gather(iph, tr)
-            add("linear", ht.fit_linear(X, Y, V, ht.tune(iph, train_eps, "linear"))(ht.features(iph["state"][te])))
-            Ytr, Vtr = ev.gather(iph, tr)
-            al = min((0.0, 0.25, 0.5, 0.75, 1.0), key=lambda x: ade_prefix(hist_revert(iph, tr, x), Ytr, Vtr) or 1e9)
-            add("history_revert", hist_revert(iph, te, al))
-            for mix in mixes:
-                for s in range(a.seeds):
-                    m = train_mix(mix, iph, train_eps, ext, s, a.steps, a.pre_steps, loss_move_cm=a.loss_move_cm)
-                    add("%s#%d" % (mix, s), m(feats(iph, te)))
-                    curves.append({"mix": mix, "seed": s, "fold": names[test_ep], **getattr(m, "curves", {})})
-                print("fold", names[test_ep], mix, "done %.0fs" % (time.time() - t0), flush=True)
-        results = summarize_results(per, chunks_ade, names, np.concatenate(moving))
-        for g in results:
-            mem = [n for n in prefix if n.split("#")[0] == g]
-            vals = [sum(x[0] for x in prefix[n]) / max(sum(x[1] for x in prefix[n]), 1) * 100 for n in mem]
-            results[g]["prefix_ade_cm"] = float(np.mean(vals))
-            results[g]["prefix_steps"] = int(sum(x[1] for x in prefix[mem[0]]))
-            results[g]["n_full_chunks"] = int(np.isfinite(np.concatenate(chunks_ade[mem[0]])).sum())
-            hv = [sum(x[0] for x in horizon[n]) / np.maximum(sum(x[1] for x in horizon[n]), 1) for n in mem]
-            results[g]["horizon_ade_cm"] = np.mean(hv, 0).tolist()
-            results[g]["horizon_ade_cm_seed_std"] = np.std(hv, 0).tolist()
-        report = {"model": "XHEY", "run": a.run, "clips": names, "n_rows": int(len(iph["state"])),
-                  "valid_frac": float(iph["valid"].mean()), "fps": 15, "horizon": H, "k_hist": K_HIST,
-                  "seeds": a.seeds, "steps": a.steps, "pre_steps": a.pre_steps, "loss_move_cm": a.loss_move_cm, "mixes": mixes,
-                  "qc_segments": bool(SEG_KEEP), "seg_kept_rows": {"iphone": int(iph["seg_ok"].sum()),
-                  **{k: int(v["seg_ok"].sum()) for k, v in ext.items() if "seg_ok" in v}},
-                  "external_rows": {k: int(len(v["state"])) for k, v in ext.items()}, "results": results,
-                  "curves": curves, "examples": examples}
-        (out / "metrics.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
-        print(json.dumps({g: [round(r["ade_cm_pooled"], 2), round(r["ade_minus_zero_cm"], 2), round(r["prefix_ade_cm"], 2),
-                              round(r.get("moving_ade_cm", float("nan")), 2), round(r.get("moving_minus_zero_cm", float("nan")), 2)]
-                          for g, r in results.items()}, indent=1), flush=True)
-        plot(results, out / "xhey_results.png")
-    if a.no_final:
-        return 0
-    m = train_mix(a.mix, iph, list(range(len(names))), ext, 0, a.steps, a.pre_steps, loss_move_cm=a.loss_move_cm)
-    m.save(out / "xhey.pt", {"clips": names, "mix": a.mix, "fps": 15,
-                             "features": "state_local137+hist48+resnet18_512+has_image1"})
-    print("saved", out / "xhey.pt", "%.0fs" % (time.time() - t0), flush=True)
-    return 0
+    from xhey_public import run_public
+    return run_public(a, sys.modules[__name__])
 
 
-def summarize_results(per, chunks_ade, names, moving=None):
+def summarize_results(per, chunks_ade, names, moving=None, cluster_ids=None):
+    from xhey_stats import cluster_summary
     results = {}
     z = np.concatenate(chunks_ade["zero"])
+    units = names if cluster_ids is None else cluster_ids
+    if len(units) != len(names):
+        raise ValueError("One cluster id per episode is required")
+    groups = np.concatenate([np.repeat(unit, len(part)) for unit, part in zip(units, chunks_ade["zero"])])
     for g in dict.fromkeys(n.split("#")[0] for n in per):
         mem = [n for n in per if n.split("#")[0] == g]
         seed_sum = [ht.summarize(per[n]) for n in mem]
@@ -757,18 +739,25 @@ def summarize_results(per, chunks_ade, names, moving=None):
         results[g] = {"mean": {k: float(np.mean([s[k] for s in seed_sum])) for k in keys},
                       "n_seeds": len(mem), "ade_cm_pooled": float(np.nanmean(ca)),
                       "ade_cm_seed_std": float(np.std(seed_ade)),
-                      "ade_ci95": ht.bootstrap_ci(ca[np.isfinite(ca)]),
+                      "ci_method": "episode_session_cluster_bootstrap",
+                      "ci_estimand": "pooled_window_hand_mean",
+                      "n_eval_units": cluster_summary(np.where(m_, ca, np.nan), groups)["n_units"],
+                      "decision_eligible": False,
+                      "evidence_status": "evidence_insufficient",
+                      "ade_ci95": cluster_summary(ca, groups)["ci95"],
                       "ade_minus_zero_cm": float((ca[m_] - z[m_]).mean()),
-                      "ade_minus_zero_ci95": ht.bootstrap_ci(ca[m_] - z[m_]),
+                      "ade_minus_zero_ci95": cluster_summary(np.where(m_, ca - z, np.nan), groups)["ci95"],
                       "per_clip_ade_cm": {names[i]: float(np.nanmean(np.stack([chunks_ade[n][i] for n in mem])))
                                           for i in range(len(names))}}
         if moving is not None:  # 只看「手真的在动」的片段：猜不动在这里最吃亏
             mm = m_ & moving
             results[g]["moving_frac"] = float(mm.sum() / max(m_.sum(), 1))
-            results[g]["moving_ade_cm"] = float(ca[mm].mean())
-            results[g]["moving_zero_ade_cm"] = float(z[mm].mean())
-            results[g]["moving_minus_zero_cm"] = float((ca[mm] - z[mm]).mean())
-            results[g]["moving_minus_zero_ci95"] = ht.bootstrap_ci(ca[mm] - z[mm])
+            results[g]["moving_ade_cm"] = float(ca[mm].mean()) if mm.any() else None
+            results[g]["moving_zero_ade_cm"] = float(z[mm].mean()) if mm.any() else None
+            results[g]["moving_minus_zero_cm"] = float((ca[mm] - z[mm]).mean()) if mm.any() else None
+            summary = cluster_summary(np.where(mm, ca - z, np.nan), groups)
+            results[g]["moving_minus_zero_ci95"] = summary["ci95"]
+            results[g]["n_moving_eval_units"] = summary["n_units"]
     return results
 
 
@@ -776,14 +765,15 @@ def plot(results, path):
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     order = sorted(results, key=lambda g: (g not in ("zero", "linear"), g != "zero", results[g]["ade_cm_pooled"] if g not in ("zero", "linear") else 0))
     v = np.array([results[g]["ade_cm_pooled"] for g in order])
-    ci = np.array([results[g]["ade_ci95"] for g in order]); err = [v - ci[:, 0], ci[:, 1] - v]
+    ci = np.array([results[g]["ade_ci95"] or [v[i], v[i]] for i, g in enumerate(order)])
+    err = [np.maximum(v - ci[:, 0], 0), np.maximum(ci[:, 1] - v, 0)]
     best = min((g for g in order if g not in ("zero", "linear")), key=lambda g: results[g]["ade_cm_pooled"], default=None)
     col = ["#999" if g == "zero" else "#bbb" if g == "linear" else "#e4572e" if g == best else "#6a9fd8" for g in order]
     fig, ax = plt.subplots(figsize=(9, 4.2))
     ax.bar([g.replace("iphone", "iPhone") for g in order], v, yerr=err, capsize=4, color=col)
     ax.axhline(results["zero"]["ade_cm_pooled"], ls="--", c="k", lw=0.8, label="zero (hand still)")
     ax.set_ylabel("ADE over 16 steps (cm, lower is better)")
-    ax.set_title("XHEY data-mix ablation, held-out iPhone clips (leave-one-clip-out)")
+    ax.set_title("XHEY held-out episodes (cluster bootstrap; no Phase-0 win/loss)")
     ax.legend(); plt.xticks(rotation=20, ha="right"); plt.tight_layout(); fig.savefig(path, dpi=150)
 
 

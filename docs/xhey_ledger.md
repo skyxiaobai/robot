@@ -75,3 +75,19 @@
 3. 跑完：更新 CSV + 重画进度图 + 写一句结论。  
 4. ADE 低于 zero 且 CI 不跨 0 → 标「胜出」，开 PR。  
 5. 连续 3 次同方向失败 → 该方向降权或关掉。
+
+---
+
+## Astra Phase-0 审查追加（覆盖上文旧胜负/启动规则）
+
+**C10–C16 证据不足，撤回胜负标签；历史数值保留。** `experiments/ledger.jsonl` 末尾的
+`review_note` 是追加审查事件，不是新实验。所有涉 xPhi 行隔离，不进入 proposer；自动迭代行标注
+`xphi_not_loaded_suspected`，缺挂载/参数是强证据，但相同 ADE 不能代替运行日志核查。
+第 5 轮不虚构完成状态或实际样本数。
+
+`launch_paused` 继续保持，iPhone 仅冻结探针/评测，不训练、不调参、不再采集。
+新 XHEY 入口要求公开 train/val/test 独立单元划分，输出真实源/窗口/图像/抽样清单，按完整
+session/episode bootstrap；旧窗口级区间不能判赢。2–3 片段仍不足，正式最低有用改进与样本量门槛未锁定。
+
+详见 [Phase-0 实现与离线 smoke-test](xhey/PHASE0_ASTRA.md)。旧 CSV/图表只作历史快照；
+下次 `mirror` 才按审查视图刷新派生 CSV。现在不要执行旧 Kaggle 训练/自动调参指令。

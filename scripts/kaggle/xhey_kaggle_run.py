@@ -1,6 +1,10 @@
 import subprocess, os, glob, time, json, shutil
 def sh(c):
-    print('+', c, flush=True); r = subprocess.run(c, shell=True); print('rc', r.returncode, flush=True); return r.returncode
+    strict = 'scripts/train_xhey.py' in c
+    print('+', c, flush=True)
+    r = subprocess.run(('set -euo pipefail; ' + c) if strict else c, shell=True,
+                       executable='/bin/bash' if strict else None, check=strict)
+    print('rc', r.returncode, flush=True); return r.returncode
 T0 = time.time(); BUDGET = 11.0 * 3600
 IN = [p for p in glob.glob('/kaggle/input/*') ]; print(IN)
 D = glob.glob('/kaggle/input/**/scripts.tgz', recursive=True)[0]; ROOT = os.path.dirname(D)

@@ -14,10 +14,14 @@ class EgoverseSourceKey(unittest.TestCase):
         self.assertIn('"--egoverse"', src)
         calls = []
         a = types.SimpleNamespace(out="/tmp/egoverse_test_out", egoverse="/nonexistent/egoverse")
-        with mock.patch.object(tx, "try_external", side_effect=lambda k, r, c: calls.append((k, str(r))) or None):
+        sentinel = object()
+        with mock.patch.object(tx, "try_external", side_effect=lambda k, r, c: calls.append((k, str(r))) or sentinel):
             ext = tx.prepare_external(["iphone+egoverse"], {}, [], [], a)
         self.assertEqual(calls, [("egoverse", "/nonexistent/egoverse")])
-        self.assertNotIn("egoverse", ext)
+        self.assertIs(ext["egoverse"], sentinel)
+        with mock.patch.object(tx, "try_external", return_value=None):
+            with self.assertRaisesRegex(ValueError, "not loaded.*egoverse"):
+                tx.prepare_external(["iphone+egoverse"], {}, [], [], a)
 
     def test_converter_native_rate_and_head_const_flag(self):
         conv = (ROOT / "scripts" / "convert_egoverse.py").read_text(encoding="utf-8")
