@@ -100,7 +100,8 @@ python scripts/ego_pretrain_bc.py --dataset outputs/egodex_lerobot \
 |---|---|
 | `docs/BEGINNER_COMIC.md` | **中文新手第一读（漫画卡）**。离线版 `docs/beginner_guide/comic.html`、`docs/beginner_guide/comic.pdf` |
 | `docs/BEGINNER_GUIDE.md` | **中文新手指南 v2**（八章，命令与数字）。离线版 `docs/beginner_guide/guide.html`、`docs/beginner_guide/guide.pdf` |
-| `docs/xhey_model.md` | **XHEY 模型**（iPhone/xhey 数据）：一条命令训练、开源/合成配比消融、结果表 |
+| `docs/STRATEGY_PUBLIC_EGO_FIRST.md` | **当前训练数据策略（2026-11-01）**：公开第一视角数据为主，iPhone 自采降级为冻结评测探针；评测协议 v2、数据集优先级、做/不做清单 |
+| `docs/xhey_model.md` | **XHEY 模型**（iPhone/xhey 数据）：一条命令训练、开源/合成配比消融、结果表（调整前的做法） |
 | `docs/PROGRESS.md` | **项目进度**（流水线图、时间线、已有实验数字、待办）。建议第一次从这里读 |
 | `docs/retarget_sim.md` | 人手腕重定向到 MuJoCo 抓放。合成、EgoDex、HOT3D 三份 JSON 分开读 |
 | `docs/PIPELINE_ARCHITECTURE.md` | 整体架构：录制 → 校验 → 标定 → 认手 → 双目 → 世界系 → QC → 标注 → LeRobot → 训练，每步的状态和文件格式 |

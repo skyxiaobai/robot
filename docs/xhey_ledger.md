@@ -1,5 +1,7 @@
 # XHEY 实验台账（自动迭代）
 
+> **2026-11-01 暂停：** `docs/xhey/queue.json` 设了 `launch_paused`，`xhey_auto_iter.py step` 只收结果、不再推新内核。原因：3 段 iPhone 留一法的置信区间按重叠窗口 bootstrap，偏窄，C10–C16 之间约 0.01 cm 的差距分不出来；自动迭代内核没挂 xPhi 数据集，第 3–5 轮带 xPhi 的候选实际没有用到 xPhi（`iter004_c2` 与 `iter003_c1` 数字完全相同）。下表历史数字保留不改。新方向见 [`STRATEGY_PUBLIC_EGO_FIRST.md`](STRATEGY_PUBLIC_EGO_FIRST.md)。
+
 目标：**手腕 ADE 稳定低于「手不动」基线（overall 11.03 cm / 手在动 14.08 cm）**。  
 评测固定：3 段 iPhone LiDAR 留一法，seeds=3，horizon=16 @15fps。数字越小越好。
 
@@ -53,7 +55,7 @@
 | 2 | C2 | **加长微调**（steps 8k–12k，E4 配比） | 现 3k 可能欠拟合；改动最小 | 全量 Kaggle |
 | 3 | C3 | **残差缩放 / 去 shrink** 或直接预测绝对手腕 | 模型可能被 shrink 压成「几乎不动」 | 短训对比 |
 | 4 | C4 | **解冻 ResNet 最后 block** + 更强图像条件 | 有画面的 xhey_rgb 有帮助，图像侧可能还弱 | 全量 |
-| 5 | C5 | 再采 **≥10 段 iPhone Pro 深度**（数据，不是训） | 3 段 LOO 方差大；论文路线本来就要加数据 | 采集 |
+| 5 | C5 | ~~再采 **≥10 段 iPhone Pro 深度**（数据，不是训）~~ **已取消（2026-11-01）** | 3 段 LOO 方差大；论文路线本来就要加数据。改为公开数据主训练 + 公开留出评测 | 采集 |
 | 6 | C6 | 停做更大 Open-AoE / 无画面姿态预训练 | E5–E8 已证伪 | 跳过 |
 | 7 | C7 | **Stera-10M 预训练 → XHEY 精调**（iPhone Pro LiDAR + ARKit 重力世界系，WiLoR 21 点） | 设备/坐标系和 XHEY 最像，直接避开 Open-AoE 的两个疑似失败原因（无重力、手是重建的） | 全量 Kaggle；**卡在 gated 授权** |
 | 8 | C8 | **DynamicIntelligence 预训练 → 精调**（Record3D iPhone 13 Pro，MediaPipe+深度，每手 3 点） | 已就绪；但只有 25 段「手在动」、约 4 分钟，姿态不可用（相机系），预期增益小 | 全量 Kaggle |

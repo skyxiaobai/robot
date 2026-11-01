@@ -5,6 +5,8 @@
 
 仓库在做两件事：一条能训练的模仿学习流水线，和一副还没做出来的头戴双目采集设备。软件大多已经能跑。缺的是设备，以及设备到手之后用自己的数据再训一次。
 
+> **2026-11-01 策略调整：** 训练主线改为公开第一视角数据（EgoDex 为主，EgoVerse 待许可确认，HOI4D / HOT3D 作公开金标评测）。iPhone 自采片段降级为冻结的评测探针，不再采集用于训练；自动迭代已暂停推新内核。评估、证据和后续顺序见 [`STRATEGY_PUBLIC_EGO_FIRST.md`](STRATEGY_PUBLIC_EGO_FIRST.md)。
+
 ---
 
 ## 2026-10-12 review 修复与核验
@@ -438,6 +440,7 @@ ACT 只比保持不动略好，掩码效果在种子波动之内。同时修复�
 | 2026-10-10 | **1000 元内的双目清单单独成文。** 不把旧单目表的价格改写成新报价。 | 本次加入 `docs/headcam_stereo_bom.md` 与 `.csv`。推荐方案 A 约 727–982 元。 |
 | 2026-10-10 | **下单向卖家要 8–10 cm 基线，镜头选约 100°。** 硬件同步 ≤ 1 ms。640×400 在慢动作上够用。快动作还要能锁定曝光 ≤2 ms，并问清每目帧率是不是 60、走的是不是 USB3。 | 慢动作：HOT3D Quest3 双目手腕中位数 1.22 cm。快动作：`docs/hot3d_stereo/fast_motion.md`。 |
 | 2026-10-10 | **跳点门限按时间算，不再用每帧 2 cm。** RTS 过程噪声默认按速度在 30–300 之间取。补洞和 iPhone 位姿跳变也按秒。旧行为用 `--legacy-temporal`。 | 快动作仿真：30 fps 旧管线在 1 m/s 只留下 25% 的帧。见第 4.8 节。HOT3D 慢动作新默认重跑：1.13 / 2.38 / 85%，覆盖 70.5%，4/4。 |
+| 2026-11-01 | **公开第一视角数据为主，自研头戴后接；iPhone 自采降级为冻结评测探针。** 取消「再录 ≥10 段 iPhone」；`queue.json` 设 `launch_paused`，自动迭代只收结果。 | 用户要求不再以自采 iPhone 片段为主线。C10–C16 各配比只差约 0.01 cm，3 段留一法按重叠窗口 bootstrap 的区间偏窄，分不出差别；公开数据在 `train_xhey.py` 里不带画面且 `iphone` 必选；自动迭代内核没加载 xPhi。见 [`STRATEGY_PUBLIC_EGO_FIRST.md`](STRATEGY_PUBLIC_EGO_FIRST.md)。 |
 
 | 2026-10-10 | **硬件一到就采集：除必须有设备的步骤外，全部先用 HOT3D 验证。** 双目管线 One Euro 用 3.0 / 50，不用 PR #19 的 1.0 / 0.5。 | `docs/stereo_pipeline.md` §3.2；`docs/PIPELINE_ARCHITECTURE.md` §4 列出剩余只能靠硬件的缺口。 |
 
@@ -461,7 +464,7 @@ Square / pusht 只验证训练框架。本体、视角和动作都跟头戴人�
 - [x] 整体架构文档和到货第一天检查清单
 - [x] 缺测手腕不再当成「保持不动」来监督：导出 `action_valid`，线性模型和 ACT 损失按手屏蔽；全量 EgoDex 上的有效动作比例仍待补
 - [x] iPhone Pro 采集适配（Record3D → 会话目录 → 激光雷达深度求手 → QC → LeRobot，导出含 `action_valid`），合成样例测试 + DexYCB 实测/仿真评测（`docs/iphone_capture.md`）
-- [ ] 用 iPhone 录第一批真实数据：先跑 `validate_session.py`，看 `lowconf` / `fit` 比例，再定 iPhone 的检查阈值（真实 `.r3d` 还没验证过）
+- [ ] ~~用 iPhone 录第一批真实数据：先跑 `validate_session.py`，看 `lowconf` / `fit` 比例，再定 iPhone 的检查阈值（真实 `.r3d` 还没验证过）~~ 2026-11-01 起不再为训练采集 iPhone 数据，见 [`STRATEGY_PUBLIC_EGO_FIRST.md`](STRATEGY_PUBLIC_EGO_FIRST.md)
 - [ ] 设备端录制程序（按 §7.7 落盘，写 `stereo/timestamps_lr.csv`，锁定曝光 ≤2 ms，并写 `stereo/exposure.csv`）
 - [x] 用新默认（预测门限 + RTS q 约 30–300）重跑 HOT3D 慢动作手腕误差：1.13 / 2.38 / 85%，标注覆盖 70.5%，片段 4/4，有效动作比例 64.3%（`--legacy-temporal` 对照 1.11 / 2.29 / 87%、覆盖 70.7%、有效动作 63.8%）。PR #21 的 1.22 cm 是另一套协议，未改
 - [ ] 用第一批自采数据重新定 QC 阈值。手出画、视线飘移、运动模糊、摆拍或静止仍用 EgoDex 的 20% 坏帧。双目丢掉的标注另报覆盖率，`--min-label-coverage` 默认 0（只报告、不拒绝），这个数是临时的，等自采数据再定。

@@ -1,5 +1,7 @@
 # iPhone 头戴数据 → 可训练策略：论文路径（A → B → C）
 
+> **2026-11-01 冻结：** iPhone 自采不再是训练主线，本计划不再推进。B 节的质量对比仍可引用；3 段深度片段冻结为评测探针。见 [`STRATEGY_PUBLIC_EGO_FIRST.md`](STRATEGY_PUBLIC_EGO_FIRST.md)。
+
 面向「用 iPhone Pro Max + LiDAR 采的第一人称数据，能不能训出能用的动作模型」这条线。
 先证明 **A 能训**，再讲 **B 数据质量**，最后才谈 **C 预训练增益**。
 

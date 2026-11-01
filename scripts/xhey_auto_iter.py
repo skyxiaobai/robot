@@ -700,7 +700,10 @@ def step(a):
     if _queue_slot_busy(load_state()):
         mirror_ledger_csv()
         return 0
-    if a.no_launch:
+    paused = load_queue().get("launch_paused")
+    if a.no_launch or paused:
+        if paused:
+            print("queue.json 设了 launch_paused，只收结果、不推新内核：", paused)
         mirror_ledger_csv()
         return 0
     ready, skipped = split_qc_ready(ready_queue_items())
