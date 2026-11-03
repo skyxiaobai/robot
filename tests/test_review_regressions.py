@@ -234,16 +234,14 @@ class TrainingBoundaryTest(unittest.TestCase):
             class Model(torch.nn.Module):
                 def forward(self, x):
                     return x.mean(dim=(1, 2, 3))[:, None].repeat(1, 512)
-            fake_vision = types.ModuleType("torchvision")
-            fake_vision.models = NS(resnet18=lambda **kw: Model())
             ep = {"video_path": str(video), "num_frames": 2}
             write_video(0)
-            with patch.dict(sys.modules, {"torchvision": fake_vision}):
+            with patch.object(xhey, "image_encoder", return_value=Model()):
                 before = xhey.image_features(ep, "clip", root / "cache")
             with patch.dict(sys.modules, {"torchvision": None}):
                 np.testing.assert_allclose(xhey.image_features(ep, "clip", root / "cache"), before, atol=.001)
             write_video(255)
-            with patch.dict(sys.modules, {"torchvision": fake_vision}):
+            with patch.object(xhey, "image_encoder", return_value=Model()):
                 after = xhey.image_features(ep, "clip", root / "cache")
             self.assertGreater(float(np.mean(after - before)), 1)
 

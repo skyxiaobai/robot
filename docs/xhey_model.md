@@ -294,3 +294,16 @@ python scripts/xhey_auto_iter.py step
 ```
 
 需要：已装 `kaggle` 命令并登录；`matplotlib`、`numpy`。Kaggle 上要有私有数据集 `justinz2010/xhey-iphone-sessions`、`justinz2010/xhey-openaoe-pretrain`（含 `unified/nano_cam`）和内核 `justinz2010/xhey-wilor-labels` 的输出。horizon（16 步）目前是全局常量，没有放进搜索空间。
+
+---
+
+## Astra Phase-0 追加：当前训练入口（覆盖上文旧命令）
+
+`train_xhey.py` 现默认 public-only `--mix egodex`，必须给显式 `--split`。
+**iPhone / xhey_rgb 仅冻结探针和评测，不进训练、早停、shrink、调参或 few-shot；不再追加采集。**
+管线和相关测试保留，旧 iPhone 训练 API/命令明确报错。公开 RGB 通过真实视频路径接入，
+也可显式 `--state-only`；源缺失、零有效样本或 RGB 对齐失败不再静默跳过。
+
+C10–C16 的胜负撤回为证据不足，涉 xPhi 行隔离；整组 bootstrap 不会弥补仅 2–3 个独立片段。
+`launch_paused` 保持，自动调度器最后恢复。不要重放上文的历史训练/Kaggle 指令。
+完整格式、统计口径和无网络 smoke-test 见 [xhey/PHASE0_ASTRA.md](xhey/PHASE0_ASTRA.md)。

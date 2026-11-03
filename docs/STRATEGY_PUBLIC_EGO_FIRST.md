@@ -294,3 +294,24 @@ iPhone mcap ─► mcap_adapter ─► rgbd_pipeline（WiLoR + LiDAR 放手腕�
 - 置信区间：`hot3d_train_compare.bootstrap_ci` 对每个窗口的误差做独立同分布重采样；窗口来自 `egodex_act_eval.chunk_starts(..., stride=1)`。
 - 单目尺度：`docs/xhey/c17_label_methods.md`，WiLoR 单目手腕 z 中位比 LiDAR 小 68.8 cm，尺度系数中位 2.371（2.015–2.571）。
 - 测试现状：`tests/test_xhey_auto_iter.py::CommittedState::test_c9_done_worse_and_c9b_already_running` 在 main 上就是失败的（断言 C16 还是 `ready`，而 `queue.json` 早已是 `done_worse_vs_ctl`），本 PR 顺手对齐。
+
+---
+
+## 11. Astra 第二轮审查 / Justin 批准的 Phase-0 修订（追加，覆盖上文冲突项）
+
+当前实现、数据/划分契约和离线 smoke-test 见 [xhey/PHASE0_ASTRA.md](xhey/PHASE0_ASTRA.md)。
+
+- **C10–C16 一律证据不足**：保留历史数值，撤回胜负/数据集有效性结论；账本仅追加审查事件。
+  涉 xPhi 行隔离，不喂 proposer；第 5 轮仅标前瞻审查目标，不声称已完成。
+- **同 ADE 不是未加载的铁证**。缺挂载、缺参数和静默跳过强烈支持怀疑，仍需运行版本、实际命令、
+  解析路径和分源采样日志。C14 专用内核有挂载/参数，也不能仅据配置声称实际加载已核实。
+- **iPhone 完全退出训练/调参**：仅冻结回归与标签噪声探针，不追加采集、不做 few-shot，
+  不作最终裁判；保留管线。此条覆盖上文的“可选 few-shot”“以后再录评测片段”等建议。
+- EgoDex/EgoVerse 是候选顺序而非实验排名；设备追踪、LiDAR 深度和 MANO 拟合不笼统叫“金标”。
+  许可须按具体版本和上游代码、权重、资产、标签、checkpoint 分别核查；未知 freeform 不能仅按 4 h 放行。
+- 已实现 public-only 显式独立单元划分、缺源/零有效样本报错、EgoDex 真实 RGB 路径及对齐校验、
+  实际数据与采样清单、配对整组 bootstrap。**2–3 片段仍不足**，本轮所有结果不得自动判赢。
+- `launch_paused` 保持；xPhi 不可用配置不再从历史最佳配置继承。自动调度器尚未迁移到公开协议，最后恢复。
+- 不虚构 E1–E5 正式划分或 MDE：先取得获准、有视频的小分片，再锁划分/评测单位/最小有用改进，
+  按固定预算多 seed 跑单源有图/无图与静止/恒速基线。许可、容量可与代码并行，Phase-0 不是阻塞一切的大门。
+- 本轮没有下载数据、没有 Kaggle 提交；离线 fixture 证明管线接通，不证明 EgoDex-first 有效或商业许可成立。

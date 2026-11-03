@@ -1,6 +1,10 @@
 import subprocess, os, glob, json, time
 def sh(c):
-    print('+', c, flush=True); r = subprocess.run(c, shell=True); print('rc', r.returncode, flush=True); return r.returncode
+    strict = 'scripts/train_xhey.py' in c
+    print('+', c, flush=True)
+    r = subprocess.run(('set -euo pipefail; ' + c) if strict else c, shell=True,
+                       executable='/bin/bash' if strict else None, check=strict)
+    print('rc', r.returncode, flush=True); return r.returncode
 def find(pat):
     g = glob.glob('/kaggle/input/**/' + pat, recursive=True); return g[0] if g else None
 T0 = time.time(); W = '/kaggle/working'; R = '/kaggle/tmp/robot'; os.makedirs(R, exist_ok=True)

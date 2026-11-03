@@ -14,10 +14,14 @@ class XphiSourceKey(unittest.TestCase):
         self.assertIn('"--xphi"', src)
         calls = []
         a = types.SimpleNamespace(out="/tmp/xphi_test_out", xphi="/nonexistent/xphi")
-        with mock.patch.object(tx, "try_external", side_effect=lambda k, r, c: calls.append((k, str(r))) or None):
+        sentinel = object()
+        with mock.patch.object(tx, "try_external", side_effect=lambda k, r, c: calls.append((k, str(r))) or sentinel):
             ext = tx.prepare_external(["iphone+xphi"], {}, [], [], a)
         self.assertEqual(calls, [("xphi", "/nonexistent/xphi")])
-        self.assertNotIn("xphi", ext)
+        self.assertIs(ext["xphi"], sentinel)
+        with mock.patch.object(tx, "try_external", return_value=None):
+            with self.assertRaisesRegex(ValueError, "not loaded.*xphi"):
+                tx.prepare_external(["iphone+xphi"], {}, [], [], a)
 
 
 if __name__ == "__main__":

@@ -11,14 +11,15 @@ import csv
 import json
 import shutil
 from pathlib import Path
+from xhey_ledger import reviewed_rows, decision_status
 
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / "experiments" / "report"
 LEDGER = ROOT / "experiments" / "ledger.jsonl"
-BASE = ("zero", "linear", "history_revert")
-NAME = {"zero": "猜手不动", "linear": "线性外推", "history_revert": "历史回归"}
+BASE = ("zero", "linear", "history_revert", "constant_velocity")
+NAME = {"zero": "猜手不动", "linear": "线性模型", "history_revert": "历史回归", "constant_velocity": "恒速外推"}
 
 
 def _plt():
@@ -47,7 +48,7 @@ def _models(res):
 
 def chart_ade(res, title, path):
     plt = _plt()
-    gs = [g for g in ("zero", "linear") if g in res] + _models(res)
+    gs = [g for g in ("zero", "constant_velocity", "linear") if g in res] + _models(res)
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
     v = np.array([res[g]["ade_cm_pooled"] for g in gs])
     col = ["#999" if g in BASE else "#6a9fd8" for g in gs]
@@ -81,7 +82,7 @@ def chart_clips(res, clips, title, path):
         v = [res[g].get("per_clip_ade_cm", {}).get(c, np.nan) for c in clips]
         ax.bar(np.arange(len(clips)) + j * w, v, w, label=label(g).replace("\n", ""), color="#999" if g == "zero" else None)
     ax.set_xticks(np.arange(len(clips)) + w * (len(gs) - 1) / 2); ax.set_xticklabels(["测试片段\n" + c for c in clips])
-    ax.set_ylabel("ADE（cm）"); ax.set_title(title + "：每段留出录像的误差（留一段交叉验证）")
+    ax.set_ylabel("ADE（cm）"); ax.set_title(title + "：每个留出片段（具体协议见 metrics.json）")
     ax.legend(fontsize=7); fig.tight_layout(); fig.savefig(path, dpi=130); plt.close(fig)
     return True
 
@@ -89,7 +90,7 @@ def chart_clips(res, clips, title, path):
 def chart_horizon(res, title, path):
     plt = _plt()
     fig, ax = plt.subplots(figsize=(8, 4.6))
-    for g in [g for g in ("zero", "linear") if g in res] + _models(res):
+    for g in [g for g in ("zero", "constant_velocity", "linear") if g in res] + _models(res):
         r = res[g]
         if r.get("horizon_ade_cm"):
             y = np.array(r["horizon_ade_cm"]); x = np.arange(1, len(y) + 1)
@@ -101,7 +102,7 @@ def chart_horizon(res, title, path):
         ax.plot(x, y, ls, marker="o", ms=3, label=label(g).replace("\n", ""), c="k" if g == "zero" else None)
         if sd.any():
             ax.fill_between(x, y - sd, y + sd, alpha=.2)
-    ax.set_xlabel("预测第几步（15 帧/秒）"); ax.set_ylabel("手腕位置误差（cm）")
+    ax.set_xlabel("预测第几步（实际 FPS 见 metrics.json）"); ax.set_ylabel("手腕位置误差（cm）")
     ax.set_title(title + "：越往后预测，误差越大"); ax.legend(fontsize=7); fig.tight_layout()
     fig.savefig(path, dpi=130); plt.close(fig)
 
@@ -116,7 +117,7 @@ def chart_curves(curves, title, path):
         col = "C%d" % mi
         for c in [c for c in curves if c["mix"] == mix]:
             off = 0
-            for stage in ("pretrain", "finetune"):
+            for stage in ("train", "pretrain", "finetune"):
                 pts = [p for p in c.get(stage) or [] if "step" in p]
                 if not pts:
                     continue
@@ -127,7 +128,7 @@ def chart_curves(curves, title, path):
         axes[0].plot([], [], c=col, label=label(mix).replace("\n", ""))
     axes[0].set_yscale("log"); axes[0].set_title("训练损失"); axes[1].set_title("验证 ADE（cm）")
     for ax in axes:
-        ax.set_xlabel("训练步数（先预训练再微调，每条线=一个种子×一个折）")
+        ax.set_xlabel("训练步数（阶段/划分见 metrics.json；每条线一个 seed）")
     axes[0].legend(fontsize=7); fig.suptitle(title); fig.tight_layout(); fig.savefig(path, dpi=130); plt.close(fig)
     return True
 
@@ -171,8 +172,8 @@ def run_report(metrics_path, name, out_root=REPORT):
     if chart_traj(m.get("examples") or {}, name, out / "trajectory.png"):
         made.append(out / "trajectory.png")
     rows = [{"组": g, "整体ADE_cm": round(r["ade_cm_pooled"], 3), "比不动_cm": round(r.get("ade_minus_zero_cm", 0), 3),
-             "手在动ADE_cm": round(r.get("moving_ade_cm", np.nan), 3),
-             "手在动比不动_cm": round(r.get("moving_minus_zero_cm", np.nan), 3),
+             "手在动ADE_cm": round(r["moving_ade_cm"], 3) if r.get("moving_ade_cm") is not None else None,
+             "手在动比不动_cm": round(r["moving_minus_zero_cm"], 3) if r.get("moving_minus_zero_cm") is not None else None,
              "95%CI": r.get("moving_minus_zero_ci95"), "种子数": r.get("n_seeds")} for g, r in res.items()]
     with open(out / "table.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
@@ -182,9 +183,7 @@ def run_report(metrics_path, name, out_root=REPORT):
 
 
 def load_ledger(path=LEDGER):
-    if not Path(path).exists():
-        return []
-    return [json.loads(l) for l in Path(path).read_text(encoding="utf-8").splitlines() if l.strip()]
+    return reviewed_rows(path)
 
 
 def summary(ledger_path=LEDGER, out_root=REPORT):
@@ -192,7 +191,7 @@ def summary(ledger_path=LEDGER, out_root=REPORT):
     if not L:
         return []
     out = Path(out_root); out.mkdir(parents=True, exist_ok=True)
-    cols = ["id", "数据配比", "整体ADE", "比不动", "手在动ADE", "手在动比不动", "95%CI"]
+    cols = ["id", "数据配比", "整体ADE", "比不动", "手在动ADE", "手在动比不动", "95%CI", "结论"]
     rows = []
     for r in L:
         ci = r.get("delta_moving_ci95")
@@ -200,7 +199,7 @@ def summary(ledger_path=LEDGER, out_root=REPORT):
                      "%+.3f" % r["delta_overall_cm"] if r.get("delta_overall_cm") is not None else "-",
                      "%.3f" % r["moving_ade_cm"] if r.get("moving_ade_cm") is not None else "-",
                      "%+.3f" % r["delta_moving_cm"] if r.get("delta_moving_cm") is not None else "-",
-                     "[%+.3f, %+.3f]" % tuple(ci) if ci else "-"])
+                     "[%+.3f, %+.3f]" % tuple(ci) if ci else "-", decision_status(r)])
     with open(out / "summary.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f); w.writerow(cols); w.writerows(rows)
     plt = _plt()
@@ -210,15 +209,12 @@ def summary(ledger_path=LEDGER, out_root=REPORT):
     if M:
         d = np.array([r["delta_moving_cm"] for r in M])
         ax.bar(range(len(M)), d, yerr=_err(d, [r.get("delta_moving_ci95") for r in M]), capsize=3,
-               color=["#3a3" if x < 0 else "#e4572e" for x in d])
+               color=["#3a3" if decision_status(r) == "win_moving" else "#999" for r in M])
         ax.axhline(0, c="k", lw=.8); ax.set_xticks(range(len(M))); ax.set_xticklabels([r["id"] for r in M], rotation=30, ha="right", fontsize=8)
-        ax.set_title("所有实验：手在动时比「猜手不动」好多少（cm，<0 更好，绿=赢）")
+        ax.set_title("历史原始指标（旧窗口级 CI 不用于胜负；结论见审查列）")
     tax = fig.add_axes([.02, .02, .96, .5 if M else .9]); tax.axis("off")
-    best = min(range(len(rows)), key=lambda i: L[i].get("delta_moving_cm") if L[i].get("delta_moving_cm") is not None else 9)
     t = tax.table(cellText=rows, colLabels=cols, loc="center", cellLoc="center"); t.auto_set_font_size(False); t.set_fontsize(8)
     t.auto_set_column_width(list(range(len(cols))))
-    for j in range(len(cols)):
-        t[best + 1, j].set_facecolor("#d8f5d0")
     fig.savefig(out / "summary.png", dpi=130); plt.close(fig)
     print("summary", out / "summary.png")
     return [out / "summary.png", out / "summary.csv"]
